@@ -20,10 +20,22 @@
   // ---------------- Real Google Drive ----------------
   function RealDrive() {
     var token = null, expiresAt = 0, client = null;
+    // The sign-in is kept on this device until Google's hour runs out, so closing the app doesn't sign you out.
+    var TOKEN_KEY = 'qn-drive-token';
     try {
-      var saved = JSON.parse(sessionStorage.getItem('drive-token') || 'null');
+      var saved = JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null');
       if (saved && saved.expiresAt > Date.now()) { token = saved.token; expiresAt = saved.expiresAt; }
     } catch (e) {}
+    function account() { try { return localStorage.getItem('qn-account') || ''; } catch (e) { return ''; } }
+    // Remember which Google account this is, so renewing skips Google's account picker.
+    async function learnAccount() {
+      if (account()) return;
+      try {
+        var r = await fetch(API + '/about?fields=user(emailAddress)', { headers: { Authorization: 'Bearer ' + token } });
+        var u = (await r.json()).user;
+        if (u && u.emailAddress) localStorage.setItem('qn-account', u.emailAddress);
+      } catch (e) {}
+    }
 
     function loadGis() {
       if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
@@ -49,8 +61,9 @@
           expiresAt = Date.now() + (Number(r.expires_in || 3600) - 120) * 1000;
           try {
             localStorage.setItem('signed-in-before', '1');
-            sessionStorage.setItem('drive-token', JSON.stringify({ token: token, expiresAt: expiresAt }));
+            localStorage.setItem(TOKEN_KEY, JSON.stringify({ token: token, expiresAt: expiresAt }));
           } catch (e) {}
+          learnAccount();
           resolve();
         };
         client.error_callback = function (e) {
@@ -60,7 +73,9 @@
         };
         var before = false;
         try { before = localStorage.getItem('signed-in-before') === '1'; } catch (e) {}
-        client.requestAccessToken({ prompt: before ? '' : 'consent' });
+        var opts = { prompt: before ? '' : 'consent' };
+        if (before && account()) opts.hint = account();
+        client.requestAccessToken(opts);
       });
     }
 
@@ -77,7 +92,7 @@
       catch (e) { throw fail('offline', 'No internet connection, or Google Drive could not be reached.'); }
       if (r.status === 401) {
         token = null;
-        try { sessionStorage.removeItem('drive-token'); } catch (e) {}
+        try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
         throw fail('auth', 'Your Google sign-in has ended. Please sign in again.');
       }
       if (!r.ok) {
@@ -147,6 +162,17 @@
           });
         } catch (e) { if (e.code !== 'notfound') throw e; }
       },
+      rename: async function (id, name) {
+        await api(API + '/files/' + id + '?fields=id', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: JSON.stringify({ name: name })
+        });
+      },
+      move: async function (id, newParent, oldParent) {
+        await api(API + '/files/' + id + '?fields=id&addParents=' + encodeURIComponent(newParent) +
+          (oldParent ? '&removeParents=' + encodeURIComponent(oldParent) : ''), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: '{}'
+        });
+      },
       findExact: async function (name, parentId, mime) {
         var q = "name = '" + qs(name) + "' and trashed = false and '" + qs(parentId) + "' in parents" +
           (mime ? " and mimeType = '" + qs(mime) + "'" : '');
@@ -167,15 +193,16 @@
     }
     var readables = CFG.READABLES_FOLDER_ID;
     add('Books', readables, FOLDER);
-    (window.DEMO_NOTES || []).forEach(function (d) {
-      var parent = Object.keys(files).filter(function (k) { return files[k].name === d.folder && files[k].mimeType === FOLDER; })[0];
-      if (!parent) {
-        var notes = Object.keys(files).filter(function (k) { return files[k].name === CFG.NOTES_FOLDER_NAME; })[0] ||
-          add(CFG.NOTES_FOLDER_NAME, readables, FOLDER);
-        parent = add(d.folder, notes, FOLDER);
-      }
-      add(d.name, parent, 'text/markdown', d.text, d.daysAgo);
-    });
+    function folderPath(path) {
+      var parent = Object.keys(files).filter(function (k) { return files[k].name === CFG.NOTES_FOLDER_NAME && files[k].parents[0] === readables; })[0] ||
+        add(CFG.NOTES_FOLDER_NAME, readables, FOLDER);
+      path.split('/').forEach(function (name) {
+        var hit = Object.keys(files).filter(function (k) { return files[k].name === name && files[k].mimeType === FOLDER && files[k].parents[0] === parent; })[0];
+        parent = hit || add(name, parent, FOLDER);
+      });
+      return parent;
+    }
+    (window.DEMO_NOTES || []).forEach(function (d) { add(d.name, folderPath(d.folder), 'text/markdown', d.text, d.daysAgo); });
 
     function md5ish(f) { return f.id + ':' + f.rev; }
     function meta(f) {
@@ -217,6 +244,8 @@
         return wait().then(function () { return meta(files[add(name, parentId, FOLDER)]); });
       },
       trash: function (id) { return wait().then(function () { if (files[id]) files[id].trashed = true; }); },
+      rename: function (id, name) { return wait().then(function () { files[id].name = name; }); },
+      move: function (id, newParent) { return wait().then(function () { files[id].parents = [newParent]; files[id].rev++; }); },
       findExact: function (name, parentId, mime) {
         var f = live().filter(function (x) { return x.name === name && x.parents[0] === parentId && (!mime || x.mimeType === mime); })[0];
         return wait(f ? meta(f) : null);

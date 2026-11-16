@@ -13,5 +13,5 @@ window.APP_CONFIG = {
   SUBFOLDERS: ['Inbox', 'Keep', 'Notion'],
 
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '1.0.1'
+  VERSION: '2.0.0'
 };
