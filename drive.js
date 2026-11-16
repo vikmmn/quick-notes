@@ -188,6 +188,12 @@
         var r = await api(API + '/files/' + id + '?alt=media', { headers: { Range: 'bytes=' + start + '-' + end } });
         return new Uint8Array(await r.arrayBuffer());
       },
+      // Earlier versions of a file, which Drive keeps for about 30 days (up to 100 versions).
+      revisions: async function (id) {
+        var d = await (await api(API + '/files/' + id + '/revisions?pageSize=200&fields=' + encodeURIComponent('revisions(id,modifiedTime,size)'))).json();
+        return d.revisions || [];
+      },
+      readRevision: async function (id, revId) { return (await api(API + '/files/' + id + '/revisions/' + revId + '?alt=media')).text(); },
       readBlob: async function (id) { return (await api(API + '/files/' + id + '?alt=media')).blob(); },
       size: async function (id) { return Number((await (await api(API + '/files/' + id + '?fields=size')).json()).size); },
       findTakeout: function () {
@@ -253,6 +259,7 @@
         if (!f) return Promise.reject(fail('notfound', 'File not found'));
         if (expected && (f.trashed || md5ish(f) !== expected)) return wait({ conflict: true, file: meta(f) });
         return wait().then(function () {
+          (f.revs = f.revs || []).push({ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length), text: f.text });
           f.text = text; f.rev++; f.modifiedTime = new Date().toISOString();
           return { file: meta(f) };
         });
@@ -268,6 +275,8 @@
       upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
       findTakeout: function () { return wait([]); },
       readBlob: function (id) { return wait(files[id].blob || new Blob([files[id].text])); },
+      revisions: function (id) { var f = files[id]; return wait((f.revs || []).map(function (r) { return { id: r.id, modifiedTime: r.modifiedTime, size: r.size }; }).concat([{ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length) }])); },
+      readRevision: function (id, revId) { var f = files[id], r = (f.revs || []).filter(function (x) { return x.id === revId; })[0]; return wait(r ? r.text : f.text); },
       _files: files,
       move: function (id, newParent) { return wait().then(function () { files[id].parents = [newParent]; files[id].rev++; }); },
       findExact: function (name, parentId, mime) {

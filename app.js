@@ -740,6 +740,7 @@
       c.created = c.updated = new Date().toISOString(); c.v = 0; c.isDraft = true;
       openNote(c); touchNote(c); toast('Copy made');
     }
+    if (b.dataset.m === 'history') historySheet(n);
     if (b.dataset.m === 'delete') deleteNote(n);
   });
   function deleteNote(n) {
@@ -759,6 +760,44 @@
       notes[n.id] = n; store.put(n); renderList();
     }, 6500);
   }
+  // Version history: Drive keeps earlier versions of each note's file (about 30 days, up to 100 versions).
+  function historySheet(n) {
+    if (!n.fileId) { openSheet('<h2>Version history</h2><p>This note hasn\'t reached Drive yet, so there are no earlier versions.</p><div class="row"><button type="button" data-act="close">Close</button></div>'); return; }
+    if (S.canvas) S.canvas.flush();
+    openSheet('<h2>Version history</h2><p>Getting the versions from Drive…</p>');
+    Drive.revisions(n.fileId).then(function (revs) {
+      revs = revs.slice().reverse();
+      openSheet('<h2>Version history</h2><p>Drive keeps earlier versions for about 30 days. Tap one to look at it; restoring saves it as the newest version, so nothing is lost.</p><div class="pick">' +
+        revs.map(function (r, i) {
+          var d = new Date(r.modifiedTime);
+          return '<button type="button" data-act="v" data-id="' + esc(r.id) + '">' + icon('history') + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' +
+            d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + (i === 0 ? ' · current' : '') + '</button>';
+        }).join('') + '</div><div class="row"><button type="button" data-act="close">Close</button></div>',
+      function (act, b) { if (act === 'v') showVersion(n, b.dataset.id, b.textContent); });
+    }).catch(function (e) {
+      openSheet('<h2>Version history</h2><p>' + esc(e.code === 'offline' ? "You're offline." : e.code === 'auth' ? 'Sign in to Google first (tap the sync button at the top).' : e.message) + '</p><div class="row"><button type="button" data-act="close">Close</button></div>');
+    });
+  }
+  function showVersion(n, revId, label) {
+    openSheet('<h2>' + esc(label) + '</h2><p>Loading…</p>');
+    Drive.readRevision(n.fileId, revId).then(function (text) {
+      var old = N.parse(text, null);
+      var body = LIB.md.render(String(old.body || '').replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '').slice(0, 5000));
+      openSheet('<h2>' + esc(label) + '</h2>' + (old.title ? '<p><b>' + esc(old.title) + '</b></p>' : '') +
+        '<div class="vprev">' + taskify(body) + (old.ink && old.ink.length ? window.QNCanvas.inkSvg(old.ink, 480, 240) : '') + '</div>' +
+        '<div class="row"><button class="primary" type="button" data-act="restore">Restore this version</button><button type="button" data-act="back">Back</button></div>',
+      function (act) {
+        if (act === 'back') return historySheet(n);
+        if (act !== 'restore') return;
+        ['title', 'boxes', 'ink', 'labels', 'pinned', 'extra'].forEach(function (k) { n[k] = old[k]; });
+        closeSheet();
+        touchNote(n);
+        if (S.cur === n) reopen();
+        toast('Version restored');
+      });
+    }).catch(function (e) { openSheet('<h2>Version history</h2><p>' + esc(e.message) + '</p><div class="row"><button type="button" data-act="close">Close</button></div>'); });
+  }
+
   function labelsSheet(n) {
     function render() {
       var all = allLabels();

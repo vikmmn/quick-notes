@@ -230,6 +230,8 @@
   .sheet .labels button { border-radius: 999px; min-height: 34px; padding: 6px 12px; font-size: 14px; }
   .sheet .labels button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
   .sheet .err { color: var(--bad); font-size: 14px; margin-top: 8px; }
+  .sheet .vprev { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; max-height: 45vh; overflow: auto; font-size: 15px; }
+  .sheet .vprev p, .sheet .vprev ul { margin: 0 0 6px; }
 
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 60;
     display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 12px; background: var(--ink); color: var(--paper);
@@ -257,6 +259,7 @@
   <symbol id="i-label" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="8.5" r="1.2"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 103-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-chevd" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-notes" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="9" rx="1.5"/><rect x="13" y="4" width="7" height="6" rx="1.5"/><rect x="4" y="15" width="7" height="5" rx="1.5"/><rect x="13" y="12" width="7" height="8" rx="1.5"/></symbol>
@@ -347,6 +350,7 @@
     <button type="button" data-m="labels"><svg class="i"><use href="#i-label"/></svg>Labels</button>
     <button type="button" data-m="move"><svg class="i"><use href="#i-folder"/></svg>Move to folder</button>
     <button type="button" data-m="copy"><svg class="i"><use href="#i-copy"/></svg>Make a copy</button>
+    <button type="button" data-m="history"><svg class="i"><use href="#i-history"/></svg>Version history</button>
     <div class="space"><span>Add space</span>
       <button type="button" data-space="left" aria-label="Add space on the left">←</button>
       <button type="button" data-space="up" aria-label="Add space at the top">↑</button>
