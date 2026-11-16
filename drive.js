@@ -290,6 +290,20 @@
         });
         return r.json();
       },
+      // A folder the app made, found by a hidden mark, so it is found again even after you rename it.
+      markedFolder: async function (name, parentId, key) {
+        var props = {}; props[key] = '1';
+        var hit = (await query("appProperties has { key='" + key + "' and value='1' } and '" + qs(parentId) + "' in parents and trashed = false", 10, 1))[0];
+        if (hit) return hit;
+        hit = (await query("name = '" + qs(name) + "' and '" + qs(parentId) + "' in parents and mimeType = '" + FOLDER + "' and trashed = false", 10, 1))[0];
+        if (hit) {
+          await api(API + '/files/' + hit.id + '?fields=id', { method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: JSON.stringify({ appProperties: props }) });
+          return hit;
+        }
+        var r = await api(API + '/files?fields=' + FIELDS, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+          body: JSON.stringify({ name: name, parents: [parentId], mimeType: FOLDER, appProperties: props }) });
+        return r.json();
+      },
       findZips: function (term) {
         return query("name contains '" + qs(term) + "' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
       },
@@ -374,6 +388,10 @@
       upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
       findTakeout: function () { return wait([]); },
       findZips: function () { return wait([]); },
+      markedFolder: function (name, parentId) {
+        var f = live().filter(function (x) { return x.name === name && x.parents[0] === parentId && x.mimeType === FOLDER; })[0];
+        return wait(meta(f ? f : files[add(name, parentId, FOLDER)]));
+      },
       findRoot: function () {
         var id = Object.keys(files).filter(function (k) { return files[k].name === CFG.NOTES_FOLDER_NAME && files[k].parents[0] === readables; })[0] || add(CFG.NOTES_FOLDER_NAME, readables, FOLDER);
         return wait(meta(files[id]));

@@ -45,6 +45,7 @@
 
   // ---------- Sheets (our own dialogs) ----------
   function openSheet(html, onClick, onSubmit) {
+    if ($('sheetBack').classList.contains('hidden')) S.sheetState = history.state; // the back button closes the sheet, nothing more
     $('sheet').innerHTML = html;
     $('sheetBack').classList.remove('hidden');
     $('sheet').onclick = function (e) {
@@ -218,6 +219,7 @@
     }
     n.updated = new Date().toISOString();
     n.dirty = true;
+    var nf = folderOf(n); if (nf && PREF.lastNoteFolder !== nf) { PREF.lastNoteFolder = nf; savePref(); }
     n.v = (n.v || 0) + 1;
     n.body = N.bodyOf(n);
     if (n === S.cur) {
@@ -287,7 +289,8 @@
       pool.forEach(function (n) { var f = folderOf(n) || ''; counts[f] = (counts[f] || 0) + 1; });
       S.labelFolders = (S.labelFolders || []).filter(function (id) { return counts[id]; });
       var fids = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || folderName(a).localeCompare(folderName(b)); });
-      $('scopeChips').innerHTML = '<button type="button" data-lf="" aria-pressed="' + !S.labelFolders.length + '">All folders · ' + pool.length + '</button>' +
+      $('scopeChips').innerHTML = '<button type="button" class="clear" data-lclear="1" aria-label="Show all notes">✕ ' + esc(S.label) + '</button>' +
+        '<button type="button" data-lf="" aria-pressed="' + !S.labelFolders.length + '">All folders · ' + pool.length + '</button>' +
         fids.map(function (id) {
           var name = pathOf(id).slice(-2).map(function (f) { return f.name; }).join(' / ') || folderName(id) || 'Notes';
           return '<button type="button" data-lf="' + esc(id) + '" aria-pressed="' + (S.labelFolders.indexOf(id) > -1) + '">' + icon('folder').replace('class="i"', 'class="i" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;margin-right:4px"') + esc(name) + ' · ' + counts[id] + '</button>';
@@ -333,7 +336,7 @@
   $('crumbs').addEventListener('click', function (e) { var a = e.target.closest('[data-go]'); if (a) goFolder(a.dataset.go || null); });
   $('labelChips').addEventListener('click', function (e) {
     var b = e.target.closest('[data-label]'); if (!b) return;
-    S.label = S.label === b.dataset.label ? null : b.dataset.label; S.labelFolders = []; S.limit = 200; renderList(); window.scrollTo(0, 0);
+    if (S.label === b.dataset.label) history.back(); else goLabel(b.dataset.label);
   });
   $('scopeChips').addEventListener('click', function (e) {
     var b = e.target.closest('[data-scope]'); if (b) { S.scopeAll = b.dataset.scope === 'all'; renderList(); return; }
@@ -345,6 +348,7 @@
       renderList(); return;
     }
     if (e.target.closest('[data-lrename]')) renameLabelSheet(S.label);
+    if (e.target.closest('[data-lclear]')) { if (history.state && history.state.l) history.back(); else nav(null, null, 'replace'); }
   });
   // Renaming a label changes it on every note that has it (and merges it into another label of that name).
   function renameLabelSheet(old) {
@@ -365,8 +369,9 @@
         n.labels.forEach(function (l) { var v = l.toLowerCase() === old.toLowerCase() ? nl : l; if (!out.some(function (x) { return x.toLowerCase() === v.toLowerCase(); })) out.push(v); });
         n.labels = out; n.dirty = true; n.v = (n.v || 0) + 1; store.put(n); changedN++; // the note's date stays as it was
       });
-      if (S.label === old) S.label = nl;
+      if (S.label === old) { S.label = nl; try { history.replaceState(navState(), ''); } catch (x) {} }
       closeSheet(); renderList(); renderStatus(); sync.schedule(2500);
+      if (!$('drawer').classList.contains('hidden')) renderTree();
       toast('Renamed on ' + changedN + ' note' + (changedN === 1 ? '' : 's'));
     });
   }
@@ -375,7 +380,24 @@
     if (f) return goFolder(f.dataset.folder);
     if (e.target.closest('[data-newfolder]')) newFolderSheet(S.folder || rootId());
   });
-  function goFolder(id) { S.limit = 200; S.folder = id || null; S.label = null; $('q').value = ''; S.q = ''; renderList(); window.scrollTo(0, 0); }
+  // ---------- Moving around: every step is a step in the back button's history ----------
+  function navState() { return { v: 'list', f: S.folder || null, l: S.label || null }; }
+  function nav(f, l, how) { // how: 'push' (a new step), 'replace' (this step), or nothing (the back button already moved)
+    S.limit = 200; S.folder = f || null; S.label = l || null; S.labelFolders = []; $('q').value = ''; S.q = '';
+    if (!S.label) { PREF.lastFolder = S.folder || ''; savePref(); }
+    try { if (how === 'push') history.pushState(navState(), ''); else if (how === 'replace') history.replaceState(navState(), ''); } catch (e) {}
+    renderList(); window.scrollTo(0, 0);
+  }
+  function goFolder(id) { if ((id || null) === S.folder && !S.label) return renderList(); nav(id, null, 'push'); }
+  function goLabel(l) { if (l === S.label) return; nav(null, l, 'push'); }
+  function validFolder(id) { return id && (tree()[id] || id === rootId()) ? id : null; }
+  function defaultFolder() { return validFolder(PREF.defaultFolder); }
+  function startFolder() {
+    if (PREF.start === 'default') return defaultFolder();
+    if (PREF.start === 'last') return validFolder(PREF.lastFolder);
+    if (PREF.start === 'lastnote') return validFolder(PREF.lastNoteFolder);
+    return null;
+  }
 
   function tickTask(n, idx) {
     var count = 0;
@@ -444,7 +466,7 @@
         var kids = childrenOf(f.id).length, open = !!S.expanded[f.id];
         html += '<div class="tree-row' + (S.folder === f.id ? ' on' : '') + '" style="padding-left:' + depth * 16 + 'px">' +
           (kids ? '<button class="tw" type="button" data-tw="' + esc(f.id) + '" aria-label="' + (open ? 'Collapse' : 'Expand') + '">' + icon(open ? 'chevd' : 'chev') + '</button>' : '<span class="tw"></span>') +
-          '<div class="nm" data-open="' + esc(f.id) + '">' + icon('folder') + '<span>' + esc(f.name) + '</span><small>' + countIn(f.id) + '</small></div>' +
+          '<div class="nm" data-open="' + esc(f.id) + '">' + icon('folder') + '<span>' + esc(f.name) + '</span>' + (defaultFolder() === f.id ? '<em class="dflt">default</em>' : '') + '<small>' + countIn(f.id) + '</small></div>' +
           '<button class="more" type="button" data-fmore="' + esc(f.id) + '" aria-label="Folder options">' + icon('more') + '</button></div>';
         if (kids && open) rows(f.id, depth + 1);
       });
@@ -452,6 +474,12 @@
     if (root) rows(root, 0);
     else html += '<p class="where" style="padding:8px">Folders appear after the first sync with Google Drive.</p>';
     $('tree').innerHTML = html;
+    var labels = allLabels();
+    $('labelTree').innerHTML = labels.length ? labels.map(function (l) {
+      var n = live().filter(function (x) { return (x.labels || []).some(function (y) { return y.toLowerCase() === l.toLowerCase(); }); }).length;
+      return '<div class="tree-row' + (S.label === l ? ' on' : '') + '"><span class="tw"></span><div class="nm" data-label="' + esc(l) + '">' + icon('label') + '<span>' + esc(l) + '</span><small>' + n + '</small></div>' +
+        '<button class="more" type="button" data-lmore="' + esc(l) + '" aria-label="Rename label">' + icon('more') + '</button></div>';
+    }).join('') : '<p class="where" style="padding:2px 12px">Add labels to a note from its ••• menu.</p>';
     $('addRootFolder').classList.toggle('hidden', !root);
   }
   function openDrawer() {
@@ -472,8 +500,20 @@
     var more = e.target.closest('[data-fmore]');
     if (more) { folderSheet(more.dataset.fmore); return; }
     var o = e.target.closest('[data-open]');
-    if (o) { closeDrawer(); goFolder(o.dataset.open || null); }
+    if (o) leaveDrawer(o.dataset.open || null, null);
   });
+  $('labelTree').addEventListener('click', function (e) {
+    var m = e.target.closest('[data-lmore]');
+    if (m) { renameLabelSheet(m.dataset.lmore); return; }
+    var l = e.target.closest('[data-label]');
+    if (l) leaveDrawer(null, l.dataset.label);
+  });
+  // Picking a place in the drawer: the drawer's back step becomes the new place, so back returns to where you were.
+  function leaveDrawer(f, l) {
+    var same = (f || null) === S.folder && (l || null) === S.label;
+    closeDrawer(!same);
+    if (!same) nav(f, l, 'replace');
+  }
   $('addRootFolder').onclick = function () { newFolderSheet(rootId()); };
   if ($('importBtn')) $('importBtn').onclick = function () {
     closeDrawer();
@@ -507,10 +547,16 @@
     var f = tree()[id];
     if (!f) return;
     openSheet('<h2>' + esc(f.name) + '</h2><p>' + esc(pathOf(id).map(function (x) { return x.name; }).join(' / ')) + '</p>' +
-      '<div class="pick"><button type="button" data-act="rename">Rename</button><button type="button" data-act="sub">New folder inside</button>' +
+      '<div class="pick"><button type="button" data-act="default">' + (defaultFolder() === id ? 'Default folder ✓ (tap to undo)' : 'Make this the default folder') + '</button>' +
+      '<button type="button" data-act="rename">Rename</button><button type="button" data-act="sub">New folder inside</button>' +
       '<button type="button" data-act="move">Move to…</button><button type="button" data-act="del" class="danger">Delete folder</button></div>' +
       '<div class="err"></div><div class="row"><button type="button" data-act="close">Close</button></div>',
     async function (act) {
+      if (act === 'default') {
+        PREF.defaultFolder = defaultFolder() === id ? '' : id; savePref(); closeSheet(); renderTree();
+        toast(PREF.defaultFolder ? '“' + f.name + '” is the default folder: new notes go here' : 'No default folder: new notes go to Inbox');
+        return;
+      }
       if (act === 'sub') return newFolderSheet(id);
       if (act === 'rename') {
         return openSheet('<form><h2>Rename folder</h2><input type="text" name="name" value="' + esc(f.name) + '" autofocus required maxlength="80">' +
@@ -526,7 +572,7 @@
         }, id, true);
       }
       if (act === 'del') {
-        try { await sync.deleteFolder(id); closeSheet(); if (S.folder === id) goFolder(f.parentId === rootId() ? null : f.parentId); renderTree(); renderList(); toast('Folder deleted (it is in Drive’s trash)'); }
+        try { await sync.deleteFolder(id); closeSheet(); if (S.folder === id) nav(f.parentId === rootId() ? null : f.parentId, null, 'replace'); renderTree(); renderList(); toast('Folder deleted (it is in Drive’s trash)'); }
         catch (err) { sheetError(err.message); }
       }
     });
@@ -534,7 +580,7 @@
   // A list of every folder to pick from. `skip` hides a folder and everything inside it.
   function pickFolder(title, current, onPick, skip, allowRoot) {
     var html = '<h2>' + esc(title) + '</h2><div class="pick">';
-    if (allowRoot) html += '<button type="button" data-act="pick" data-id="' + esc(rootId()) + '"' + (current === rootId() ? ' aria-pressed="true"' : '') + '>' + icon('folder') + 'Notes (top level)</button>';
+    if (allowRoot) html += '<button type="button" data-act="pick" data-id="' + esc(rootId()) + '"' + (current === rootId() ? ' aria-pressed="true"' : '') + '>' + icon('folder') + esc(sync.rootName()) + ' (top level)</button>';
     function rows(parent, depth) {
       childrenOf(parent).forEach(function (f) {
         if (f.id === skip) return;
@@ -556,7 +602,7 @@
     var now = new Date().toISOString();
     return { id: N.uuid(), title: title || '', boxes: [{ id: 'b0', x: 0, y: 0, w: null, md: md || '' }], ink: [], body: md || '',
       labels: S.label ? [S.label] : [], pinned: false, created: now, updated: now, source: 'notes', extra: [],
-      fileId: null, md5: null, fileName: null, folderId: S.folder && S.folder !== rootId() ? S.folder : null, moveFrom: null,
+      fileId: null, md5: null, fileName: null, folderId: S.folder && S.folder !== rootId() ? S.folder : defaultFolder(), moveFrom: null,
       dirty: false, deleted: false, conflict: null, v: 0, isDraft: true };
   }
   var canvasHooks = {
@@ -604,10 +650,23 @@
     $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden');
     renderList();
   }
-  window.addEventListener('popstate', function () {
-    if (!$('sheetBack').classList.contains('hidden')) { closeSheet(); }
-    if (!$('drawer').classList.contains('hidden')) { closeDrawer(true); return; }
+  window.addEventListener('popstate', function (e) {
+    var st = e.state || {};
+    var wn = !$('whatsNew').classList.contains('hidden');
+    if (wn || !$('sheetBack').classList.contains('hidden')) { // back closes the sheet and stays where you are
+      if (wn) S.closeWhatsNew(); else closeSheet();
+      try { history.pushState(S.sheetState || navState(), ''); } catch (x) {}
+      return;
+    }
+    if (!$('drawer').classList.contains('hidden')) { closeDrawer(true); if (st.v !== 'exit') return; }
     if (S.view === 'note') { closeNote(); showList(); }
+    if (st.v === 'list') { if ((st.f || null) !== S.folder || (st.l || null) !== S.label) nav(st.f, st.l); return; }
+    if (st.v === 'exit') { // at the start screen: back once more to leave
+      if (Date.now() - (S.exitTry || 0) < 2500) { hideToast(); history.back(); return; }
+      S.exitTry = Date.now();
+      toast('Press back again to exit', null, null, 2500);
+      try { history.pushState(navState(), ''); } catch (x) {}
+    }
   });
   $('backBtn').onclick = function () {
     if (history.state && history.state.v === 'note') history.back();
@@ -696,23 +755,22 @@
     PREF.tool = t; savePref();
     if (S.canvas) { applyInk(); S.canvas.setTool(t); }
     Array.prototype.forEach.call($('tools').querySelectorAll('[data-tool]'), function (b) { b.setAttribute('aria-pressed', b.dataset.tool === t ? 'true' : 'false'); });
-    var o = INKOPT, sep = '<span class="sep"></span>', html = '';
+    var o = INKOPT, html = '', G = function (x, half) { return '<div class="grp' + (half ? ' half' : '') + '">' + x + '</div>'; };
     if (t === 'pen') {
-      html = sep + Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('') +
-        sep + swatches(o.pen.c, 'pen') + sep + slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100);
+      html = G(Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('')) +
+        G(swatches(o.pen.c, 'pen')) + G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100));
     } else if (t === 'erase') {
-      html = sep + chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
-        sep + slider('Size', 'erase', 's', 3, 60, o.erase.s);
+      html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
+        slider('Size', 'erase', 's', 3, 60, o.erase.s));
     } else if (t === 'lasso') {
-      html = HINT('Circle strokes to select, or tap one. Drag to move, corner to resize, knob to rotate.');
+      html = G(HINT('Circle strokes to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
     } else if (t === 'nudge') {
-      html = sep + chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth') +
-        sep + slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100);
+      html = G(chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth')) +
+        G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
     } else if (t === 'fill') {
-      html = sep + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap') + chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') +
-        sep + swatches(o.fill.c, 'fill') + sep + slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100);
-    } else if (t === 'type') html = HINT('Double-tap anywhere for a new text box');
-    else if (t === 'select') html = HINT('Drag text boxes to move them');
+      html = G(chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap') + chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso')) +
+        G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
+    } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
     $('penOpts').innerHTML = html;
   }
   // The drawing tools live behind one button, so a note opens as a plain page, like Keep.
@@ -748,6 +806,7 @@
   function renderLayers() {
     var p = $('layersPanel');
     if (!S.canvas || p.classList.contains('hidden')) return;
+    p.style.top = Math.round($('tools').getBoundingClientRect().bottom + 6) + 'px';
     var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS;
     p.innerHTML = '<div class="lhead"><b>Layers</b><button type="button" data-lo="add">+ Add</button><button type="button" class="icon" data-lo="close" aria-label="Close">✕</button></div>' +
       list.map(function (l, i) {
@@ -810,7 +869,25 @@
     var off = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
     $('fmtBar').style.bottom = off + 'px';
   }
-  if (window.visualViewport) { visualViewport.addEventListener('resize', placeFmt); visualViewport.addEventListener('scroll', placeFmt); }
+  // On a phone, the formatting bar belongs to the keyboard: when the keyboard is put away (the back button or the
+  // keyboard's own button), the bar goes too instead of staying as a strip at the bottom of the screen.
+  var kbOpen = false, coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  function watchKeyboard() {
+    var vv = window.visualViewport; if (!vv || !coarse) return;
+    // The page may shrink with the keyboard, so compare with the tallest the screen has been at this width.
+    if (vv.width !== S.kbW) { S.kbW = vv.width; S.kbH = 0; }
+    S.kbH = Math.max(S.kbH || 0, vv.height);
+    var off = S.kbH - vv.height;
+    if (off > 120) kbOpen = true;
+    else if (kbOpen) {
+      kbOpen = false;
+      if (!$('fmtBar').classList.contains('hidden')) { showFmt(false); if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.ProseMirror')) document.activeElement.blur(); }
+    }
+  }
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', function () { placeFmt(); watchKeyboard(); });
+    visualViewport.addEventListener('scroll', placeFmt);
+  }
   var FMT_STATE = {
     bold: function (ed) { return ed.isActive('bold'); }, italic: function (ed) { return ed.isActive('italic'); },
     underline: function (ed) { return ed.isActive('underline'); }, strike: function (ed) { return ed.isActive('strike'); },
@@ -1134,14 +1211,25 @@
       '<div class="set"><b>Google account</b><p>' + esc(signin) + '</p>' +
         (!Drive.demo && (!Drive.signedIn() || (Drive.persistent && !Drive.lasting())) ? '<button class="primary" type="button" data-act="signin">Sign in with Google</button>' : '') + '</div>' +
       '<div class="set"><b>Sync</b><p>' + esc(h.text) + '</p><button type="button" data-act="sync">Sync now</button></div>' +
+      '<div class="set"><b>Folders</b><p>Default folder: <b style="display:inline;font-weight:500">' + esc(defaultFolder() ? folderName(defaultFolder()) : 'Inbox') + '</b>. New notes go here unless you are inside another folder.</p>' +
+        '<button type="button" data-act="pickdefault">Choose default folder</button>' +
+        '<p style="margin-top:12px !important">When the app opens, show:</p><div class="pick" style="margin:0">' +
+        [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
+          return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
+        }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
-        '<button type="button" data-act="update">Check for update</button></div>' +
+        '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
         '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
-    function (act) {
+    function (act, b) {
+      if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
+      if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
+        PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
+      });
+      if (act === 'whatsnew') { closeSheet(); return whatsNew(true); }
       if (act === 'signin') healthAction('signin');
       if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
       if (act === 'keep') location.href = 'import.html';
@@ -1160,11 +1248,68 @@
   $('settingsBtn').onclick = function () { closeDrawer(); setTimeout(settingsSheet, 250); };
   Drive.beforeLeave = function () { if (S.canvas) S.canvas.flush(); saveNow(); };
 
+  // ---------- What's new: a few illustrated slides, once after each update (and a short tour on first use) ----------
+  var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
+  function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
+  var SLIDES = [
+    { t: 'Sign in once, stay signed in', d: 'Quick Notes now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
+      a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M92 86h52a16 16 0 002.4-31.8A24 24 0 0099 48.6 19 19 0 0092 86z" fill="' + SOFT + '" stroke="' + A + '" stroke-width="3"/><path d="M105 67l9 9 17-18" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>') },
+    { t: 'A real sketchbook', d: 'Tap the pen at the top of a note. Pick a tool in the first row; its settings appear right under it: five pens, any colour, size and opacity.',
+      a: art('<rect x="20" y="16" width="200" height="30" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/>' + [0, 1, 2, 3, 4, 5].map(function (i) { return '<circle cx="' + (42 + i * 31) + '" cy="31" r="7" fill="' + (i === 1 ? A : MUT) + '" opacity="' + (i === 1 ? 1 : .35) + '"/>'; }).join('') +
+        '<rect x="20" y="52" width="200" height="24" rx="8" fill="' + SOFT + '"/>' + ['ink', '#c0392b', Y, '#2f855a', '#2b6cb0', '#7e57c2'].map(function (c, i) { return '<circle cx="' + (38 + i * 22) + '" cy="64" r="7" fill="' + (c === 'ink' ? INKC : c) + '"/>'; }).join('') +
+        '<path d="M30 110c20-22 34 8 52-6s26-18 40 0 30 12 44-4 26-10 44 2" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/><path d="M34 124h170" stroke="' + Y + '" stroke-width="10" stroke-linecap="round" opacity=".55"/>') },
+    { t: 'Erase, lasso, nudge', d: 'Erase whole strokes or slice through them. Circle strokes with the lasso to move, resize, rotate, duplicate or group them. Nudge and Smooth reshape lines within a reach you choose.',
+      a: art('<path d="M30 60c30-30 60 20 90 0s60-20 90 10" fill="none" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round"/><circle cx="118" cy="59" r="16" fill="none" stroke="' + MUT + '" stroke-dasharray="4 4"/>' +
+        '<ellipse cx="120" cy="104" rx="70" ry="24" fill="none" stroke="' + A + '" stroke-width="2.5" stroke-dasharray="7 5"/><path d="M80 104c12-12 26 8 40-2s22-8 34 2" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>') },
+    { t: 'Fill and layers', d: 'Tap inside a closed shape to fill it; the colour tucks under your lines. Work in layers with opacity, blend modes, hiding, locking and masking.',
+      a: art('<rect x="44" y="40" width="100" height="78" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="62" y="28" width="100" height="78" rx="6" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="80" y="16" width="100" height="78" rx="6" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/>' +
+        '<path d="M100 40h60l-8 40h-46z" fill="' + Y + '" stroke="' + INKC + '" stroke-width="3" stroke-linejoin="round"/>') },
+    { t: 'Folders and labels in the menu', d: 'Tap ☰ for your folders and labels. Choose a default folder for new notes, and pick what the app opens to in Settings: all notes, the default folder, or where you left off.',
+      a: art('<rect x="30" y="14" width="96" height="112" rx="12" fill="' + SURF + '" stroke="' + RULE + '"/>' + [0, 1, 2, 3].map(function (i) { return '<rect x="42" y="' + (30 + i * 22) + '" width="14" height="11" rx="3" fill="' + A + '" opacity="' + (i === 1 ? 1 : .45) + '"/><rect x="62" y="' + (32 + i * 22) + '" width="' + [48, 38, 52, 30][i] + '" height="7" rx="3.5" fill="' + MUT + '" opacity=".5"/>'; }).join('') +
+        '<rect x="136" y="30" width="76" height="40" rx="10" fill="' + SOFT + '"/><rect x="136" y="78" width="76" height="40" rx="10" fill="' + SOFT + '"/>') },
+    { t: 'Back works like an app', d: 'The back button steps back through the folders and labels you visited. On the first screen, press back twice to leave.',
+      a: art('<rect x="70" y="14" width="100" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M128 56l-18 14 18 14" fill="none" stroke="' + A + '" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><rect x="88" y="100" width="64" height="12" rx="6" fill="' + MUT + '" opacity=".35"/>') }
+  ];
+  function whatsNew(force) {
+    var seen = PREF.seenVersion;
+    if (!force && seen === CFG.VERSION) return;
+    var first = !seen && !Drive.signedInBefore() && !live().length;
+    var i = 0, el = $('whatsNew');
+    function draw(dir) {
+      var sl = SLIDES[i];
+      el.innerHTML = '<div class="wn-card" role="dialog" aria-modal="true" aria-label="What’s new">' +
+        '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Quick Notes' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
+        '<button type="button" class="wn-skip" data-wn="done">Skip</button></div>' +
+        '<div class="wn-slide ' + (dir || '') + '">' + sl.a + '<h2>' + esc(sl.t) + '</h2><p>' + esc(sl.d) + '</p></div>' +
+        '<div class="wn-foot"><div class="wn-dots">' + SLIDES.map(function (x, k) { return '<i' + (k === i ? ' class="on"' : '') + '></i>'; }).join('') + '</div>' +
+        (i > 0 ? '<button type="button" data-wn="prev">Back</button>' : '') +
+        '<button type="button" class="primary" data-wn="' + (i === SLIDES.length - 1 ? 'done' : 'next') + '">' + (i === SLIDES.length - 1 ? 'Start writing' : 'Next') + '</button></div></div>';
+    }
+    function close() { el.classList.add('hidden'); el.innerHTML = ''; PREF.seenVersion = CFG.VERSION; savePref(); }
+    S.closeWhatsNew = close; S.sheetState = history.state;
+    el.onclick = function (e) {
+      var b = e.target.closest('[data-wn]');
+      if (!b) { if (e.target === el) close(); return; }
+      if (b.dataset.wn === 'done') return close();
+      if (b.dataset.wn === 'next' && i < SLIDES.length - 1) { i++; draw('from-right'); }
+      if (b.dataset.wn === 'prev' && i > 0) { i--; draw('from-left'); }
+    };
+    var sx = null;
+    el.onpointerdown = function (e) { sx = e.clientX; };
+    el.onpointerup = function (e) {
+      if (sx == null) return; var dx = e.clientX - sx; sx = null;
+      if (dx < -50 && i < SLIDES.length - 1) { i++; draw('from-right'); }
+      if (dx > 50 && i > 0) { i--; draw('from-left'); }
+    };
+    draw(); el.classList.remove('hidden');
+  }
+
   // ---------- Start: the notes grid ----------
   (async function start() {
     var saved = await store.load();
     saved.forEach(function (n) { notes[n.id] = n; });
-    try { history.replaceState({ v: 'list' }, ''); } catch (e) {}
+    S.folder = startFolder();
+    try { history.replaceState({ v: 'exit' }, ''); history.pushState(navState(), ''); } catch (e) {}
     showList();
 
     // Android "Share to Quick Notes": arrives as ?title=…&text=…&url=…
@@ -1172,7 +1317,7 @@
     if (p.has('text') || p.has('url') || p.has('title')) {
       var url = p.get('url') || '', text = p.get('text') || '';
       if (url && text.indexOf(url) < 0) text = (text ? text + '\n\n' : '') + url;
-      try { history.replaceState({ v: 'list' }, '', location.pathname); } catch (e) {}
+      try { history.replaceState(navState(), '', location.pathname); } catch (e) {}
       var shared = newDraft(p.get('title') || '', text);
       openNote(shared); touchNote(shared);
     }
@@ -1185,5 +1330,6 @@
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     renderStatus();
     sync.run({ pull: true });
+    setTimeout(function () { if (S.view === 'list') whatsNew(false); }, 700);
   })();
 })();

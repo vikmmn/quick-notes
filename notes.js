@@ -262,7 +262,7 @@
       f.notes = top.id; f.rootName = top.name;
       for (var i = 0; i < CFG.SUBFOLDERS.length; i++) {
         var name = CFG.SUBFOLDERS[i];
-        var sub = await Drive.findExact(name, top.id, FOLDER) || await Drive.createFolder(name, top.id);
+        var sub = await Drive.markedFolder(name, top.id, 'qn' + name);
         f[name] = sub.id;
         tree[sub.id] = { id: sub.id, name: name, parentId: top.id };
       }

@@ -18,5 +18,5 @@ window.APP_CONFIG = {
   TOKEN_SERVER: 'https://quick-notes-signin.vikrammaan-s-trehan.workers.dev',
 
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '3.0.1'
+  VERSION: '3.1.0'
 };
