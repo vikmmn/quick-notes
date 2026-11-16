@@ -171,7 +171,7 @@
       if (!a.url) return;
       body.push(a.title ? '[' + String(a.title).replace(/[\[\]]/g, '') + '](' + a.url + ')' : '<' + a.url + '>');
     });
-    if (opts.files) (j.attachments || []).forEach(function (a) {
+    if (opts.files || opts.links) (j.attachments || []).forEach(function (a) {
       var f = base(a.filePath || ''), link = rel + encodeURIComponent(f).replace(/%2F/g, '/');
       if (!f) return;
       body.push(/^image\//.test(a.mimetype || '') || /\.(png|jpe?g|gif|webp)$/i.test(f) ? '![](' + link + ')' : '[' + (/^audio\//.test(a.mimetype || '') ? 'Voice recording' : f) + '](' + link + ')');
@@ -211,7 +211,7 @@
   };
 
   async function run() {
-    var opts = { archive: $('optArchive').checked, trash: $('optTrash').checked, files: $('optFiles').checked };
+    var opts = { archive: $('optArchive').checked, trash: $('optTrash').checked, files: $('optFiles').checked, links: true };
     var todo = plan(opts);
     $('importBtn').disabled = true; $('scanBtn').disabled = true; S.stop = false;
     $('progress').classList.remove('hidden');
@@ -240,8 +240,10 @@
       async function worker() {
         while (queue.length && !S.stop) {
           var p = queue.shift();
-          if (have[p.folder] && have[p.folder][p.fileName]) { skipped++; show(); continue; }
-          show('Copying ' + p.fileName);
+          var exists = have[p.folder] && have[p.folder][p.fileName];
+          var missing = opts.files && (p.x.json.attachments || []).some(function (a) { var f = base(a.filePath || ''); return f && !have.Attachments[f]; });
+          if (exists && !missing) { skipped++; show(); continue; }
+          show((exists ? 'Copying files for ' : 'Copying ') + p.fileName);
           try {
             if (opts.files) {
               for (var a of (p.x.json.attachments || [])) {
@@ -254,15 +256,17 @@
                 have.Attachments[fname] = 1; filesDone++; bytes += blob.size; show();
               }
             }
-            var md = markdown(p, opts);
-            await withAuth(function () { return Drive.create(p.fileName, F[p.folder], md); });
-            have[p.folder][p.fileName] = 1;
-            done++;
+            if (!exists) {
+              var md = markdown(p, opts);
+              await withAuth(function () { return Drive.create(p.fileName, F[p.folder], md); });
+              have[p.folder][p.fileName] = 1;
+              done++;
+            } else skipped++;
           } catch (e) { log.push(p.fileName + ': ' + (e.message || e)); done++; }
           show();
         }
       }
-      await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+      await Promise.all(Array.from({ length: opts.files ? 8 : 16 }, worker));
       show(S.stop ? 'Stopped. Run it again any time to carry on where it stopped.' : 'Done.');
       $('result').innerHTML = (S.stop ? '<p><b>Stopped.</b> Run the import again to carry on; what is already there is skipped.</p>' :
         '<p><b>Import finished.</b> Open Quick Notes and the notes appear in Keep as it syncs. Check a few before you clear out Google Keep.</p>') +
