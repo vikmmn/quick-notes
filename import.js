@@ -16,11 +16,17 @@
 
   // ---------- Sources: Takeout zips in Drive, or zips on this device ----------
   function DriveZip(file) {
-    function R() { Z.Reader.call(this); }
-    R.prototype = Object.create(Z.Reader.prototype);
-    R.prototype.init = async function () { this.size = Number(file.size) || await Drive.size(file.id); };
-    R.prototype.readUint8Array = function (index, length) { return withAuth(function () { return Drive.readRange(file.id, index, index + length - 1); }); };
-    return new R();
+    // Reads only the pieces of the zip that are needed, straight from Drive.
+    class DriveReader extends Z.Reader {
+      async init() {
+        this.size = Number(file.size) || await withAuth(function () { return Drive.size(file.id); });
+        if (super.init) await super.init();
+      }
+      readUint8Array(index, length) {
+        return withAuth(function () { return Drive.readRange(file.id, index, index + length - 1); });
+      }
+    }
+    return new DriveReader();
   }
   async function listDriveZips() {
     var box = $('driveZips');
