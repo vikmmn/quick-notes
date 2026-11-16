@@ -1,4 +1,4 @@
-// Quick Notes: a one-time copy of a Notion "Markdown & CSV" export into Readables › Notes › Notion.
+// Quick Notes: a one-time copy of a Notion "Markdown & CSV" export into Quick Notes › Notion.
 // Each page becomes a note; sub-pages go in a folder named after their parent page (the export's own layout);
 // images and files go to Notion › Attachments with their links rewritten. Safe to run again: what is there is skipped.
 (function () {
@@ -55,7 +55,7 @@
     try {
       var files = (await Drive.findZips('Export-')).sort(function (a, b) { return String(b.createdTime).localeCompare(String(a.createdTime)); });
       S.driveFiles = files;
-      if (!files.length) { box.innerHTML = '<p class="muted">No Notion export zips (named Export-…) found in your Drive. You can choose the zip from this device below.</p>'; return; }
+      if (!files.length) { box.innerHTML = '<p class="muted">Choose the export zip below. It can be in Google Drive: in the file picker, open Drive and pick it there.</p>'; return; }
       box.innerHTML = files.map(function (f, i) {
         return '<label class="pick"><input type="checkbox" data-id="' + esc(f.id) + '"' + (i === 0 ? ' checked' : '') + '><span><b>' + esc(f.name) + '</b><br><small>' + mb(Number(f.size) || 0) + ' · ' + new Date(f.createdTime).toLocaleString() + '</small></span></label>';
       }).join('');
@@ -131,7 +131,7 @@
       '<li><b>' + x.pages.length + ' pages</b>' + (Object.keys(folders).length ? ', ' + Object.keys(folders).length + ' of them with sub-pages (these become folders)' : '') + '</li>' +
       '<li>' + nf + ' images and files used in pages (' + mb(x.bytes) + ' in the export)</li>' +
       (x.csv ? '<li>' + x.csv + ' database table' + (x.csv > 1 ? 's' : '') + ': each row\'s page comes in as a note; the table view itself is not copied</li>' : '') +
-      '</ul><p class="muted">Everything goes to Readables › Notes › Notion. Each page\'s Tags become labels.</p>';
+      '</ul><p class="muted">Everything goes to Quick Notes › Notion. Each page\'s Tags become labels.</p>';
     if (!x.pages.length) $('summary').innerHTML += '<p class="bad">No pages found. Make sure the export format was Markdown &amp; CSV.</p>';
     $('step3').classList.remove('hidden');
     say('');
@@ -243,7 +243,7 @@
     }
     try {
       say('Getting the Notion folders ready…');
-      var notesF = await withAuth(function () { return folderIn(CFG.NOTES_FOLDER_NAME, CFG.READABLES_FOLDER_ID); });
+      var notesF = await withAuth(function () { return Drive.findRoot(); });
       var notionF = await withAuth(function () { return folderIn('Notion', notesF.id); });
       var attF = opts.files ? await withAuth(function () { return folderIn('Attachments', notionF.id); }) : null;
       var haveAtt = attF ? await withAuth(function () { return existingNames(attF.id); }) : {};

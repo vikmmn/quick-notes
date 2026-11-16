@@ -6,15 +6,17 @@ window.APP_CONFIG = {
   // The address the real app runs at. Anywhere else (for example inside Claude) it opens in demo mode.
   APP_ORIGIN: 'https://vikmmn.github.io',
 
-  // The inner "03. Readables" folder (the one that holds Books, Course and Papers).
+  // Everyone's notes go to a "Quick Notes" folder in their own Drive, made on first sign-in (marked so the app finds it
+  // again on any device). New notes go to its Inbox.
+  ROOT_FOLDER_NAME: 'Quick Notes',
+  SUBFOLDERS: ['Inbox'],
+  // Notes made before that went to Notes inside this "03. Readables" folder; if that folder is there, it stays the home.
   READABLES_FOLDER_ID: '1L3bcLlOXz8fth-ID5VWIvAOX1kXm4cSh',
-  // Created inside Readables on first sign-in, with these folders inside it. New notes go to the first one.
   NOTES_FOLDER_NAME: 'Notes',
-  SUBFOLDERS: ['Inbox', 'Keep', 'Notion'],
 
   // The sign-in helper (server/sign-in-helper.js on Cloudflare) that keeps you signed in. Empty = one-hour sign-ins.
   TOKEN_SERVER: '',
 
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '2.4.0'
+  VERSION: '3.0.0'
 };

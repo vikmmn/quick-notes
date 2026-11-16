@@ -1,12 +1,16 @@
 # Quick Notes
 
-A quick-capture notes app (a Google Keep replacement) that saves every note as a Markdown file in
-Google Drive › 03. Readables › Notes. Installable on phone, tablet and laptop; works offline.
+A quick-capture notes app (a Google Keep replacement) that saves every note as a Markdown file in the user's own
+Google Drive › Quick Notes (made on first sign-in). Installable on phone, tablet and laptop; works offline.
+It asks Google only for the files it makes (`drive.file`), never the rest of Drive.
 
 - Opens on the notes grid. Folders (nested, real Drive folders inside Notes) and labels.
 - Each note is a canvas: a text box at the top left like Keep; double-tap anywhere for another text box;
   write or draw with a pen (an S Pen draws without switching tools; the finger scrolls); move text and drawings
   with the Move tool; the canvas grows as you need it.
+- Drawing: pen, pencil, marker, brush and highlighter with colour, size and opacity; whole-stroke and slicing
+  erasers; lasso to select, move, resize, rotate, duplicate, recolour and group; nudge and smooth with a reach;
+  tap-to-fill closed shapes or draw filled shapes; layers with opacity, blend modes, hide, lock and masking.
 - Word-style formatting (bold, italic, underline, strikethrough, highlight, colour, size, headings, lists,
   checklists, quotes, alignment, links), saved as Markdown. Undo and redo for everything.
 - Smart search on the device: word forms, small typos, "exact phrases", ranked, with highlighted snippets.
@@ -44,7 +48,9 @@ Text of that box
 |---|---|
 | `index.html` | The page and its look |
 | `app.js` | The screens: notes grid, folders, a note, menus, formatting bar |
-| `canvas.js` | The note canvas: text boxes, ink, moving, undo/redo |
+| `canvas.js` | The note canvas: text boxes, pointer input, moving, undo/redo |
+| `ink.js` | The drawing engine: layers, brushes, erasers, lasso, nudge/smooth, fills, previews |
+| `privacy.html` | The privacy page linked from Google's sign-in screen |
 | `search.js` | Search on the device |
 | `notes.js` | Note file format, the copy on this device, syncing with Drive (notes and folders) |
 | `vendor.js` | Bundled libraries: TipTap (rich text + Markdown), perfect-freehand (ink), markdown-it (previews) |

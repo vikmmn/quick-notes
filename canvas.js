@@ -4,7 +4,6 @@
 (function () {
   'use strict';
   var M = 16;                 // margin around the content
-  var HIT = 14;               // how close (px) a tap must be to a stroke to pick it
   var LIB = function () { return window.QNLib; };
 
   // Blank lines between paragraphs. Markdown treats several blank lines as one, so an empty paragraph is
@@ -28,46 +27,8 @@
   function el(tag, cls, parent) { var e = document.createElement(tag); if (cls) e.className = cls; if (parent) parent.appendChild(e); return e; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
-  // ---------- Ink drawing helpers (also used for the previews on the notes grid) ----------
-  function strokePath(s) {
-    var pts = s.p;
-    if (!pts.length) return '';
-    var outline = LIB().getStroke(pts, {
-      size: s.s * (s.h ? 3 : 1.6), thinning: s.h ? 0 : (s.f ? 0.55 : 0.35), smoothing: 0.5, streamline: 0.45,
-      simulatePressure: !s.f, last: true
-    });
-    if (!outline.length) return '';
-    var d = 'M' + outline[0][0].toFixed(1) + ' ' + outline[0][1].toFixed(1);
-    for (var i = 1; i < outline.length; i++) d += 'L' + outline[i][0].toFixed(1) + ' ' + outline[i][1].toFixed(1);
-    return d + 'Z';
-  }
-  function color(c) { return !c || c === 'ink' ? 'var(--ink)' : c; }
-  function groupBox(g) {
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    g.strokes.forEach(function (s) {
-      var pad = s.s * (s.h ? 1.6 : 1);
-      s.p.forEach(function (p) { x0 = Math.min(x0, p[0] - pad); y0 = Math.min(y0, p[1] - pad); x1 = Math.max(x1, p[0] + pad); y1 = Math.max(y1, p[1] + pad); });
-    });
-    if (x0 === Infinity) return { x: g.x, y: g.y, w: 0, h: 0 };
-    return { x: g.x + x0, y: g.y + y0, w: x1 - x0, h: y1 - y0 };
-  }
-  function inkSvg(ink, maxW, maxH) {
-    if (!ink || !ink.length) return '';
-    var b = null;
-    ink.forEach(function (g) {
-      var r = groupBox(g);
-      if (!b) b = { x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h };
-      else { b.x0 = Math.min(b.x0, r.x); b.y0 = Math.min(b.y0, r.y); b.x1 = Math.max(b.x1, r.x + r.w); b.y1 = Math.max(b.y1, r.y + r.h); }
-    });
-    var w = Math.max(1, b.x1 - b.x0), h = Math.max(1, b.y1 - b.y0);
-    var scale = Math.min(1, maxW / w, maxH / h);
-    var paths = ink.map(function (g) {
-      return '<g transform="translate(' + (g.x - b.x0) + ' ' + (g.y - b.y0) + ')">' + g.strokes.map(function (s) {
-        return '<path d="' + strokePath(s) + '" fill="' + color(s.c) + '"' + (s.h ? ' opacity="0.35"' : '') + '/>';
-      }).join('') + '</g>';
-    }).join('');
-    return '<svg class="ink-thumb" width="' + Math.round(w * scale) + '" height="' + Math.round(h * scale) + '" viewBox="0 0 ' + w + ' ' + h + '">' + paths + '</svg>';
-  }
+  // Drawing lives in ink.js (layers, brushes, erasers, lasso, nudge, fills).
+  var INK = { pen: 1, erase: 1, lasso: 1, nudge: 1, fill: 1 };
 
   // ---------- The canvas ----------
   function NoteCanvas(host, wrap, note, hooks) {
@@ -80,9 +41,20 @@
     var selBar = el('div', 'selbar hidden', stage);
     selBar.innerHTML = '<button type="button" data-act="delete">Delete</button>';
 
-    var boxes = note.boxes, ink = note.ink;
+    var boxes = note.boxes;
+    if (!Array.isArray(note.ink) || !note.ink.length) note.ink = [window.QNInk.newLayer()];
+    var ink = note.ink;
     var editors = {};          // box id -> { el, ed }
-    var tool = 'type', pen = { c: 'ink', s: 3 }, penSeen = false;
+    var tool = 'type', penSeen = false;
+    var eng = new window.QNInk.Engine({
+      layers: ink, svg: svg, stage: stage, margin: M,
+      changed: function () { changed('ink'); },
+      notice: function (t) { if (hooks.notice) hooks.notice(t); },
+      view: function () {
+        var r = stage.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+        return { x: w.left - r.left - M, y: w.top - r.top - M, w: wrap.clientWidth, h: wrap.clientHeight };
+      }
+    });
     var selected = null;       // { kind: 'box'|'ink', id }
     var hist = [], future = [], textTimer = null, mdTimer = null;
     var active = null;         // the editor with the caret
@@ -112,7 +84,7 @@
         var e = editors[bx.id];
         r = Math.max(r, bx.x + (bx.w || 0)); b = Math.max(b, bx.y + (e ? e.el.offsetHeight : 40));
       });
-      ink.forEach(function (g) { var q = groupBox(g); r = Math.max(r, q.x + q.w); b = Math.max(b, q.y + q.h); });
+      var q = eng.bounds(); r = Math.max(r, q.r); b = Math.max(b, q.b);
       return { r: r, b: b };
     }
     function autoWidth() { return Math.max(240, wrap.clientWidth - 2 * M); }
@@ -127,7 +99,7 @@
       var W = Math.max(wrap.clientWidth, c.r + 2 * M + 160);
       var H = Math.max(wrap.clientHeight - 60, c.b + 2 * M + Math.round(wrap.clientHeight * 0.5));
       stage.style.width = W + 'px'; stage.style.height = H + 'px';
-      svg.setAttribute('width', W); svg.setAttribute('height', H);
+      svg.setAttribute('width', W); svg.setAttribute('height', H); eng.size(W, H);
       drawSelection();
     }
 
@@ -196,67 +168,20 @@
       Object.keys(editors).forEach(function (id) { editors[id].ed.destroy(); editors[id].el.remove(); });
       editors = {};
       boxes.forEach(mountBox);
-      drawInk();
+      eng.render();
       layout();
     }
 
-    // ---- Ink ----
-    function drawInk() {
-      svg.innerHTML = ink.map(function (g) {
-        return '<g data-g="' + g.id + '" transform="translate(' + (g.x + M) + ' ' + (g.y + M) + ')">' + g.strokes.map(function (s, i) {
-          return '<path data-s="' + i + '" d="' + strokePath(s) + '" fill="' + color(s.c) + '"' + (s.h ? ' opacity="0.35"' : '') + '/>';
-        }).join('') + '</g>';
-      }).join('');
-    }
     function point(ev) {
       var r = stage.getBoundingClientRect();
       return [ev.clientX - r.left - M, ev.clientY - r.top - M, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
-    }
-    function hitStroke(x, y, r) {
-      for (var gi = ink.length - 1; gi >= 0; gi--) {
-        var g = ink[gi];
-        for (var si = g.strokes.length - 1; si >= 0; si--) {
-          var s = g.strokes[si], rr = r + s.s;
-          for (var k = 0; k < s.p.length; k++) {
-            var dx = s.p[k][0] + g.x - x, dy = s.p[k][1] + g.y - y;
-            if (dx * dx + dy * dy <= rr * rr) return { g: gi, s: si };
-            if (k) { // between points
-              var ax = s.p[k - 1][0] + g.x, ay = s.p[k - 1][1] + g.y, bx = s.p[k][0] + g.x, by = s.p[k][1] + g.y;
-              var L = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
-              if (L > 0) {
-                var t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / L));
-                var px = ax + t * (bx - ax) - x, py = ay + t * (by - ay) - y;
-                if (px * px + py * py <= rr * rr) return { g: gi, s: si };
-              }
-            }
-          }
-        }
-      }
-      return null;
-    }
-    function addStroke(s) {
-      var x0 = Infinity, y0 = Infinity;
-      s.p.forEach(function (p) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); });
-      // Strokes drawn close together form one drawing that moves as a whole (a word, a sketch).
-      var start = s.p[0], target = null;
-      for (var i = ink.length - 1; i >= 0; i--) {
-        var q = groupBox(ink[i]);
-        if (start[0] >= q.x - 48 && start[0] <= q.x + q.w + 48 && start[1] >= q.y - 40 && start[1] <= q.y + q.h + 40) { target = ink[i]; break; }
-      }
-      if (!target) { target = { id: 'g' + window.Notes.shortId(), x: Math.max(0, x0), y: Math.max(0, y0), strokes: [] }; ink.push(target); }
-      s.p = s.p.map(function (p) { return [p[0] - target.x, p[1] - target.y, p[2]]; });
-      target.strokes.push(s);
     }
 
     // ---- Selection (Move tool) ----
     function itemRect(sel) {
       if (!sel) return null;
-      if (sel.kind === 'box') {
-        var b = boxes.filter(function (x) { return x.id === sel.id; })[0], e = editors[sel.id];
-        return b && e ? { x: b.x, y: b.y, w: e.el.offsetWidth, h: e.el.offsetHeight } : null;
-      }
-      var g = ink.filter(function (x) { return x.id === sel.id; })[0];
-      return g ? groupBox(g) : null;
+      var b = boxes.filter(function (x) { return x.id === sel.id; })[0], e = editors[sel.id];
+      return b && e ? { x: b.x, y: b.y, w: e.el.offsetWidth, h: e.el.offsetHeight } : null;
     }
     function drawSelection() {
       var r = itemRect(selected);
@@ -272,8 +197,7 @@
     selBar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     selBar.addEventListener('click', function (e) {
       if (!e.target.closest('[data-act=delete]') || !selected) return;
-      if (selected.kind === 'box') removeBox(selected.id);
-      else { ink = ink.filter(function (g) { return g.id !== selected.id; }); note.ink = ink; select(null); drawInk(); changed('ink'); }
+      removeBox(selected.id);
     });
 
     // ---- Pointer handling ----
@@ -287,7 +211,7 @@
       var isFinger = ev.pointerType === 'touch';
 
       // A second finger while drawing with a finger: stop drawing, scroll instead.
-      if (drag && drag.type === 'stroke' && isFinger && drag.finger) { cancelStroke(); }
+      if (drag && drag.type === 'ink' && isFinger && drag.finger) { eng.cancel(); drag = null; }
       if (drag && drag.type === 'pan' && isFinger) { drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY]; return; }
 
       // Moving or resizing a text box by its handles (any tool).
@@ -302,38 +226,18 @@
           return;
         }
       }
-      if (tool === 'select') {
-        var hit = hitStroke(p[0], p[1], HIT);
-        if (hit) {
-          var g = ink[hit.g];
-          select({ kind: 'ink', id: g.id });
-          drag = { type: 'move', item: g, sx: ev.clientX, sy: ev.clientY, ox: g.x, oy: g.y, id: ev.pointerId };
-          stage.setPointerCapture(ev.pointerId); ev.preventDefault();
+      if (tool === 'select') { select(null); startPan(ev); return; }
+      // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
+      var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
+      if (inkTool && !(isFinger && penSeen)) {
+        if (eng.tool() !== inkTool) eng.setTool(inkTool);
+        if (eng.down(p, ev)) {
+          ev.preventDefault();
+          if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
+          drag = { type: 'ink', id: ev.pointerId, finger: isFinger };
+          stage.setPointerCapture(ev.pointerId);
           return;
         }
-        select(null);
-        startPan(ev); return;
-      }
-      var drawing = tool === 'pen' || tool === 'highlighter' ? !(isFinger && penSeen) : (tool === 'type' && ev.pointerType === 'pen' && !onBox);
-      if (tool === 'eraser' && !(isFinger && penSeen)) {
-        drag = { type: 'erase', id: ev.pointerId, any: false };
-        stage.setPointerCapture(ev.pointerId); ev.preventDefault();
-        erase(p); return;
-      }
-      if (drawing) {
-        ev.preventDefault();
-        if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
-        var hl = tool === 'highlighter';
-        var s = { c: hl ? (pen.hc || '#f2c94c') : pen.c, s: hl ? 6 : pen.s, p: [p] };
-        if (hl) s.h = 1;
-        if (ev.pointerType === 'pen') s.f = 1;
-        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('fill', color(s.c)); if (hl) path.setAttribute('opacity', '0.35');
-        path.setAttribute('transform', 'translate(' + M + ' ' + M + ')');
-        svg.appendChild(path);
-        drag = { type: 'stroke', s: s, path: path, id: ev.pointerId, finger: isFinger };
-        stage.setPointerCapture(ev.pointerId);
-        return;
       }
       if (onBox) { // typing, selecting text: leave it to the editor, but a finger drag over the text still scrolls
         if (isFinger && tool === 'type') startPan(ev);
@@ -368,16 +272,14 @@
       drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY];
       if (panV) { cancelAnimationFrame(panV.raf); panV = null; }
     }
-    function cancelStroke() { if (drag && drag.path) drag.path.remove(); drag = null; }
-    function erase(p) {
-      var hit = hitStroke(p[0], p[1], 10);
-      if (!hit) return;
-      ink[hit.g].strokes.splice(hit.s, 1);
-      if (!ink[hit.g].strokes.length) ink.splice(hit.g, 1);
-      drag.any = true; drawInk();
-    }
     stage.addEventListener('pointermove', function (ev) {
-      if (!drag) return;
+      if (!drag) { if (INK[tool]) eng.move(point(ev), ev); return; } // the eraser/nudge circle follows a hovering pen
+      if (drag.type === 'ink') {
+        if (ev.pointerId !== drag.id) return;
+        var cev = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
+        eng.move(point(ev), ev, (cev.length ? cev : [ev]).map(point));
+        return;
+      }
       if (drag.type === 'pan') {
         if (!(ev.pointerId in drag.fingers)) return;
         var prev = drag.fingers[ev.pointerId];
@@ -392,16 +294,9 @@
         return;
       }
       if (ev.pointerId !== drag.id) return;
-      if (drag.type === 'stroke') {
-        var evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
-        (evs.length ? evs : [ev]).forEach(function (e) { drag.s.p.push(point(e)); });
-        drag.path.setAttribute('d', strokePath(drag.s));
-      } else if (drag.type === 'erase') {
-        erase(point(ev));
-      } else if (drag.type === 'move') {
+      if (drag.type === 'move') {
         drag.item.x = Math.max(0, drag.ox + ev.clientX - drag.sx);
         drag.item.y = Math.max(0, drag.oy + ev.clientY - drag.sy);
-        if (drag.item.strokes) drawInk();
         layout();
       } else if (drag.type === 'resize') {
         drag.item.w = Math.max(120, (drag.ow || 200) + ev.clientX - drag.sx);
@@ -431,27 +326,24 @@
       }
       if (ev.pointerId !== drag.id) return;
       var d = drag; drag = null;
-      if (d.type === 'stroke') {
-        d.path.remove();
-        if (d.s.p.length === 1) d.s.p.push([d.s.p[0][0] + 0.5, d.s.p[0][1] + 0.5, d.s.p[0][2]]); // a dot
-        addStroke(d.s); drawInk(); changed('ink');
-      } else if (d.type === 'erase') {
-        if (d.any) changed('ink');
-      } else if (d.type === 'move' || d.type === 'resize') {
+      if (d.type === 'ink') { eng.up(point(ev)); return; }
+      if (d.type === 'move' || d.type === 'resize') {
         if (d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow) changed('layout');
       }
     }
     stage.addEventListener('pointerup', endPointer);
-    stage.addEventListener('pointercancel', function (ev) { if (drag && drag.type === 'stroke') cancelStroke(); else endPointer(ev); });
+    stage.addEventListener('pointercancel', function (ev) { if (drag && drag.type === 'ink') { eng.cancel(); drag = null; } else endPointer(ev); });
+    stage.addEventListener('pointerleave', function () { eng.leave(); });
 
     // ---- What the app can ask of the canvas ----
     self.setTool = function (t) {
       tool = t;
       stage.dataset.tool = t;
       if (t !== 'select') select(null);
+      if (INK[t]) eng.setTool(t); else eng.clearSelection();
       if (t !== 'type' && document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
     };
-    self.setPen = function (p) { Object.assign(pen, p); };
+    self.ink = function () { return eng; };
     self.tool = function () { return tool; };
     self.penSeen = function () { return penSeen; };
     self.active = function () { return active && editors[active.box.id] ? active.ed : null; };
@@ -469,7 +361,7 @@
       var o = JSON.parse(s);
       boxes.length = 0; o.boxes.forEach(function (b) { boxes.push(b); });
       ink.length = 0; o.ink.forEach(function (g) { ink.push(g); });
-      select(null); active = null; renderAll();
+      select(null); active = null; eng.reset(); renderAll();
       hooks.change('restore');
       hooks.history(hist.length > 1, future.length > 0);
     }
@@ -483,8 +375,7 @@
         changed('layout'); return;
       }
       boxes.forEach(function (b) { b.x += dx; b.y += dy; });
-      ink.forEach(function (g) { g.x += dx; g.y += dy; });
-      drawInk(); changed('layout');
+      eng.shift(dx, dy); changed('layout');
     };
     // An image: at the caret, beside the text (both side by side), or in a new text box below.
     self.insertImage = function (src, where) {
@@ -519,5 +410,5 @@
     self._unbind = function () { window.removeEventListener('resize', layout); };
   }
 
-  window.QNCanvas = { NoteCanvas: NoteCanvas, inkSvg: inkSvg, strokePath: strokePath };
+  window.QNCanvas = { NoteCanvas: NoteCanvas, inkSvg: function (ink, w, h) { return window.QNInk.thumb(ink, w, h); } };
 })();

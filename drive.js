@@ -7,7 +7,8 @@
   var UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
   var FIELDS = 'id,name,mimeType,size,modifiedTime,createdTime,parents,md5Checksum,trashed';
   var FOLDER = 'application/vnd.google-apps.folder';
-  var SCOPE = 'https://www.googleapis.com/auth/drive';
+  // Only the files and folders this app makes, plus files you pick yourself. Never the rest of your Drive.
+  var SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
   function fail(code, message, extra) {
     var e = new Error(message);
@@ -270,6 +271,25 @@
       findTakeout: function () {
         return query("name contains 'takeout-' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
       },
+      // The app's home folder: marked with a hidden property, so any device finds it again.
+      findRoot: async function () {
+        var hit = (await query("appProperties has { key='qnRoot' and value='1' } and mimeType = '" + FOLDER + "' and trashed = false", 10, 1))[0];
+        if (hit) return hit;
+        if (CFG.READABLES_FOLDER_ID) { // notes made by earlier versions
+          var old = null;
+          try { old = (await query("name = '" + qs(CFG.NOTES_FOLDER_NAME) + "' and '" + qs(CFG.READABLES_FOLDER_ID) + "' in parents and mimeType = '" + FOLDER + "' and trashed = false", 10, 1))[0]; }
+          catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
+          if (old) {
+            await api(API + '/files/' + old.id + '?fields=id', { method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: JSON.stringify({ appProperties: { qnRoot: '1' } }) });
+            return old;
+          }
+        }
+        var r = await api(API + '/files?fields=' + FIELDS, {
+          method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+          body: JSON.stringify({ name: CFG.ROOT_FOLDER_NAME || 'Quick Notes', mimeType: FOLDER, appProperties: { qnRoot: '1' } })
+        });
+        return r.json();
+      },
       findZips: function (term) {
         return query("name contains '" + qs(term) + "' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
       },
@@ -354,6 +374,10 @@
       upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
       findTakeout: function () { return wait([]); },
       findZips: function () { return wait([]); },
+      findRoot: function () {
+        var id = Object.keys(files).filter(function (k) { return files[k].name === CFG.NOTES_FOLDER_NAME && files[k].parents[0] === readables; })[0] || add(CFG.NOTES_FOLDER_NAME, readables, FOLDER);
+        return wait(meta(files[id]));
+      },
       token: function () { return null; },
       persistent: false, ready: Promise.resolve(), takeSignInError: function () { return null; }, lasting: function () { return false; }, account: function () { return ''; }, signOut: function () { signed = false; },
       readBlob: function (id) { return wait(files[id].blob || new Blob([files[id].text])); },

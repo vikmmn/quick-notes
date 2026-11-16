@@ -1,4 +1,4 @@
-// Quick Notes: import everything from a Google Keep export (Google Takeout) into Readables › Notes › Keep.
+// Quick Notes: import everything from a Google Keep export (Google Takeout) into Quick Notes › Keep.
 // The export is read straight from Drive a piece at a time (or from zips chosen on this device), so a
 // 1 GB+ export never has to be downloaded whole. Safe to run again: notes and files already there are skipped.
 (function () {
@@ -56,7 +56,7 @@
     box.innerHTML = '<p class="muted">Looking for Takeout exports in your Drive…</p>';
     try {
       var files = (await Drive.findTakeout()).sort(function (a, b) { return String(b.createdTime).localeCompare(String(a.createdTime)); });
-      if (!files.length) { box.innerHTML = '<p class="muted">No Takeout zips found in your Drive. You can choose zips from this device below.</p>'; return; }
+      if (!files.length) { box.innerHTML = '<p class="muted">Choose the export zip below. It can be in Google Drive: in the file picker, open Drive and pick it there.</p>'; return; }
       var newest = (files[0].name.match(/takeout-(\d{8}T\d{6}Z)/) || [])[1];
       box.innerHTML = files.map(function (f) {
         var on = newest && f.name.indexOf(newest) > -1;
@@ -123,7 +123,7 @@
       '<li>' + c.att + ' notes with attachments: <b>' + att + ' files, ' + mb(S.index.bytes) + '</b> (images, drawings, voice recordings)</li>' +
       '<li>' + c.links + ' notes with saved links</li>' +
       '<li>' + Object.keys(labels).length + ' labels' + (Object.keys(labels).length ? ': ' + Object.keys(labels).sort().map(function (l) { return esc(l) + ' (' + labels[l] + ')'; }).join(', ') : '') + '</li></ul>' +
-      '<p class="muted">Everything goes to Readables › Notes › Keep. Archived notes go to Keep › Archive, notes from Keep\'s Trash to Keep › Trash, and files to Keep › Attachments, linked from their note.</p>';
+      '<p class="muted">Everything goes to Quick Notes › Keep. Archived notes go to Keep › Archive, notes from Keep\'s Trash to Keep › Trash, and files to Keep › Attachments, linked from their note.</p>';
     $('step3').classList.remove('hidden');
     say('');
   }
@@ -236,7 +236,7 @@
     }
     try {
       say('Getting the Keep folders ready…');
-      var notesF = await withAuth(function () { return folderIn(CFG.NOTES_FOLDER_NAME, CFG.READABLES_FOLDER_ID); });
+      var notesF = await withAuth(function () { return Drive.findRoot(); });
       var keepF = await withAuth(function () { return folderIn('Keep', notesF.id); });
       var F = { '': keepF.id };
       for (var name of ['Archive', 'Trash', 'Attachments']) {

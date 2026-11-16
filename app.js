@@ -77,7 +77,7 @@
   }
   function inSubtree(fid, top) { for (var t = tree(), f = fid; f; f = t[f] && t[f].parentId) if (f === top) return true; return false; }
   function countIn(id) { return live().filter(function (n) { return inSubtree(folderOf(n), id); }).length; }
-  function folderName(id) { var f = tree()[id]; return f ? f.name : id === rootId() ? CFG.NOTES_FOLDER_NAME : ''; }
+  function folderName(id) { var f = tree()[id]; return f ? f.name : id === rootId() ? sync.rootName() : ''; }
 
   // ---------- Files linked from notes (Keep images, recordings) live in an Attachments folder in Drive ----------
   var imgCache = {}, attIndex = null;
@@ -146,7 +146,7 @@
     if (st.phase === 'error' && w) return { s: 'attention', text: 'Drive had a problem: ' + ((st.error && st.error.message) || 'unknown') + '. Your notes are safe on this phone.', act: 'sync', btn: 'Try again' };
     if (w && age > 10 * 60000 && st.phase !== 'syncing') return { s: 'attention', text: many(w, 'One change hasn\'t', 'changes haven\'t') + ' reached Drive yet.', act: 'sync', btn: 'Sync now' };
     if (st.phase === 'syncing' || w) return { s: 'busy', text: w ? 'Sending ' + many(w, 'one change', 'changes') + ' to Drive…' : 'Checking Drive…' };
-    return { s: 'ok', text: 'Every note is in Google Drive › Readables › Notes.' + (st.lastSynced ? ' Checked at ' + new Date(st.lastSynced).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + '.' : '') };
+    return { s: 'ok', text: 'Every note is in Google Drive › ' + sync.rootName() + '.' + (st.lastSynced ? ' Checked at ' + new Date(st.lastSynced).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + '.' : '') };
   }
   var CLOUD = {
     ok: '<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.6 9.1 4.75 4.75 0 007 18.5z"/><path d="M9.5 13.6l2 2 3.8-3.9"/>',
@@ -254,7 +254,7 @@
     if (extra) inner += extra;
     else {
       if (n.body) inner += preview(n);
-      if (n.ink && n.ink.length) inner += window.QNCanvas.inkSvg(n.ink, 320, 170);
+      if (N.hasInk(n)) inner += window.QNInk.thumb(n.ink, 320, 170);
     }
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
@@ -560,7 +560,8 @@
       dirty: false, deleted: false, conflict: null, v: 0, isDraft: true };
   }
   var canvasHooks = {
-    change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); },
+    change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); if (kind === 'ink' || kind === 'restore') renderLayers(); },
+    notice: function (t) { toast(t, null, null, 3500); },
     history: function (u, r) { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
     focus: function () { showFmt(true); },
     blur: function () { setTimeout(function () { if (!S.canvas || !S.canvas.active() || !document.activeElement.closest || !document.activeElement.closest('.ProseMirror')) showFmt(false); }, 120); },
@@ -582,11 +583,12 @@
     renderLabelsRow(); renderConflict(); renderMeta();
     $('canvasWrap').scrollTo(0, 0);
     S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks);
-    setTool(isNew ? 'type' : (PREF.tool === 'eraser' || PREF.tool === 'select' ? 'type' : PREF.tool));
+    setTool(isNew || !PREF.showTools ? 'type' : (PREF.tool === 'erase' || PREF.tool === 'select' || PREF.tool === 'lasso' ? 'type' : PREF.tool));
+    renderLayers();
     $('undoBtn').disabled = true; $('redoBtn').disabled = true;
     if (isNew) setTimeout(function () { S.canvas.focusStart(); }, 50);
   }
-  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); S.canvas.setTool(PREF.tool); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
+  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
   function closeNote() {
     var n = S.cur;
     if (!n) return;
@@ -667,31 +669,51 @@
     else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); S.canvas.redo(); }
   });
 
-  // ---------- Tools: type, pen, highlighter, eraser, move ----------
-  var PEN_COLORS = ['ink', '#2b6cb0', '#c0392b', '#2f855a', '#b7791f', '#7e57c2'];
-  var HL_COLORS = ['#f2c94c', '#86efac', '#93c5fd', '#f9a8d4'];
+  // ---------- Tools: type, pen (five brushes), erase, lasso, nudge, fill, move text; layers ----------
+  var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
+  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 } };
+  (function migrate() { // settings saved by earlier versions
+    if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
+    else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
+    if (PREF.tool === 'highlighter') { PREF.tool = 'pen'; INKOPT.pen.b = 'highlighter'; INKOPT.pen.c = PREF.hl || '#f2c94c'; INKOPT.pen.o = 1; }
+    if (PREF.tool === 'eraser') PREF.tool = 'erase';
+    PREF.ink = INKOPT;
+  })();
+  function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
+  function chip(label, attr, on) { return '<button type="button" class="ochip" ' + attr + ' aria-pressed="' + !!on + '">' + label + '</button>'; }
+  function swatches(cur, key) {
+    var known = SWATCH.indexOf(cur) > -1;
+    return SWATCH.map(function (c) {
+      return '<button class="swatch" type="button" data-sw="' + key + '" data-c="' + c + '" style="background:' + (c === 'ink' ? 'var(--ink)' : c) + '" aria-label="Colour ' + c + '" aria-pressed="' + (cur === c) + '"></button>';
+    }).join('') + '<label class="swatch custom" aria-label="Any colour" style="background:' + (known ? 'conic-gradient(red,yellow,lime,cyan,blue,magenta,red)' : cur) + '"><input type="color" data-cc="' + key + '" value="' + (/^#/.test(cur) ? cur : '#222222') + '"></label>';
+  }
+  function slider(label, key, field, min, max, val, scale) {
+    return '<label class="oslider">' + label + '<input type="range" data-k="' + key + '" data-f="' + field + '" data-scale="' + (scale || 1) + '" min="' + min + '" max="' + max + '" value="' + Math.round(val * (scale || 1)) + '"></label>';
+  }
+  var HINT = function (t) { return '<span class="where" style="padding:0 8px;white-space:nowrap">' + t + '</span>'; };
   function setTool(t) {
+    if (t === 'highlighter') { INKOPT.pen.b = 'highlighter'; t = 'pen'; }
     PREF.tool = t; savePref();
-    if (S.canvas) S.canvas.setTool(t);
+    if (S.canvas) { applyInk(); S.canvas.setTool(t); }
     Array.prototype.forEach.call($('tools').querySelectorAll('[data-tool]'), function (b) { b.setAttribute('aria-pressed', b.dataset.tool === t ? 'true' : 'false'); });
-    var html = '';
+    var o = INKOPT, sep = '<span class="sep"></span>', html = '';
     if (t === 'pen') {
-      html = '<span class="sep"></span>' + PEN_COLORS.map(function (c) {
-        return '<button class="swatch" type="button" data-pc="' + c + '" style="background:' + (c === 'ink' ? 'var(--ink)' : c) + '" aria-label="Pen colour" aria-pressed="' + (PREF.pen.c === c) + '"></button>';
-      }).join('') + '<span class="sep"></span>' + [2, 3.5, 6].map(function (s) {
-        return '<button class="size" type="button" data-ps="' + s + '" aria-label="Pen size" aria-pressed="' + (PREF.pen.s === s) + '"><i style="width:' + (s * 2 + 2) + 'px;height:' + (s * 2 + 2) + 'px"></i></button>';
-      }).join('');
-    } else if (t === 'highlighter') {
-      html = '<span class="sep"></span>' + HL_COLORS.map(function (c) {
-        return '<button class="swatch" type="button" data-hc="' + c + '" style="background:' + c + '" aria-label="Highlighter colour" aria-pressed="' + (PREF.hl === c) + '"></button>';
-      }).join('');
-    } else if (t === 'type') {
-      html = '<span class="where" style="padding:0 8px;white-space:nowrap">Double-tap anywhere for a new text box</span>';
-    } else if (t === 'select') {
-      html = '<span class="where" style="padding:0 8px;white-space:nowrap">Drag text or drawings to move them</span>';
-    }
+      html = sep + Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('') +
+        sep + swatches(o.pen.c, 'pen') + sep + slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100);
+    } else if (t === 'erase') {
+      html = sep + chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
+        sep + slider('Size', 'erase', 's', 3, 60, o.erase.s);
+    } else if (t === 'lasso') {
+      html = HINT('Circle strokes to select, or tap one. Drag to move, corner to resize, knob to rotate.');
+    } else if (t === 'nudge') {
+      html = sep + chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth') +
+        sep + slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100);
+    } else if (t === 'fill') {
+      html = sep + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap') + chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') +
+        sep + swatches(o.fill.c, 'fill') + sep + slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100);
+    } else if (t === 'type') html = HINT('Double-tap anywhere for a new text box');
+    else if (t === 'select') html = HINT('Drag text boxes to move them');
     $('penOpts').innerHTML = html;
-    if (S.canvas) S.canvas.setPen({ c: PREF.pen.c, s: PREF.pen.s, hc: PREF.hl });
   }
   // The drawing tools live behind one button, so a note opens as a plain page, like Keep.
   function showTools(on) {
@@ -699,6 +721,7 @@
     $('tools').classList.toggle('hidden', !on);
     $('toolsBtn').setAttribute('aria-pressed', on ? 'true' : 'false');
     if (!on && PREF.tool !== 'type') setTool('type');
+    if (!on) $('layersPanel').classList.add('hidden');
     if (S.canvas) requestAnimationFrame(S.canvas.relayout);
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
@@ -708,9 +731,71 @@
     var b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.tool) return setTool(b.dataset.tool);
-    if (b.dataset.pc) { PREF.pen.c = b.dataset.pc; setTool('pen'); }
-    if (b.dataset.ps) { PREF.pen.s = +b.dataset.ps; setTool('pen'); }
-    if (b.dataset.hc) { PREF.hl = b.dataset.hc; setTool('highlighter'); }
+    if (b.dataset.act === 'layers') return toggleLayers();
+    if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
+    if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
+    if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; return setTool(PREF.tool); }
+  });
+  $('tools').addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.dataset.cc) { INKOPT[t.dataset.cc].c = t.value; applyInk(); savePref(); return; }
+    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; applyInk(); savePref(); }
+  });
+  $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
+
+  // ---------- Layers panel ----------
+  function toggleLayers() { var p = $('layersPanel'); p.classList.toggle('hidden'); if (!p.classList.contains('hidden')) renderLayers(); }
+  function renderLayers() {
+    var p = $('layersPanel');
+    if (!S.canvas || p.classList.contains('hidden')) return;
+    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS;
+    p.innerHTML = '<div class="lhead"><b>Layers</b><button type="button" data-lo="add">+ Add</button><button type="button" class="icon" data-lo="close" aria-label="Close">✕</button></div>' +
+      list.map(function (l, i) {
+        var row = '<div class="lrow' + (l.active ? ' on' : '') + '" data-id="' + l.id + '">' +
+          '<button type="button" class="icon" data-lo="vis" aria-label="' + (l.vis ? 'Hide' : 'Show') + '" title="' + (l.vis ? 'Hide' : 'Show') + '">' + (l.vis ? '◉' : '○') + '</button>' +
+          '<span class="lname" data-lo="active">' + esc(l.name) + ' <small>' + l.n + (l.clip ? ' · clipped' : '') + '</small></span>' +
+          '<button type="button" class="icon" data-lo="lock" aria-label="' + (l.lock ? 'Unlock' : 'Lock') + '" title="' + (l.lock ? 'Unlock' : 'Lock') + '">' + (l.lock ? '🔒' : '🔓') + '</button></div>';
+        if (l.active) row += '<div class="lmore" data-id="' + l.id + '">' +
+          '<label class="oslider">Opacity <input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop></label>' +
+          '<label class="oslider">Blend <select data-lblend>' + blends.map(function (b) { return '<option' + (b === l.blend ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select></label>' +
+          '<label class="oslider"><input type="checkbox" data-lclip' + (l.clip ? ' checked' : '') + (i === list.length - 1 ? ' disabled' : '') + '> Mask with layer below</label>' +
+          '<div class="lbtns"><button type="button" data-lo="up"' + (i === 0 ? ' disabled' : '') + '>Up</button><button type="button" data-lo="down"' + (i === list.length - 1 ? ' disabled' : '') + '>Down</button>' +
+          '<button type="button" data-lo="dup">Duplicate</button><button type="button" data-lo="merge"' + (i === list.length - 1 ? ' disabled' : '') + '>Merge down</button>' +
+          '<button type="button" data-lo="rename">Rename</button><button type="button" data-lo="delete" class="danger">Delete</button></div></div>';
+        return row;
+      }).join('') + '<p class="where" style="margin:8px 4px 2px">New drawing goes into the highlighted layer.</p>';
+  }
+  $('layersPanel').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-lo]'); if (!b || !S.canvas) return;
+    var op = b.dataset.lo, row = b.closest('[data-id]'), id = row && row.dataset.id, eng = S.canvas.ink();
+    if (op === 'close') { $('layersPanel').classList.add('hidden'); return; }
+    if (op === 'add') { eng.layerOp('add', eng.layers().filter(function (l) { return l.active; })[0].id); return renderLayers(); }
+    if (op === 'rename') {
+      var cur = eng.layers().filter(function (l) { return l.id === id; })[0];
+      openSheet('<form><h2>Rename layer</h2><input type="text" name="nm" value="' + esc(cur.name) + '" maxlength="40" required><div class="row"><button class="primary" type="submit">Rename</button><button type="button" data-act="close">Cancel</button></div></form>',
+        null, function (ev) { eng.layerOp('name', id, ev.target.nm.value); closeSheet(); renderLayers(); });
+      return;
+    }
+    if (op === 'delete' && eng.layers().filter(function (l) { return l.id === id; })[0].n && !confirmLayerDelete(id)) return;
+    eng.layerOp(op, id); renderLayers();
+  });
+  function confirmLayerDelete(id) {
+    var eng = S.canvas.ink();
+    openSheet('<h2>Delete this layer?</h2><p>Everything drawn on it goes too. Undo brings it back.</p><div class="row"><button class="primary danger" type="button" data-act="del">Delete layer</button><button type="button" data-act="close">Cancel</button></div>',
+      function (act) { if (act === 'del') { eng.layerOp('delete', id); closeSheet(); renderLayers(); } });
+    return false;
+  }
+  $('layersPanel').addEventListener('input', function (e) {
+    var row = e.target.closest('[data-id]'); if (!row || !S.canvas) return;
+    if (e.target.dataset.lop != null) S.canvas.ink().layerOp('op', row.dataset.id, +e.target.value / 100);
+  });
+  $('layersPanel').addEventListener('change', function (e) {
+    var row = e.target.closest('[data-id]'); if (!row || !S.canvas) return;
+    var eng = S.canvas.ink(), id = row.dataset.id;
+    if (e.target.dataset.lop != null) eng.layerOp('opdone', id, +e.target.value / 100);
+    if (e.target.dataset.lblend != null) eng.layerOp('blend', id, e.target.value);
+    if (e.target.dataset.lclip != null) eng.layerOp('clip', id);
+    renderLayers();
   });
 
   // ---------- Formatting bar ----------
@@ -947,7 +1032,7 @@
       var old = N.parse(text, null);
       var body = LIB.md.render(String(old.body || '').replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '').slice(0, 5000));
       openSheet('<h2>' + esc(label) + '</h2>' + (old.title ? '<p><b>' + esc(old.title) + '</b></p>' : '') +
-        '<div class="vprev">' + taskify(body) + (old.ink && old.ink.length ? window.QNCanvas.inkSvg(old.ink, 480, 240) : '') + '</div>' +
+        '<div class="vprev">' + taskify(body) + (N.hasInk(old) ? window.QNInk.thumb(old.ink, 480, 240) : '') + '</div>' +
         '<div class="row"><button class="primary" type="button" data-act="restore">Restore this version</button><button type="button" data-act="back">Back</button></div>',
       function (act) {
         if (act === 'back') return historySheet(n);
@@ -1051,7 +1136,7 @@
       '<div class="set"><b>Sync</b><p>' + esc(h.text) + '</p><button type="button" data-act="sync">Sync now</button></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
-      '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in Google Drive › Readables › Notes, readable by any notes app.</p>' +
+      '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
         '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +

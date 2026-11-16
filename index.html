@@ -171,7 +171,32 @@
   .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
   .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: pan-x pan-y; }
   .box.focused { box-shadow: 0 0 0 1px var(--rule); }
-  .stage[data-tool=pen] .box, .stage[data-tool=highlighter] .box, .stage[data-tool=eraser] .box { pointer-events: none; }
+  .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box { pointer-events: none; }
+  .ink-ui { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 3; }
+  .inkbar { position: absolute; z-index: 6; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
+  .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
+  .inkbar .sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); }
+  .inkbar .op, .oslider { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; flex: none; padding: 0 6px; }
+  .oslider input[type=range], .inkbar input[type=range] { width: 92px; accent-color: var(--accent); }
+  .oslider select { font: 14px var(--font); color: var(--ink); background: var(--field); border: 0; border-radius: 8px; padding: 6px; }
+  .ochip { flex: none; min-height: 32px !important; padding: 5px 12px !important; font-size: 13px !important; border-radius: 8px !important; color: var(--ink) !important; }
+  .ochip[aria-pressed="true"] { background: var(--accent-soft) !important; border-color: transparent !important; }
+  .swatch.custom { position: relative; overflow: hidden; display: inline-block; cursor: pointer; }
+  .swatch.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+  #layersPanel { position: fixed; right: 10px; top: calc(112px + env(safe-area-inset-top)); z-index: 32; width: min(320px, calc(100vw - 20px)); max-height: 62vh; overflow: auto;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; box-shadow: var(--shadow); padding: 8px; }
+  #layersPanel .lhead { display: flex; align-items: center; gap: 6px; padding: 2px 4px 8px; }
+  #layersPanel .lhead b { flex: 1; font-weight: 500; }
+  #layersPanel .lhead button { min-height: 32px; padding: 4px 12px; }
+  .lrow { display: flex; align-items: center; gap: 2px; border-radius: 10px; padding: 2px; }
+  .lrow.on { background: var(--accent-soft); }
+  .lrow .icon { width: 36px; height: 36px; font-size: 16px; color: var(--ink); }
+  .lname { flex: 1; min-width: 0; cursor: pointer; padding: 8px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lname small { color: var(--muted); }
+  .lmore { display: flex; flex-direction: column; gap: 8px; padding: 8px 6px 12px; border-bottom: 1px solid var(--rule); }
+  .lmore .oslider { padding: 0; }
+  .lbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .lbtns button { min-height: 32px; padding: 4px 12px; font-size: 13px; }
   .stage[data-tool=select] .box { cursor: move; outline: 1px dashed var(--rule); touch-action: none; }
   .stage[data-tool=select] .box .ed { pointer-events: none; }
   .box .grip { position: absolute; left: -20px; top: 2px; width: 20px; height: 30px; display: none; place-items: center; color: var(--muted); cursor: grab; touch-action: none; }
@@ -180,8 +205,9 @@
   .box .resize { position: absolute; right: -10px; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: none; touch-action: none; }
   .box.selected .resize, .box.focused .resize { display: block; }
   .box .resize::after { content: ""; position: absolute; left: 7px; top: 50%; width: 4px; height: 28px; margin-top: -14px; border-radius: 2px; background: var(--muted); opacity: .5; }
-  .stage[data-tool=pen], .stage[data-tool=highlighter] { cursor: crosshair; }
-  .stage[data-tool=eraser] { cursor: cell; }
+  .stage[data-tool=pen], .stage[data-tool=fill] { cursor: crosshair; }
+  .stage[data-tool=erase], .stage[data-tool=nudge] { cursor: none; }
+  .stage[data-tool=lasso] { cursor: default; }
   .sel { position: absolute; border: 1.5px dashed var(--accent); border-radius: 8px; pointer-events: none; }
   .selbar { position: absolute; z-index: 5; display: flex; gap: 6px; }
   .selbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; box-shadow: var(--shadow); }
@@ -278,6 +304,10 @@
   <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 103-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 4 4 3-3 4 4"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></symbol>
+  <symbol id="i-lasso" viewBox="0 0 24 24"><ellipse cx="12" cy="9.5" rx="8" ry="5.5" stroke-dasharray="3 2.4"/><path d="M8.5 14.3c-1.6 1.2-1.4 3.4.6 3.9 1.6.4 2-1.4.9-2.2M9 18l-1.5 3"/></symbol>
+  <symbol id="i-nudge" viewBox="0 0 24 24"><path d="M3 15c3-6 6 2 9-3s5-6 9-2"/><circle cx="12" cy="12" r="5.5" stroke-dasharray="2 2"/></symbol>
+  <symbol id="i-fill" viewBox="0 0 24 24"><path d="M5 11l6-6 7 7-6 6a2 2 0 01-2.8 0L5 13.8A2 2 0 015 11z"/><path d="M5 12h13M19.5 15.5s1.5 1.8 1.5 2.8a1.5 1.5 0 01-3 0c0-1 1.5-2.8 1.5-2.8z"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4l9 5-9 5-9-5 9-5z"/><path d="M3 13.5l9 5 9-5"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-chevd" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-notes" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="9" rx="1.5"/><rect x="13" y="4" width="7" height="6" rx="1.5"/><rect x="4" y="15" width="7" height="5" rx="1.5"/><rect x="13" y="12" width="7" height="8" rx="1.5"/></symbol>
@@ -336,9 +366,12 @@
   <div class="tools hidden" id="tools">
     <button class="tool" type="button" data-tool="type" aria-pressed="true"><svg class="i"><use href="#i-type"/></svg>Type</button>
     <button class="tool" type="button" data-tool="pen" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg>Pen</button>
-    <button class="tool" type="button" data-tool="highlighter" aria-pressed="false"><svg class="i"><use href="#i-hl"/></svg>Highlight</button>
-    <button class="tool" type="button" data-tool="eraser" aria-pressed="false"><svg class="i"><use href="#i-eraser"/></svg>Erase</button>
-    <button class="tool" type="button" data-tool="select" aria-pressed="false"><svg class="i"><use href="#i-move"/></svg>Move</button>
+    <button class="tool" type="button" data-tool="erase" aria-pressed="false"><svg class="i"><use href="#i-eraser"/></svg>Erase</button>
+    <button class="tool" type="button" data-tool="lasso" aria-pressed="false"><svg class="i"><use href="#i-lasso"/></svg>Lasso</button>
+    <button class="tool" type="button" data-tool="nudge" aria-pressed="false"><svg class="i"><use href="#i-nudge"/></svg>Nudge</button>
+    <button class="tool" type="button" data-tool="fill" aria-pressed="false"><svg class="i"><use href="#i-fill"/></svg>Fill</button>
+    <button class="tool" type="button" data-act="layers"><svg class="i"><use href="#i-layers"/></svg>Layers</button>
+    <button class="tool" type="button" data-tool="select" aria-pressed="false"><svg class="i"><use href="#i-move"/></svg>Move text</button>
     <span id="penOpts" style="display:contents"></span>
   </div>
   <div id="conflict" class="notice hidden">
@@ -398,6 +431,7 @@
     <button type="button" data-f="clear" aria-label="Clear formatting">Clear</button>
   </div>
   <div id="pop" class="pop hidden"></div>
+  <div id="layersPanel" class="hidden" aria-label="Layers"></div>
 </section>
 
 <div id="sheetBack" class="sheet-back hidden"><div class="sheet" role="dialog" aria-modal="true" id="sheet"></div></div>
@@ -408,6 +442,7 @@
 <script src="demo-data.js"></script>
 <script src="drive.js"></script>
 <script src="vendor.js"></script>
+<script src="ink.js"></script>
 <script src="notes.js"></script>
 <script src="canvas.js"></script>
 <script src="search.js"></script>

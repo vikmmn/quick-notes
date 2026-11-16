@@ -42,7 +42,7 @@
     var ink = [];
     var inkMatch = /\n?<!-- qn:ink\n([\s\S]*?)\n-->[ \t]*\n?/.exec(body);
     if (inkMatch) {
-      try { ink = JSON.parse(inkMatch[1]).groups || []; } catch (e) { ink = []; }
+      try { var j = JSON.parse(inkMatch[1]); ink = window.QNInk.normalize(j.layers ? j.layers : j.groups || []); } catch (e) { ink = []; }
       body = body.slice(0, inkMatch.index) + body.slice(inkMatch.index + inkMatch[0].length);
     }
     var lines = body.split('\n'), boxes = [], cur = null, before = [];
@@ -61,9 +61,10 @@
     boxes.forEach(function (b) { b.md = b.lines.join('\n').replace(/^\n+|\s+$/g, ''); delete b.lines; });
     return { boxes: boxes, ink: ink };
   }
+  function hasInk(n) { return !!(n && window.QNInk && window.QNInk.hasInk(n.ink)); }
   function isPlain(n) {
     var b = n.boxes || [];
-    return !(n.ink && n.ink.length) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w;
+    return !hasInk(n) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w;
   }
   function readingOrder(boxes) {
     return (boxes || []).slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); });
@@ -78,14 +79,7 @@
       return '<!-- qn:box ' + JSON.stringify({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), w: b.w ? Math.round(b.w) : null }) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
     });
-    if (n.ink && n.ink.length) {
-      var groups = n.ink.map(function (g) {
-        return { id: g.id, x: Math.round(g.x), y: Math.round(g.y), strokes: g.strokes.map(function (s) {
-          return { c: s.c, s: s.s, h: s.h ? 1 : undefined, p: s.p.map(function (p) { return [round(p[0]), round(p[1]), Math.round((p[2] || 0.5) * 100) / 100]; }) };
-        }) };
-      });
-      parts.push('<!-- qn:ink\n' + JSON.stringify({ groups: groups }) + '\n-->');
-    }
+    if (hasInk(n)) parts.push('<!-- qn:ink\n' + JSON.stringify(window.QNInk.toJSON(n.ink)) + '\n-->');
     return parts.join('\n\n');
   }
 
@@ -130,7 +124,7 @@
   // Notes saved by version 1 kept only `body`: give them a canvas.
   function upgrade(n) {
     if (!n.boxes) { var c = parseCanvas(n.body || ''); n.boxes = c.boxes; n.ink = c.ink; }
-    if (!n.ink) n.ink = [];
+    n.ink = n.ink && n.ink.length ? window.QNInk.normalize(n.ink) : [];
     if (n.folderId === undefined) n.folderId = null;
     delete n.kind; delete n.folder;
     n.body = bodyOf(n);
@@ -153,7 +147,7 @@
       var line = plainText(n.body).split('\n').map(function (l) { return l.replace(/^[\s\-\d.]+/, '').trim(); }).filter(Boolean)[0] || '';
       s = line.split(/\s+/).slice(0, 8).join(' ');
     }
-    if (!s && n.ink && n.ink.length) s = 'Drawing';
+    if (!s && hasInk(n)) s = 'Drawing';
     s = s.replace(/[\\/:*?"<>|#\[\]^]/g, '-').replace(/\s+/g, ' ').trim();
     if (s.length > 50) s = s.slice(0, 50).replace(/\s+\S*$/, '').trim() || s.slice(0, 50);
     return s || 'Note';
@@ -165,7 +159,7 @@
       ' ' + firstWords(n) + '.md';
   }
   function isEmpty(n) {
-    return !String(n.title || '').trim() && !plainText(bodyOf(n)).trim() && !(n.ink && n.ink.length) && !(n.labels || []).length;
+    return !String(n.title || '').trim() && !plainText(bodyOf(n)).trim() && !hasInk(n) && !(n.labels || []).length;
   }
 
   // ---------------- The copy on this device ----------------
@@ -264,9 +258,8 @@
     async function ensureFolders() {
       if (folders && folders.notes) return folders;
       var f = {};
-      var top = await Drive.findExact(CFG.NOTES_FOLDER_NAME, CFG.READABLES_FOLDER_ID, FOLDER) ||
-        await Drive.createFolder(CFG.NOTES_FOLDER_NAME, CFG.READABLES_FOLDER_ID);
-      f.notes = top.id;
+      var top = await Drive.findRoot();
+      f.notes = top.id; f.rootName = top.name;
       for (var i = 0; i < CFG.SUBFOLDERS.length; i++) {
         var name = CFG.SUBFOLDERS[i];
         var sub = await Drive.findExact(name, top.id, FOLDER) || await Drive.createFolder(name, top.id);
@@ -443,6 +436,7 @@
       try {
         if (!(await takeBack())) { running = false; state.phase = 'idle'; emit(); api.schedule(4000); return; }
         await ensureFolders();
+        if (!folders.rootName) { try { folders.rootName = (await Drive.get(folders.notes)).name; saveFolders(); } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; } }
         await push();
         if (opts.pull || !state.lastSynced) { await pull(); await push(); }
         state.phase = 'idle'; state.lastSynced = Date.now();
@@ -472,6 +466,7 @@
       },
       // ---- Folders: Drive folders inside Notes. Changing them needs a connection. ----
       root: function () { return folders && folders.notes; },
+      rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Quick Notes'; },
       inbox: function () { return folders && folders[CFG.SUBFOLDERS[0]]; },
       tree: function () { return tree; },
       createFolder: async function (name, parentId) {
@@ -538,5 +533,5 @@
   }
 
   window.Notes = { parse: parse, serialize: serialize, fileName: fileName, isEmpty: isEmpty, bodyOf: bodyOf, plainText: plainText,
-    readingOrder: readingOrder, parseCanvas: parseCanvas, upgrade: upgrade, uuid: uuid, shortId: shortId, TASK: TASK, Store: Store, Sync: Sync };
+    readingOrder: readingOrder, hasInk: hasInk, parseCanvas: parseCanvas, upgrade: upgrade, uuid: uuid, shortId: shortId, TASK: TASK, Store: Store, Sync: Sync };
 })();
