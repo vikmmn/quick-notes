@@ -122,6 +122,7 @@
         else { renderConflict(); renderMeta(); }
       }
     },
+    progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; $('syncPill').textContent = 'Syncing ' + n + '/' + total; },
     folders: function () { if (S.view === 'list') renderList(); if (!$('drawer').classList.contains('hidden')) renderTree(); renderMeta(); }
   });
   function editingNow() { return document.activeElement && $('editorView').contains(document.activeElement) && document.activeElement !== document.body; }
@@ -269,8 +270,15 @@
     $('subfolders').innerHTML = S.label ? '' : subs.map(function (f) {
       return '<div class="folder" data-folder="' + esc(f.id) + '">' + icon('folder') + '<span>' + esc(f.name) + '</span><small>' + countIn(f.id) + '</small></div>';
     }).join('') + (rootId() ? '<div class="folder" data-newfolder="1" style="color:var(--muted)">' + icon('plus') + '<span>New folder</span></div>' : '');
-    $('pinned').innerHTML = pinned.map(function (n) { return card(n); }).join('');
-    $('others').innerHTML = others.map(function (n) { return card(n); }).join('');
+    var plimit = S.plimit || 100;
+    $('pinned').innerHTML = pinned.slice(0, plimit).map(function (n) { return card(n); }).join('') +
+      (pinned.length > plimit ? '<div style="column-span:all;text-align:center;padding:12px"><button type="button" id="morePinned">Show more pinned (' + (pinned.length - plimit) + ' left)</button></div>' : '');
+    var mp = $('morePinned'); if (mp) mp.onclick = function (e) { e.stopPropagation(); S.plimit = plimit + 100; renderList(); };
+    // Big folders (thousands of Keep notes) show 200 at a time.
+    var limit = S.limit || 200;
+    $('others').innerHTML = others.slice(0, limit).map(function (n) { return card(n); }).join('') +
+      (others.length > limit ? '<div style="column-span:all;text-align:center;padding:12px"><button type="button" id="moreBtn">Show more (' + (others.length - limit) + ' left)</button></div>' : '');
+    var mb = $('moreBtn'); if (mb) mb.onclick = function (e) { e.stopPropagation(); S.limit = limit + 200; renderList(); };
     $('pinnedHead').classList.toggle('hidden', !pinned.length);
     $('othersHead').classList.toggle('hidden', !pinned.length || !others.length);
     $('emptyMsg').classList.toggle('hidden', !!shown.length);
@@ -288,7 +296,7 @@
     if (f) return goFolder(f.dataset.folder);
     if (e.target.closest('[data-newfolder]')) newFolderSheet(S.folder || rootId());
   });
-  function goFolder(id) { S.folder = id || null; S.label = null; $('q').value = ''; S.q = ''; renderList(); window.scrollTo(0, 0); }
+  function goFolder(id) { S.limit = 200; S.folder = id || null; S.label = null; $('q').value = ''; S.q = ''; renderList(); window.scrollTo(0, 0); }
 
   function tickTask(n, idx) {
     var count = 0;

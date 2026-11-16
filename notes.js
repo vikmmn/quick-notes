@@ -296,6 +296,20 @@
       var byFile = {}, byId = {};
       all().forEach(function (n) { if (n.fileId) byFile[n.fileId] = n; byId[n.id] = n; });
       var seen = {}, changed = [];
+      // Download every changed file first, many at once (each request to Drive can take seconds).
+      var need = remote.filter(function (f) {
+        var l = byFile[f.id];
+        return !(l && (l.md5 === f.md5Checksum || l.dirty || l.conflict));
+      });
+      var texts = {}, q = need.slice(), got = 0;
+      async function fetcher() {
+        while (q.length) {
+          var f = q.shift();
+          try { texts[f.id] = await Drive.readText(f.id); } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
+          if (++got % 50 === 0 && hooks.progress) hooks.progress(got, need.length);
+        }
+      }
+      if (need.length) await Promise.all(Array.from({ length: Math.min(16, need.length) }, fetcher));
       for (var i = 0; i < remote.length; i++) {
         var f = remote[i];
         seen[f.id] = true;
@@ -309,7 +323,8 @@
           if (!local.conflict) { local.conflict = { md5: f.md5Checksum, trashed: false, modifiedTime: f.modifiedTime }; await store.put(local); changed.push(local.id); }
           continue;
         }
-        var fresh = parse(await Drive.readText(f.id), f);
+        if (texts[f.id] === undefined) continue; // could not be read this time; next sync tries again
+        var fresh = parse(texts[f.id], f);
         var target = local || (byId[fresh.id] && !byId[fresh.id].fileId ? byId[fresh.id] : null);
         if (!target && byId[fresh.id]) fresh.id = fresh.id + '-' + f.id.slice(-6); // same id in two files: keep both
         if (target) {
