@@ -15,15 +15,37 @@
   var S = { sources: [], index: null, plan: null, paused: null, stop: false };
 
   // ---------- Sources: Takeout zips in Drive, or zips on this device ----------
+  // Reads the zip straight from Drive in big 8 MB blocks, a few at a time, and keeps recent blocks in memory.
+  // Each request to Drive takes seconds whatever its size, so a few big reads beat thousands of small ones.
+  var BLOCK = 8 * 1048576, KEEP = 24;
   function DriveZip(file) {
-    // Reads only the pieces of the zip that are needed, straight from Drive.
+    var blocks = new Map(); // block number -> Promise<Uint8Array>
+    function block(n, size) {
+      if (blocks.has(n)) { var p = blocks.get(n); blocks.delete(n); blocks.set(n, p); return p; } // most recent last
+      var start = n * BLOCK, end = Math.min(size, start + BLOCK) - 1;
+      var pr = withAuth(function () { return Drive.readRange(file.id, start, end); });
+      pr.catch(function () { blocks.delete(n); });
+      blocks.set(n, pr);
+      while (blocks.size > KEEP) blocks.delete(blocks.keys().next().value);
+      return pr;
+    }
     class DriveReader extends Z.Reader {
       async init() {
         this.size = Number(file.size) || await withAuth(function () { return Drive.size(file.id); });
         if (super.init) await super.init();
       }
-      readUint8Array(index, length) {
-        return withAuth(function () { return Drive.readRange(file.id, index, index + length - 1); });
+      async readUint8Array(index, length) {
+        var size = this.size, first = Math.floor(index / BLOCK), last = Math.floor((index + length - 1) / BLOCK);
+        if (last - first > 3) return withAuth(function () { return Drive.readRange(file.id, index, index + length - 1); });
+        var parts = [];
+        for (var n = first; n <= last; n++) parts.push(block(n, size));
+        parts = await Promise.all(parts);
+        var out = new Uint8Array(length), at = 0;
+        for (var i = 0; i < parts.length; i++) {
+          var bStart = (first + i) * BLOCK, from = Math.max(index, bStart) - bStart, to = Math.min(index + length, bStart + parts[i].length) - bStart;
+          out.set(parts[i].subarray(from, to), at); at += to - from;
+        }
+        return out;
       }
     }
     return new DriveReader();
@@ -70,17 +92,18 @@
       S.sources = chosen;
       say('Reading ' + notes.length + ' notes…');
       var parsed = [];
-      for (var j = 0; j < notes.length; j += 8) {
-        var batch = notes.slice(j, j + 8);
+      notes.sort(function (a, b) { return a.src === b.src ? a.entry.offset - b.entry.offset : 0; });
+      for (var j = 0; j < notes.length; j += 48) {
+        var batch = notes.slice(j, j + 48);
         var got = await Promise.all(batch.map(function (n) {
           return withAuth(function () { return n.entry.getData(new Z.TextWriter()); }).then(function (t) {
             try { return { json: JSON.parse(t), file: base(n.entry.filename) }; } catch (e) { return null; }
           });
         }));
         got.forEach(function (g) { if (g && (g.json.textContent !== undefined || g.json.listContent || g.json.title !== undefined || g.json.attachments)) parsed.push(g); });
-        say('Reading notes… ' + Math.min(j + 8, notes.length) + ' of ' + notes.length);
+        say('Reading notes… ' + Math.min(j + 48, notes.length) + ' of ' + notes.length);
       }
-      parsed.sort(function (a, b) { return a.file.localeCompare(b.file); });
+      // parsed stays in zip order: the import then reads attachments block by block, not all over the file
       S.index = { notes: parsed, files: files, bytes: total };
       summarize();
     } catch (e) { say(e.message || String(e), true); }
@@ -239,7 +262,7 @@
           show();
         }
       }
-      await Promise.all([worker(), worker(), worker()]);
+      await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
       show(S.stop ? 'Stopped. Run it again any time to carry on where it stopped.' : 'Done.');
       $('result').innerHTML = (S.stop ? '<p><b>Stopped.</b> Run the import again to carry on; what is already there is skipped.</p>' :
         '<p><b>Import finished.</b> Open Quick Notes and the notes appear in Keep as it syncs. Check a few before you clear out Google Keep.</p>') +
