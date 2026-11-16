@@ -197,21 +197,39 @@
   .size { width: 32px; height: 32px; min-height: 0; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; flex: none; }
   .size i { display: block; border-radius: 50%; background: var(--ink); }
   .size[aria-pressed="true"] { background: var(--accent-soft); }
-  #canvasWrap { flex: 1; min-height: 0; overflow: auto; position: relative; overscroll-behavior: contain; padding-bottom: 80px; }
-  #noteHead { padding: 8px 16px 0; position: sticky; left: 0; max-width: 100vw; }
+  /* A note is an endless page: the head stays put, the page underneath moves, zooms and turns */
+  #canvasWrap { flex: 1; min-height: 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+  #noteHead { padding: 8px 16px 4px; flex: none; }
+  #canvasHost { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; overscroll-behavior: contain; }
+  #canvasHost.picking { cursor: zoom-in; }
+  .qn-nav { position: absolute; right: 12px; bottom: 84px; width: 168px; height: 124px; z-index: 8; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; touch-action: none; cursor: pointer; }
+  .qn-nav svg { width: 100%; height: 100%; display: block; }
+  .qn-area { position: absolute; z-index: 9; border: 2px dashed var(--accent); background: rgba(0,121,107,.08); border-radius: 6px; pointer-events: none; }
+  #viewCtl { position: fixed; right: 16px; z-index: 25; bottom: calc(22px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; }
+  #viewCtl.lift { bottom: calc(70px + env(safe-area-inset-bottom)); }
+  #viewCtl button { min-height: 40px; height: 40px; padding: 0 14px; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); border-color: transparent; color: var(--ink); font-size: 14px; }
+  #viewCtl #compass { width: 40px; padding: 0; display: grid; place-items: center; }
+  #viewCtl #compass svg { transition: transform .1s; }
+  #viewMenu { position: fixed; right: 16px; z-index: 36; bottom: calc(72px + env(safe-area-inset-bottom)); min-width: 230px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; }
+  #viewMenu.lift { bottom: calc(120px + env(safe-area-inset-bottom)); }
+  #viewMenu button { display: flex; width: 100%; justify-content: space-between; border: 0; background: transparent; padding: 12px; text-align: left; font-size: 15px; color: var(--ink); border-radius: 10px; }
+  #viewMenu button:hover { background: var(--field); }
+  #viewMenu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
+  #viewMenu .zrow { display: flex; gap: 4px; padding: 2px 4px 6px; }
+  #viewMenu .zrow button { justify-content: center; background: var(--field); font-size: 18px; padding: 8px; }
   #noteTitle { display: block; width: 100%; outline: 0; color: var(--ink); font: 400 22px/1.3 var(--font); }
   #noteMeta { font-size: 12px; color: var(--muted); }
   #noteLabels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   #noteLabels:empty { display: none; }
   ::placeholder { color: var(--muted); opacity: .8; }
 
-  .stage { position: relative; touch-action: none; }
+  .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; touch-action: none; }
   .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-  .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: pan-x pan-y; }
+  .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: none; }
   .box.focused { box-shadow: 0 0 0 1px var(--rule); }
   .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box { pointer-events: none; }
   .ink-ui { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 3; }
-  .inkbar { position: absolute; z-index: 6; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
+  .inkbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
   .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
   .inkbar .sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); }
   .inkbar .op, .oslider { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; flex: none; padding: 0 6px; }
@@ -434,6 +452,19 @@
     <div id="canvasHost"></div>
   </div>
   <button id="menuFab" class="fab" type="button" aria-label="Note options" aria-expanded="false"><svg class="i"><use href="#i-more"/></svg></button>
+  <div id="viewCtl">
+    <button id="compass" type="button" class="hidden" aria-label="Straighten the page" title="Straighten"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l3.5 9h-7z" fill="var(--bad)" stroke="none"/><path d="M12 21l-3.5-9h7z" fill="var(--muted)" stroke="none"/></svg></button>
+    <button id="zoomBtn" type="button" aria-label="Zoom and view" aria-expanded="false">100%</button>
+  </div>
+  <div id="viewMenu" class="hidden" role="menu">
+    <div class="zrow"><button type="button" data-v="zoomOut" aria-label="Zoom out">−</button><button type="button" data-v="actual" aria-label="Actual size">100%</button><button type="button" data-v="zoomIn" aria-label="Zoom in">+</button></div>
+    <button type="button" data-v="fit">Fit everything on screen</button>
+    <button type="button" data-v="area">Zoom into an area…</button>
+    <button type="button" data-v="straighten">Straighten the page</button>
+    <hr>
+    <button type="button" data-v="nav">Navigator <span id="navState">Off</span></button>
+    <button type="button" data-v="rot">Turn with two fingers <span id="rotState">On</span></button>
+  </div>
   <div id="noteMenu" class="hidden" role="menu">
     <button type="button" data-m="image"><svg class="i"><use href="#i-image"/></svg>Add image</button>
     <button type="button" data-m="labels"><svg class="i"><use href="#i-label"/></svg>Labels</button>

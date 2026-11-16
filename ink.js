@@ -322,7 +322,9 @@
     var layers = o.layers;           // the note's own array (kept, changed in place)
     var svg = o.svg, stage = o.stage, M = o.margin;
     var ui = document.createElementNS(NS, 'svg'); ui.setAttribute('class', 'ink-ui'); stage.appendChild(ui);
-    var bar = document.createElement('div'); bar.className = 'inkbar hidden'; stage.appendChild(bar);
+    var bar = document.createElement('div'); bar.className = 'inkbar hidden'; (o.uiHost || stage).appendChild(bar);
+    // Handles, tool circles and tap distances stay the same size on screen at any zoom.
+    function Z() { return o.zoom ? o.zoom() : 1; }
     var tool = 'pen', opt = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 } };
     var activeId = layers[layers.length - 1].id;
     var drag = null, sel = null, raf = 0;
@@ -337,15 +339,15 @@
     // ---- Overlay: lasso line, tool circle, selection frame and handles ----
     var cursor = null;
     function drawUi() {
-      var h = '';
-      if (drag && drag.lasso && drag.lasso.length > 1) h += '<path d="M' + drag.lasso.map(function (q) { return (q[0] + M) + ' ' + (q[1] + M); }).join('L') + '" fill="' + (tool === 'fill' ? 'rgba(0,121,107,.12)' : 'none') + '" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>';
-      if (cursor) h += '<circle cx="' + (cursor[0] + M) + '" cy="' + (cursor[1] + M) + '" r="' + cursor[2] + '" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>';
+      var h = '', k = 1 / Z();
+      if (drag && drag.lasso && drag.lasso.length > 1) h += '<path d="M' + drag.lasso.map(function (q) { return (q[0] + M) + ' ' + (q[1] + M); }).join('L') + '" fill="' + (tool === 'fill' ? 'rgba(0,121,107,.12)' : 'none') + '" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
+      if (cursor) h += '<circle cx="' + (cursor[0] + M) + '" cy="' + (cursor[1] + M) + '" r="' + cursor[2] + '" fill="none" stroke="var(--muted)" stroke-width="' + k + '" stroke-dasharray="' + 3 * k + ' ' + 3 * k + '"/>';
       if (sel && sel.box) {
-        var b = sel.box, x = b.x + M - 6, y = b.y + M - 6, w = b.w + 12, hh = b.h + 12;
-        h += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="6 4" rx="6"/>' +
-          '<line x1="' + (x + w / 2) + '" y1="' + y + '" x2="' + (x + w / 2) + '" y2="' + (y - 22) + '" stroke="var(--accent)" stroke-width="1.5"/>' +
-          '<circle cx="' + (x + w / 2) + '" cy="' + (y - 28) + '" r="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>' +
-          '<rect x="' + (x + w - 9) + '" y="' + (y + hh - 9) + '" width="18" height="18" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>';
+        var b = sel.box, pd = 6 * k, x = b.x + M - pd, y = b.y + M - pd, w = b.w + 2 * pd, hh = b.h + 2 * pd;
+        h += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 6 * k + ' ' + 4 * k + '" rx="' + 6 * k + '"/>' +
+          '<line x1="' + (x + w / 2) + '" y1="' + y + '" x2="' + (x + w / 2) + '" y2="' + (y - 22 * k) + '" stroke="var(--accent)" stroke-width="' + 1.5 * k + '"/>' +
+          '<circle cx="' + (x + w / 2) + '" cy="' + (y - 28 * k) + '" r="' + 8 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>' +
+          '<rect x="' + (x + w - 9 * k) + '" y="' + (y + hh - 9 * k) + '" width="' + 18 * k + '" height="' + 18 * k + '" rx="' + 4 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>';
       }
       ui.innerHTML = h;
       placeBar();
@@ -375,15 +377,25 @@
       } else {
         h = '<button type="button" data-act="dup">Duplicate</button><button type="button" data-act="del">Delete</button>' +
           '<button type="button" data-act="' + (grouped ? 'ungroup' : 'group') + '"' + (sel.items.length < 2 ? ' disabled' : '') + '>' + (grouped ? 'Ungroup' : 'Group') + '</button>' +
-          '<button type="button" data-act="color">Colour</button>' + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '');
+          '<button type="button" data-act="color">Colour</button>' + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
+          (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '');
       }
       bar.innerHTML = h; bar.classList.remove('hidden'); placeBar();
     }
     function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
     function placeBar() {
       if (!sel || !sel.box) { bar.classList.add('hidden'); return; }
-      bar.style.left = Math.max(4, sel.box.x + M - 6) + 'px';
-      bar.style.top = (sel.box.y + sel.box.h + M + 14) + 'px';
+      var b = sel.box;
+      if (o.toScreen) { // the bar lives on the screen, under the selection, whatever the zoom and turn
+        var pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].map(function (q) { return o.toScreen(q[0], q[1]); });
+        var x0 = Math.min.apply(null, pts.map(function (q) { return q[0]; })), y1 = Math.max.apply(null, pts.map(function (q) { return q[1]; }));
+        var host = o.uiHost, W = host.clientWidth, H = host.clientHeight;
+        bar.style.left = Math.max(6, Math.min(W - bar.offsetWidth - 6, x0)) + 'px';
+        bar.style.top = Math.max(6, Math.min(H - bar.offsetHeight - 6, y1 + 16)) + 'px';
+        return;
+      }
+      bar.style.left = Math.max(4, b.x + M - 6) + 'px';
+      bar.style.top = (b.y + b.h + M + 14) + 'px';
     }
     bar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     bar.addEventListener('input', function (e) {
@@ -401,6 +413,7 @@
         done(); renderBar(); return;
       }
       if (act === 'back') return renderBar();
+      if (act === 'zoom') { o.zoomTo(sel.box); return; }
       if (act === 'color' || act === 'layer') return renderBar(act);
       if (act === 'del') { sel.items.forEach(function (it) { var l = layerOf(it); if (l) l.items.splice(l.items.indexOf(it), 1); }); setSel(null); done(); return; }
       if (act === 'dup') {
@@ -419,9 +432,9 @@
     // ---- Transforming the selection: drag inside to move, the corner to scale, the knob to rotate ----
     function handleAt(p) {
       if (!sel || !sel.box) return null;
-      var b = sel.box, x = b.x - 6, y = b.y - 6, w = b.w + 12, h = b.h + 12;
-      if (Math.hypot(p[0] - (x + w / 2), p[1] - (y - 28)) < 20) return 'rotate';
-      if (Math.hypot(p[0] - (x + w), p[1] - (y + h)) < 22) return 'scale';
+      var k = 1 / Z(), b = sel.box, x = b.x - 6 * k, y = b.y - 6 * k, w = b.w + 12 * k, h = b.h + 12 * k;
+      if (Math.hypot(p[0] - (x + w / 2), p[1] - (y - 28 * k)) < 20 * k) return 'rotate';
+      if (Math.hypot(p[0] - (x + w), p[1] - (y + h)) < 22 * k) return 'scale';
       if (p[0] >= x && p[0] <= x + w && p[1] >= y && p[1] <= y + h) return 'move';
       return null;
     }
@@ -469,8 +482,8 @@
         drag = { stroke: it, el: tmp, layer: L };
         return true;
       }
-      if (tool === 'erase') { drag = { erase: true, any: false }; cursor = [p[0], p[1], opt.erase.s]; eraseAt(p); drawUi(); return true; }
-      if (tool === 'nudge') { drag = { nudge: true, last: p, any: false }; cursor = [p[0], p[1], opt.nudge.r]; drawUi(); return true; }
+      if (tool === 'erase') { drag = { erase: true, any: false }; cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); drawUi(); return true; }
+      if (tool === 'nudge') { drag = { nudge: true, last: p, any: false }; cursor = [p[0], p[1], opt.nudge.r / Z()]; drawUi(); return true; }
       if (tool === 'fill') {
         if (opt.fill.m === 'lasso') drag = { lasso: [p], fillShape: true };
         else drag = { tap: p, t: Date.now() };
@@ -480,7 +493,7 @@
     };
     self.move = function (p, ev, pts) {
       if (!drag) {
-        if (ev.pointerType !== 'touch' && (tool === 'erase' || tool === 'nudge')) { cursor = [p[0], p[1], tool === 'erase' ? opt.erase.s : opt.nudge.r]; drawUi(); }
+        if (ev.pointerType !== 'touch' && (tool === 'erase' || tool === 'nudge')) { cursor = [p[0], p[1], (tool === 'erase' ? opt.erase.s : opt.nudge.r) / Z()]; drawUi(); }
         return;
       }
       if (drag.kind) { applyTransform(p); return; }
@@ -491,10 +504,10 @@
         return;
       }
       if (drag.lasso) { drag.lasso.push(p); drawUi(); return; }
-      if (drag.erase) { cursor = [p[0], p[1], opt.erase.s]; eraseAt(p); drawUi(); return; }
+      if (drag.erase) { cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); drawUi(); return; }
       if (drag.nudge) {
-        cursor = [p[0], p[1], opt.nudge.r];
-        var R = opt.nudge.r, k = opt.nudge.k, dx = p[0] - drag.last[0], dy = p[1] - drag.last[1];
+        cursor = [p[0], p[1], opt.nudge.r / Z()];
+        var R = opt.nudge.r / Z(), k = opt.nudge.k, dx = p[0] - drag.last[0], dy = p[1] - drag.last[1];
         layers.forEach(function (l) {
           if (!editable(l)) return;
           l.items.forEach(function (it) {
@@ -522,17 +535,17 @@
         for (var i = 1; i < poly.length; i++) len += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
         if (d.fillShape) {
           drawUi();
-          if (len < 20) return;
+          if (len < 20 / Z()) return;
           var L = active();
           if (!editable(L)) { o.notice('This layer is locked or hidden.'); return; }
           addFill(L, [simplify(poly.map(function (q) { return [q[0], q[1]]; }), 0.8)]);
           return;
         }
-        if (len < 12) { // a tap: pick what is under it
+        if (len < 12 / Z()) { // a tap: pick what is under it
           var hit = null;
           for (var li = layers.length - 1; li >= 0 && !hit; li--) {
             if (!editable(layers[li])) continue;
-            for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8)) { hit = layers[li].items[j]; break; }
+            for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8 / Z())) { hit = layers[li].items[j]; break; }
           }
           setSel(hit ? [hit] : null); return;
         }
@@ -552,7 +565,7 @@
     self.leave = function () { if (!drag) { cursor = null; drawUi(); } };
 
     function eraseAt(p) {
-      var r = opt.erase.s;
+      var r = opt.erase.s / Z();
       layers.forEach(function (l) {
         if (!editable(l)) return;
         for (var i = l.items.length - 1; i >= 0; i--) {
@@ -584,6 +597,8 @@
 
     // ---- What the canvas and the app can ask ----
     self.render = render;
+    self.viewChanged = function () { drawUi(); };
+    self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
     self.setTool = function (t) { tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
     self.opts = function (k, v) { if (v) Object.assign(opt[k], v); return opt[k]; };
@@ -626,6 +641,6 @@
     render();
   }
 
-  window.QNInk = { Engine: Engine, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  window.QNInk = { Engine: Engine, svgFor: function (layers, prefix, dx, dy) { return markup(layers, prefix, dx, dy); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();

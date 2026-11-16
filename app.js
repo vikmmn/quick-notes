@@ -608,6 +608,13 @@
   var canvasHooks = {
     change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); if (kind === 'ink' || kind === 'restore') renderLayers(); },
     notice: function (t) { toast(t, null, null, 3500); },
+    view: function (v) {
+      $('zoomBtn').textContent = Math.round(v.z * 100) + '%';
+      var turned = Math.abs(Math.atan2(Math.sin(v.r), Math.cos(v.r))) > 0.01;
+      $('compass').classList.toggle('hidden', !turned);
+      $('compass').firstChild.style.transform = 'rotate(' + v.r + 'rad)';
+    },
+    gesture: function (g) { toast(g === 'undo' ? 'Undone' : 'Redone', null, null, 900); },
     history: function (u, r) { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
     focus: function () { showFmt(true); },
     blur: function () { setTimeout(function () { if (!S.canvas || !S.canvas.active() || !document.activeElement.closest || !document.activeElement.closest('.ProseMirror')) showFmt(false); }, 120); },
@@ -629,12 +636,13 @@
     renderLabelsRow(); renderConflict(); renderMeta();
     $('canvasWrap').scrollTo(0, 0);
     S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks);
+    applyViewPrefs();
     setTool(isNew || !PREF.showTools ? 'type' : (PREF.tool === 'erase' || PREF.tool === 'select' || PREF.tool === 'lasso' ? 'type' : PREF.tool));
     renderLayers();
     $('undoBtn').disabled = true; $('redoBtn').disabled = true;
     if (isNew) setTimeout(function () { S.canvas.focusStart(); }, 50);
   }
-  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
+  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyViewPrefs(); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
   function closeNote() {
     var n = S.cur;
     if (!n) return;
@@ -642,7 +650,7 @@
     saveNow();
     if (!n.isDraft && N.isEmpty(n) && !n.fileId) { delete notes[n.id]; store.del(n.id); }
     S.cur = null;
-    showFmt(false); closeMenu(); $('pop').classList.add('hidden');
+    showFmt(false); closeMenu(); closeViewMenu(); $('pop').classList.add('hidden');
     sync.run();
   }
   function showList() {
@@ -801,6 +809,31 @@
   });
   $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
 
+  // ---------- Zoom, navigator and turning ----------
+  function applyViewPrefs() {
+    if (!S.canvas) return;
+    S.canvas.viewOps.navigator(!!PREF.nav); S.canvas.viewOps.rotate(PREF.rotate !== false);
+    $('navState').textContent = PREF.nav ? 'On' : 'Off'; $('rotState').textContent = PREF.rotate !== false ? 'On' : 'Off';
+  }
+  function closeViewMenu() { $('viewMenu').classList.add('hidden'); $('zoomBtn').setAttribute('aria-expanded', 'false'); }
+  $('zoomBtn').onclick = function () {
+    var open = $('viewMenu').classList.contains('hidden');
+    $('viewMenu').classList.toggle('hidden', !open); $('zoomBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  $('compass').onclick = function () { if (S.canvas) S.canvas.viewOps.straighten(); };
+  $('viewMenu').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-v]'); if (!b || !S.canvas) return;
+    var v = b.dataset.v, ops = S.canvas.viewOps;
+    if (v === 'nav') { PREF.nav = !PREF.nav; savePref(); applyViewPrefs(); return; }
+    if (v === 'rot') { PREF.rotate = PREF.rotate === false; savePref(); applyViewPrefs(); return; }
+    if (v === 'area') { closeViewMenu(); ops.area(); toast('Drag across the part you want to zoom into', null, null, 2500); return; }
+    ops[v]();
+    if (v !== 'zoomIn' && v !== 'zoomOut') closeViewMenu();
+  });
+  document.addEventListener('pointerdown', function (e) {
+    if (!$('viewMenu').classList.contains('hidden') && !e.target.closest('#viewMenu, #zoomBtn')) closeViewMenu();
+  }, true);
+
   // ---------- Layers panel ----------
   function toggleLayers() { var p = $('layersPanel'); p.classList.toggle('hidden'); if (!p.classList.contains('hidden')) renderLayers(); }
   function renderLayers() {
@@ -861,6 +894,7 @@
   function showFmt(on) {
     $('fmtBar').classList.toggle('hidden', !on);
     $('menuFab').classList.toggle('lift', on); $('noteMenu').classList.toggle('lift', on);
+    $('viewCtl').classList.toggle('lift', on); $('viewMenu').classList.toggle('lift', on);
     if (!on) $('pop').classList.add('hidden');
     placeFmt();
   }
@@ -1252,6 +1286,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-8 120 70)"><rect x="70" y="34" width="100" height="72" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M84 84c10-14 20 6 30-4s16-10 24 0" fill="none" stroke="' + INKC + '" stroke-width="3.5" stroke-linecap="round"/></g>' +
+        '<circle cx="54" cy="104" r="9" fill="' + A + '" opacity=".35"/><circle cx="186" cy="38" r="9" fill="' + A + '" opacity=".35"/><path d="M60 98l14-12M180 44l-14 12" stroke="' + A + '" stroke-width="3" stroke-linecap="round"/>') },
     { t: 'Sign in once, stay signed in', d: 'Quick Notes now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
       a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M92 86h52a16 16 0 002.4-31.8A24 24 0 0099 48.6 19 19 0 0092 86z" fill="' + SOFT + '" stroke="' + A + '" stroke-width="3"/><path d="M105 67l9 9 17-18" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>') },
     { t: 'A real sketchbook', d: 'Tap the pen at the top of a note. Pick a tool in the first row; its settings appear right under it: five pens, any colour, size and opacity.',
