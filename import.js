@@ -210,13 +210,23 @@
     var d = S.paused; S.paused = null; if (d) d.resolve();
   };
 
+  // The screen stays on while importing; Android lets go of that when you switch away, so take it again on return.
+  var lock = null, wantLock = false;
+  async function holdScreen(on) {
+    wantLock = on;
+    try {
+      if (on && navigator.wakeLock && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', function () { lock = null; }); }
+      if (!on && lock) { await lock.release(); lock = null; }
+    } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && wantLock) holdScreen(true); });
+
   async function run() {
     var opts = { archive: $('optArchive').checked, trash: $('optTrash').checked, files: $('optFiles').checked, links: true };
     var todo = plan(opts);
     $('importBtn').disabled = true; $('scanBtn').disabled = true; S.stop = false;
     $('progress').classList.remove('hidden');
-    var lock = null;
-    try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) {}
+    await holdScreen(true);
     var log = [], done = 0, skipped = 0, filesDone = 0, filesSkipped = 0, bytes = 0;
     function show(now) {
       $('bar').style.width = (todo.length ? Math.round((done + skipped) / todo.length * 100) : 100) + '%';
@@ -273,7 +283,7 @@
         (log.length ? '<details open><summary>' + log.length + ' problem' + (log.length > 1 ? 's' : '') + '</summary><ul>' + log.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul></details>' : '') +
         '<p><a class="button" href="./">Open Quick Notes</a></p>';
     } catch (e) { say(e.message || String(e), true); }
-    try { if (lock) lock.release(); } catch (e) {}
+    await holdScreen(false);
     $('importBtn').disabled = false; $('scanBtn').disabled = false;
   }
 

@@ -199,6 +199,10 @@
       findTakeout: function () {
         return query("name contains 'takeout-' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
       },
+      findZips: function (term) {
+        return query("name contains '" + qs(term) + "' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
+      },
+      token: function () { return signedIn() ? { token: token, expiresAt: expiresAt } : null; },
       findExact: async function (name, parentId, mime) {
         var q = "name = '" + qs(name) + "' and trashed = false and '" + qs(parentId) + "' in parents" +
           (mime ? " and mimeType = '" + qs(mime) + "'" : '');
@@ -274,6 +278,8 @@
       rename: function (id, name) { return wait().then(function () { files[id].name = name; }); },
       upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
       findTakeout: function () { return wait([]); },
+      findZips: function () { return wait([]); },
+      token: function () { return null; },
       readBlob: function (id) { return wait(files[id].blob || new Blob([files[id].text])); },
       revisions: function (id) { var f = files[id]; return wait((f.revs || []).map(function (r) { return { id: r.id, modifiedTime: r.modifiedTime, size: r.size }; }).concat([{ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length) }])); },
       readRevision: function (id, revId) { var f = files[id], r = (f.revs || []).filter(function (x) { return x.id === revId; })[0]; return wait(r ? r.text : f.text); },

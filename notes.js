@@ -145,7 +145,7 @@
     return out.join('\n').replace(/\s+$/, '') + '\n';
   }
   function plainText(md) {
-    return String(md || '').replace(/<[^>]+>/g, '').replace(TASK, '$2').replace(/[*_~`#>]/g, '').replace(/\\\n/g, '\n');
+    return String(md || '').replace(/&nbsp;/g, ' ').replace(/<[^>]+>/g, '').replace(TASK, '$2').replace(/[*_~`#>]/g, '').replace(/\\\n/g, '\n');
   }
   function firstWords(n) {
     var s = (n.title || '').trim();
@@ -177,8 +177,14 @@
       if (Drive.demo || !window.indexedDB) return Promise.resolve(null);
       return new Promise(function (resolve) {
         try {
-          var r = indexedDB.open('quick-notes', 1);
-          r.onupgradeneeded = function () { r.result.createObjectStore('notes', { keyPath: 'id' }); };
+          var r = indexedDB.open('quick-notes', 2);
+          r.onupgradeneeded = function () {
+            var d = r.result;
+            if (!d.objectStoreNames.contains('notes')) d.createObjectStore('notes', { keyPath: 'id' });
+            // Changes handed to the service worker to send while the phone sleeps, and the sign-in it sends them with.
+            if (!d.objectStoreNames.contains('outbox')) d.createObjectStore('outbox', { keyPath: 'noteId' });
+            if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'key' });
+          };
           r.onsuccess = function () { resolve(r.result); };
           r.onerror = function () { resolve(null); };
         } catch (e) { resolve(null); }
@@ -204,6 +210,35 @@
       del: function (id) {
         if (!db) { delete mem[id]; return Promise.resolve(); }
         return req(tx('readwrite').delete(id)).catch(function () {});
+      },
+      // ---- The outbox (real app only) ----
+      outboxPeek: async function () {
+        if (!db) return [];
+        try { return await req(db.transaction('outbox', 'readonly').objectStore('outbox').getAll()); } catch (e) { return []; }
+      },
+      outboxPut: function (jobs, token) {
+        return new Promise(function (resolve, reject) {
+          var t = db.transaction(['outbox', 'meta'], 'readwrite');
+          jobs.forEach(function (j) { t.objectStore('outbox').put(j); });
+          t.objectStore('meta').put({ key: 'token', token: token.token, expiresAt: token.expiresAt });
+          t.oncomplete = function () { resolve(); }; t.onerror = function () { reject(t.error); }; t.onabort = function () { reject(t.error); };
+        });
+      },
+      // Takes back everything the service worker hasn't started: returns what it finished, and how many it is still sending.
+      outboxClaim: function () {
+        if (!db) return Promise.resolve({ done: [], inflight: 0 });
+        return new Promise(function (resolve) {
+          var out = { done: [], inflight: 0 };
+          var t = db.transaction('outbox', 'readwrite'), os = t.objectStore('outbox');
+          os.getAll().onsuccess = function (e) {
+            e.target.result.forEach(function (j) {
+              if (j.status === 'inflight' && Date.now() - (j.started || 0) < 120000) { out.inflight++; return; }
+              if (j.status === 'done') out.done.push(j);
+              os.delete(j.noteId);
+            });
+          };
+          t.oncomplete = function () { resolve(out); }; t.onerror = function () { resolve(out); };
+        });
       }
     };
     return api;
@@ -216,6 +251,7 @@
   function Sync(store, notes, hooks) {
     var state = { phase: 'idle', error: null, lastSynced: null };
     var running = false, again = false, againPull = false, timer = null, folders = null, tree = {};
+    var outboxMaybe = true, handedOff = false; // the outbox is checked once at start, and after every hand-off
     var KEY = Drive.demo ? null : 'qn-folders';
     try { if (KEY) { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) { folders = saved.ids || null; tree = saved.tree || {}; } } } catch (e) {}
 
@@ -269,7 +305,7 @@
           if (n.deleted && n.v === v) { delete notes[n.id]; await store.del(n.id); changed.push(n.id); }
           continue;
         }
-        var target = n.folderId && (tree[n.folderId] || n.folderId === folders.notes) ? n.folderId : folders[CFG.SUBFOLDERS[0]];
+        var target = targetOf(n);
         var text = serialize(n);
         if (!n.fileId) {
           var made = await Drive.create(fileName(n), target, text);
@@ -345,14 +381,67 @@
       if (changed.length) hooks.changed(changed);
     }
 
+    // ---- While the phone sleeps: hand the unsent changes to the service worker, which sends them even with the app frozen ----
+    function targetOf(n) { return n.folderId && (tree[n.folderId] || n.folderId === folders.notes) ? n.folderId : folders[CFG.SUBFOLDERS[0]]; }
+    async function handoff() {
+      if (Drive.demo || !store.persistent || !folders || !folders.notes || running) return false;
+      if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller || !window.SyncManager) return false;
+      var tok = Drive.token && Drive.token();
+      if (!tok || tok.expiresAt - Date.now() < 3 * 60000) return false;
+      var reg = await navigator.serviceWorker.ready;
+      if (!reg.sync) return false;
+      var before = await store.outboxPeek();
+      if (before.some(function (j) { return j.status === 'inflight'; })) return false;
+      var jobs = [];
+      all().filter(function (n) { return n.dirty && !n.conflict; }).forEach(function (n) {
+        if (n.deleted) { if (n.fileId) jobs.push({ noteId: n.id, v: n.v, kind: 'trash', fileId: n.fileId, status: 'pending' }); return; }
+        var j = { noteId: n.id, v: n.v, text: serialize(n), parent: targetOf(n), status: 'pending' };
+        if (!n.fileId) { j.kind = 'create'; j.name = fileName(n); }
+        else { j.kind = 'save'; j.fileId = n.fileId; j.md5 = n.md5; if (n.moveFrom && n.moveFrom !== j.parent) j.moveFrom = n.moveFrom; }
+        jobs.push(j);
+      });
+      if (!jobs.length) return true;
+      await store.outboxPut(jobs, tok);
+      outboxMaybe = true;
+      await reg.sync.register('qn-push');
+      handedOff = true;
+      return true;
+    }
+    // Back in the app: take in what the service worker sent, and take back what it hasn't started.
+    async function takeBack() {
+      if (!outboxMaybe || Drive.demo) return true;
+      for (var tries = 0; tries < 15; tries++) {
+        var r = await store.outboxClaim(), changed = [];
+        for (var i = 0; i < r.done.length; i++) {
+          var j = r.done[i], n = notes[j.noteId], res = j.result || {};
+          if (!n || res.conflict || res.error) continue;
+          if (j.kind === 'trash') {
+            if (n.deleted && n.v === j.v) { delete notes[n.id]; await store.del(n.id); }
+            else { n.fileId = null; n.md5 = null; n.fileName = null; await store.put(n); }
+          } else {
+            n.fileId = res.id; n.md5 = res.md5; n.fileName = res.name || n.fileName; n.folderId = j.parent; n.moveFrom = null;
+            if (n.v === j.v) n.dirty = false;
+            await store.put(n);
+          }
+          changed.push(j.noteId);
+        }
+        if (changed.length) hooks.changed(changed);
+        if (!r.inflight) { outboxMaybe = false; handedOff = false; return true; }
+        await new Promise(function (ok) { setTimeout(ok, 1000); });
+      }
+      return false; // still being sent; try again in a moment
+    }
+
     async function run(opts) {
       opts = opts || {};
       clearTimeout(timer); timer = null;
       if (running) { again = true; againPull = againPull || !!opts.pull; return; }
+      if (document.visibilityState === 'hidden' && handedOff) return; // the service worker has it
       if (!online()) { state.phase = 'offline'; emit(); return; }
       if (!Drive.signedIn()) { state.phase = 'signin'; emit(); return; }
       running = true; state.phase = 'syncing'; state.error = null; emit();
       try {
+        if (!(await takeBack())) { running = false; state.phase = 'idle'; emit(); api.schedule(4000); return; }
         await ensureFolders();
         await push();
         if (opts.pull || !state.lastSynced) { await pull(); await push(); }
@@ -374,6 +463,7 @@
 
     var api = {
       run: run,
+      handoff: function () { return handoff().catch(function () { return false; }); },
       schedule: function (ms) { clearTimeout(timer); timer = setTimeout(function () { run(); }, ms); },
       status: function () {
         var waiting = all().filter(function (n) { return n.dirty && !n.conflict; });

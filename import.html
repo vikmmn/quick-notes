@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Import from Google Keep · Quick Notes</title>
+<title>Copy notes in from Google Keep · Quick Notes</title>
 <link rel="icon" type="image/png" href="icon-192.png">
 <style>
   :root { --paper: #f6f3ec; --surface: #fff; --ink: #22201c; --muted: #6d675d; --rule: #e2ddd2; --accent: #8a5a12; --accent-soft: #f3e6cf; --bad: #a33a2b;
@@ -36,8 +36,8 @@
 <body>
 <main>
   <p><a href="./">← Quick Notes</a></p>
-  <h1>Import from Google Keep</h1>
-  <p class="muted">Brings over every note from a Google Takeout export of Keep: notes and checklists, pinned, archived and trashed notes, labels, colours, dates, saved links, and images, drawings and voice recordings. They go to Readables › Notes › Keep. Running it again later only adds what isn't there yet.</p>
+  <h1>Copy notes in from Google Keep</h1>
+  <p class="muted">A one-time copy, not a sync: Google Keep stays as it is, and edits made in Quick Notes stay in Quick Notes. Brings over every note from a Google Takeout export of Keep: notes and checklists, pinned, archived and trashed notes, labels, colours, dates, saved links, and images, drawings and voice recordings. They go to Readables › Notes › Keep. Running it again later only adds what isn't there yet.</p>
   <p id="demoNote" class="bad hidden">Demo mode: this copy uses a pretend Drive. Use the real app at vikmmn.github.io/quick-notes/import.html to import for real.</p>
 
   <section>
@@ -63,7 +63,7 @@
       <div id="now" class="muted"></div>
       <div id="pause" class="hidden"><b>Your Google sign-in ran out.</b> The import is paused, nothing is lost. <div class="row"><button id="continueBtn" class="primary" type="button">Continue</button></div></div>
       <div class="row"><button id="stopBtn" type="button">Stop</button></div>
-      <p class="muted">Keep this page open until it finishes. It's fine to stop and run it again: notes already copied are skipped.</p>
+      <p class="muted">The screen stays on while this runs; keep this page open until it finishes. It's fine to stop and run it again: notes already copied are skipped.</p>
       <div id="result"></div>
     </div>
   </section>

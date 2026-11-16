@@ -7,6 +7,24 @@
   var HIT = 14;               // how close (px) a tap must be to a stroke to pick it
   var LIB = function () { return window.QNLib; };
 
+  // Blank lines between paragraphs. Markdown treats several blank lines as one, so an empty paragraph is
+  // saved as a line holding only &nbsp; (Obsidian and other apps show it as an empty line too).
+  var NBSP = '\u00a0', SPACER = '&nbsp;';
+  function getMd(ed) {
+    var doc = ed.state.doc, schema = ed.schema, kids = [], any = false;
+    doc.forEach(function (node) {
+      if (node.type.name === 'paragraph' && node.childCount === 0) { any = true; kids.push(schema.nodes.paragraph.create(node.attrs, schema.text(NBSP))); }
+      else kids.push(node);
+    });
+    if (!any) return LIB().getMarkdown(ed);
+    var md = ed.storage.markdown.serializer.serialize(doc.type.create(doc.attrs, kids));
+    md = md.replace(/(^[ \t]*[-*] \[[ xX]\][^\n]*)\n\n(?=[ \t]*[-*] \[[ xX]\])/gm, '$1\n');
+    md = md.replace(/^(\u00a0|&nbsp;|&#160;)$/gm, SPACER);
+    return md.replace(/(\s*&nbsp;)+\s*$/, ''); // empty lines at the very end mean nothing
+  }
+  // Loading: each &nbsp; line becomes an empty paragraph again, so the caret starts on a truly empty line.
+  function toEditor(md) { return String(md || '').replace(/^&nbsp;[ \t]*$/gm, '<p></p>'); }
+
   function el(tag, cls, parent) { var e = document.createElement(tag); if (cls) e.className = cls; if (parent) parent.appendChild(e); return e; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -121,7 +139,7 @@
       var mount = el('div', 'ed', e);
       el('div', 'resize', e).title = 'Drag to change the width';
       var isFirst = boxes[0] === b;
-      var ed = LIB().makeEditor(mount, b.md, {
+      var ed = LIB().makeEditor(mount, toEditor(b.md), {
         placeholder: isFirst ? 'Note' : 'Text',
         onUpdate: function () {
           clearTimeout(mdTimer);
@@ -152,7 +170,7 @@
     function flushText(id) {
       var b = boxes.filter(function (x) { return x.id === id; })[0], e = editors[id];
       if (!b || !e) return;
-      var md = LIB().getMarkdown(e.ed);
+      var md = getMd(e.ed);
       if (md !== b.md) { b.md = md; hooks.change('text'); }
     }
     function flushAll() { clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
@@ -317,7 +335,10 @@
         stage.setPointerCapture(ev.pointerId);
         return;
       }
-      if (onBox) return; // typing, selecting text: leave it to the editor
+      if (onBox) { // typing, selecting text: leave it to the editor, but a finger drag over the text still scrolls
+        if (isFinger && tool === 'type') startPan(ev);
+        return;
+      }
       // Empty space with the Type tool: double-tap adds a text box; a finger drag scrolls.
       if (tool === 'type') {
         var now = Date.now();
@@ -465,6 +486,24 @@
       ink.forEach(function (g) { g.x += dx; g.y += dy; });
       drawInk(); changed('layout');
     };
+    // An image: at the caret, beside the text (both side by side), or in a new text box below.
+    self.insertImage = function (src, where) {
+      var a = self.active() ? active : null;
+      if (where === 'caret' && a) { a.ed.chain().focus().setImage({ src: src }).run(); flushText(a.box.id); changed('text'); return; }
+      var b, c = contentRight();
+      if (where === 'beside') {
+        var ref = a ? a.box : boxes[0], refEl = editors[ref.id].el;
+        if (!ref.w) ref.w = Math.max(140, Math.round((autoWidth() - ref.x) * 0.55));
+        var x = ref.x + (ref.w || refEl.offsetWidth) + 16;
+        b = addBox(x, ref.y);
+        b.w = Math.max(140, autoWidth() - x);
+      } else b = addBox(0, c.b + 24);
+      var e = editors[b.id];
+      e.ed.chain().focus().setImage({ src: src }).run();
+      flushText(b.id); layout(); changed('layout');
+      var right = b.x + M + (b.w || 0) > wrap.scrollLeft + wrap.clientWidth;
+      if (right || where !== 'beside') wrap.scrollTo({ left: right ? Math.max(0, b.x - 40) : wrap.scrollLeft, top: Math.max(0, b.y - 80), behavior: 'smooth' });
+    };
     self.focusStart = function () { var f = editors[boxes[0].id]; if (f) f.ed.commands.focus('end'); };
     self.destroy = function () {
       flushAll();
@@ -474,6 +513,7 @@
     self.relayout = layout;
 
     stage.dataset.tool = tool;
+    stage.addEventListener('load', function () { requestAnimationFrame(layout); }, true); // images change a box's height
     renderAll();
     window.addEventListener('resize', layout);
     self._unbind = function () { window.removeEventListener('resize', layout); };

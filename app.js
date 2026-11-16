@@ -216,10 +216,11 @@
     var html = taskify(LIB.md.render(md)).replace(/<img src="(?!https?:|data:|blob:)([^"]*)"/g, '<img class="qn-img" data-src="$1"');
     return '<div class="prev' + (n.body.length > 500 || n.body.split('\n').length > 12 ? ' long' : '') + '">' + html + '</div>';
   }
-  function card(n, extra) {
+  function card(n, extra, where) {
     var inner = '';
     if (n.pinned) inner += '<span class="pin">' + icon('pin-fill') + '</span>';
     if (n.title) inner += '<h3>' + esc(n.title) + '</h3>';
+    if (where) inner += '<div class="where">' + esc(where) + '</div>';
     if (extra) inner += extra;
     else {
       if (n.body) inner += preview(n);
@@ -250,8 +251,22 @@
       return true;
     });
 
-    $('scopeChips').innerHTML = words && S.folder ? '<button type="button" data-scope="here" aria-pressed="' + !S.scopeAll + '">In ' + esc(folderName(S.folder)) + '</button>' +
+    // A label shows its notes from every folder; folder chips (with counts) narrow it down, several at once if you like.
+    var labelView = !!S.label && !words;
+    if (labelView) {
+      var counts = {};
+      pool.forEach(function (n) { var f = folderOf(n) || ''; counts[f] = (counts[f] || 0) + 1; });
+      S.labelFolders = (S.labelFolders || []).filter(function (id) { return counts[id]; });
+      var fids = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || folderName(a).localeCompare(folderName(b)); });
+      $('scopeChips').innerHTML = '<button type="button" data-lf="" aria-pressed="' + !S.labelFolders.length + '">All folders · ' + pool.length + '</button>' +
+        fids.map(function (id) {
+          var name = pathOf(id).slice(-2).map(function (f) { return f.name; }).join(' / ') || folderName(id) || 'Notes';
+          return '<button type="button" data-lf="' + esc(id) + '" aria-pressed="' + (S.labelFolders.indexOf(id) > -1) + '">' + icon('folder').replace('class="i"', 'class="i" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;margin-right:4px"') + esc(name) + ' · ' + counts[id] + '</button>';
+        }).join('') + '<button type="button" data-lrename="1" style="color:var(--accent)">' + icon('label').replace('class="i"', 'class="i" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;margin-right:4px"') + 'Rename label</button>';
+      if (S.labelFolders.length) pool = pool.filter(function (n) { return S.labelFolders.indexOf(folderOf(n) || '') > -1; });
+    } else $('scopeChips').innerHTML = words && S.folder ? '<button type="button" data-scope="here" aria-pressed="' + !S.scopeAll + '">In ' + esc(folderName(S.folder)) + '</button>' +
       '<button type="button" data-scope="all" aria-pressed="' + S.scopeAll + '">All folders</button>' : '';
+    $('folderTitle').textContent = labelView ? S.label : S.folder ? folderName(S.folder) : 'All notes';
     $('results').classList.toggle('hidden', !words);
     $('browse').classList.toggle('hidden', !!words);
     if (words) {
@@ -263,7 +278,8 @@
       }).join('') : '<p class="empty">No notes match “' + esc(words) + '”.' + (S.folder && !S.scopeAll ? ' Try All folders.' : '') + '</p>';
       return;
     }
-    var shown = S.folder ? pool.filter(function (n) { return folderOf(n) === S.folder; }) : pool;
+    var shown = S.folder && !labelView ? pool.filter(function (n) { return folderOf(n) === S.folder; }) : pool;
+    var whereOf = function (n) { return labelView ? pathOf(folderOf(n)).map(function (f) { return f.name; }).join(' / ') : ''; };
     shown.sort(function (a, b) { return String(b.updated).localeCompare(String(a.updated)); });
     var pinned = shown.filter(function (n) { return n.pinned; }), others = shown.filter(function (n) { return !n.pinned; });
     var subs = rootId() ? childrenOf(S.folder || rootId()) : [];
@@ -271,12 +287,12 @@
       return '<div class="folder" data-folder="' + esc(f.id) + '">' + icon('folder') + '<span>' + esc(f.name) + '</span><small>' + countIn(f.id) + '</small></div>';
     }).join('') + (rootId() ? '<div class="folder" data-newfolder="1" style="color:var(--muted)">' + icon('plus') + '<span>New folder</span></div>' : '');
     var plimit = S.plimit || 100;
-    $('pinned').innerHTML = pinned.slice(0, plimit).map(function (n) { return card(n); }).join('') +
+    $('pinned').innerHTML = pinned.slice(0, plimit).map(function (n) { return card(n, null, whereOf(n)); }).join('') +
       (pinned.length > plimit ? '<div style="column-span:all;text-align:center;padding:12px"><button type="button" id="morePinned">Show more pinned (' + (pinned.length - plimit) + ' left)</button></div>' : '');
     var mp = $('morePinned'); if (mp) mp.onclick = function (e) { e.stopPropagation(); S.plimit = plimit + 100; renderList(); };
     // Big folders (thousands of Keep notes) show 200 at a time.
     var limit = S.limit || 200;
-    $('others').innerHTML = others.slice(0, limit).map(function (n) { return card(n); }).join('') +
+    $('others').innerHTML = others.slice(0, limit).map(function (n) { return card(n, null, whereOf(n)); }).join('') +
       (others.length > limit ? '<div style="column-span:all;text-align:center;padding:12px"><button type="button" id="moreBtn">Show more (' + (others.length - limit) + ' left)</button></div>' : '');
     var mb = $('moreBtn'); if (mb) mb.onclick = function (e) { e.stopPropagation(); S.limit = limit + 200; renderList(); };
     $('pinnedHead').classList.toggle('hidden', !pinned.length);
@@ -288,9 +304,43 @@
   $('crumbs').addEventListener('click', function (e) { var a = e.target.closest('[data-go]'); if (a) goFolder(a.dataset.go || null); });
   $('labelChips').addEventListener('click', function (e) {
     var b = e.target.closest('[data-label]'); if (!b) return;
-    S.label = S.label === b.dataset.label ? null : b.dataset.label; renderList();
+    S.label = S.label === b.dataset.label ? null : b.dataset.label; S.labelFolders = []; S.limit = 200; renderList(); window.scrollTo(0, 0);
   });
-  $('scopeChips').addEventListener('click', function (e) { var b = e.target.closest('[data-scope]'); if (b) { S.scopeAll = b.dataset.scope === 'all'; renderList(); } });
+  $('scopeChips').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-scope]'); if (b) { S.scopeAll = b.dataset.scope === 'all'; renderList(); return; }
+    var lf = e.target.closest('[data-lf]');
+    if (lf) {
+      var id = lf.dataset.lf, sel = S.labelFolders || [];
+      if (!id) S.labelFolders = [];
+      else S.labelFolders = sel.indexOf(id) > -1 ? sel.filter(function (x) { return x !== id; }) : sel.concat([id]);
+      renderList(); return;
+    }
+    if (e.target.closest('[data-lrename]')) renameLabelSheet(S.label);
+  });
+  // Renaming a label changes it on every note that has it (and merges it into another label of that name).
+  function renameLabelSheet(old) {
+    var count = live().filter(function (n) { return (n.labels || []).some(function (l) { return l.toLowerCase() === old.toLowerCase(); }); }).length;
+    openSheet('<form><h2>Rename label</h2><p>Changes “' + esc(old) + '” on ' + count + ' note' + (count === 1 ? '' : 's') + '. Using the name of another label merges the two.</p>' +
+      '<input type="text" name="nl" value="' + esc(old) + '" autocapitalize="none" required maxlength="60"><div class="err"></div>' +
+      '<div class="row"><button class="primary" type="submit">Rename</button><button type="button" data-act="close">Cancel</button></div></form>', null, function (e) {
+      var nl = e.target.nl.value.replace(/[,#]/g, ' ').trim().replace(/\s+/g, ' ');
+      if (!nl) return sheetError('Type a name.');
+      if (nl === old) return closeSheet();
+      var existing = allLabels().filter(function (x) { return x.toLowerCase() === nl.toLowerCase() && x.toLowerCase() !== old.toLowerCase(); })[0];
+      if (existing) nl = existing;
+      var changedN = 0;
+      Object.keys(notes).forEach(function (k) {
+        var n = notes[k];
+        if (n.deleted || !(n.labels || []).some(function (l) { return l.toLowerCase() === old.toLowerCase(); })) return;
+        var out = [];
+        n.labels.forEach(function (l) { var v = l.toLowerCase() === old.toLowerCase() ? nl : l; if (!out.some(function (x) { return x.toLowerCase() === v.toLowerCase(); })) out.push(v); });
+        n.labels = out; n.dirty = true; n.v = (n.v || 0) + 1; store.put(n); changedN++; // the note's date stays as it was
+      });
+      if (S.label === old) S.label = nl;
+      closeSheet(); renderList(); renderStatus(); sync.schedule(2500);
+      toast('Renamed on ' + changedN + ' note' + (changedN === 1 ? '' : 's'));
+    });
+  }
   $('subfolders').addEventListener('click', function (e) {
     var f = e.target.closest('[data-folder]');
     if (f) return goFolder(f.dataset.folder);
@@ -396,6 +446,17 @@
     if (o) { closeDrawer(); goFolder(o.dataset.open || null); }
   });
   $('addRootFolder').onclick = function () { newFolderSheet(rootId()); };
+  $('importBtn').onclick = function () {
+    closeDrawer();
+    setTimeout(importSheet, 250); // after the drawer's history step is undone
+  };
+  function importSheet() {
+    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Quick Notes. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
+      '<div class="pick"><button type="button" data-act="keep">' + icon('notes') + 'From Google Keep (Takeout export)</button>' +
+      '<button type="button" data-act="notion">' + icon('notes') + 'From Notion (Markdown export)</button></div>' +
+      '<div class="row"><button type="button" data-act="close">Close</button></div>',
+    function (act) { if (act === 'keep') location.href = 'import.html'; if (act === 'notion') location.href = 'notion.html'; });
+  }
 
   function newFolderSheet(parent) {
     var where = parent && parent !== rootId() ? ' inside ' + folderName(parent) : '';
@@ -654,6 +715,7 @@
   $('pop').addEventListener('pointerdown', function (e) { if (e.target.closest('button')) e.preventDefault(); });
   $('fmtBar').addEventListener('click', function (e) {
     var b = e.target.closest('[data-f]');
+    if (b && b.dataset.f === 'image') { pickImage(); return; }
     var ed = S.canvas && S.canvas.active();
     if (!b || !ed) return;
     var c = ed.chain().focus();
@@ -707,6 +769,67 @@
     updateFmt(ed);
   });
 
+  // ---------- Images: saved to Notes › Attachments in Drive, shown in the note ----------
+  var imgInput = document.createElement('input');
+  imgInput.type = 'file'; imgInput.accept = 'image/*'; imgInput.className = 'hidden';
+  document.body.appendChild(imgInput);
+  var imgWhere = 'below';
+  function pickImage() {
+    if (!S.canvas) return;
+    var hasCaret = !!S.canvas.active();
+    openSheet('<h2>Add an image</h2><p>Where should it go? You can drag the bar on the right of a text box to change its width.</p><div class="pick">' +
+      (hasCaret ? '<button type="button" data-act="caret">At the cursor</button>' : '') +
+      '<button type="button" data-act="beside">Beside the text (side by side)</button>' +
+      '<button type="button" data-act="below">Below everything</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
+    function (act) {
+      if (act !== 'caret' && act !== 'beside' && act !== 'below') return;
+      imgWhere = act; closeSheet();
+      imgInput.value = ''; imgInput.click();
+    });
+  }
+  imgInput.onchange = async function () {
+    var f = imgInput.files && imgInput.files[0];
+    if (!f || !S.canvas) return;
+    if (!navigator.onLine || (Drive.isOffline && Drive.isOffline())) { toast('Images can be added while online (they are saved in Drive).'); return; }
+    if (!Drive.signedIn()) { toast('Sign in to Google first (tap the sync button at the top).'); return; }
+    toast('Adding the image…', null, null, 60000);
+    try {
+      var blob = await shrinkImage(f);
+      var ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/gif' ? 'gif' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+      var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      var name = 'image-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + N.shortId() + '.' + ext;
+      var folder = await attachmentsFolder();
+      var made = await Drive.upload(name, folder, blob, blob.type);
+      var map = await attachments(); map[name] = made.id;
+      imgCache[name] = URL.createObjectURL(blob);
+      S.canvas.insertImage('Attachments/' + encodeURIComponent(name), imgWhere);
+      hideToast();
+    } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : 'The image could not be added: ' + (e.message || e)); }
+  };
+  async function attachmentsFolder() {
+    var t = tree(), root = rootId();
+    if (!root) { await sync.run(); root = rootId(); }
+    var hit = Object.keys(t).filter(function (k) { return t[k].name === 'Attachments' && t[k].parentId === root; })[0];
+    if (hit) return hit;
+    attIndex = null;
+    return sync.createFolder('Attachments', root);
+  }
+  // Photos from a phone camera are huge: keep them sharp on screen but small in Drive (longest side 2000 px).
+  async function shrinkImage(file) {
+    if (/gif|svg/.test(file.type) || !window.createImageBitmap) return file;
+    try {
+      var bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      var MAX = 2000, k = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      if (k === 1 && file.size < 1500000) return file;
+      var c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      var png = file.type === 'image/png';
+      var out = await new Promise(function (r) { c.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.85); });
+      return out && out.size < file.size ? out : file;
+    } catch (e) { return file; }
+  }
+
   // ---------- The note menu (bottom-left) ----------
   function closeMenu() { $('noteMenu').classList.add('hidden'); $('menuFab').setAttribute('aria-expanded', 'false'); }
   $('menuFab').onclick = function () {
@@ -725,6 +848,7 @@
     if (b.dataset.space) { S.canvas.addSpace(b.dataset.space); return; }
     closeMenu();
     if (b.dataset.m === 'labels') labelsSheet(n);
+    if (b.dataset.m === 'image') pickImage();
     if (b.dataset.m === 'move') pickFolder('Move note to…', folderOf(n), function (target) {
       if (target !== folderOf(n)) {
         if (n.fileId && !n.moveFrom) n.moveFrom = n.folderId;
@@ -826,8 +950,16 @@
 
   // ---------- Coming and going ----------
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden') { if (S.canvas) S.canvas.flush(); saveNow(); sync.run(); }
+    if (document.visibilityState === 'hidden') {
+      if (S.canvas) S.canvas.flush(); saveNow();
+      // Phones freeze a web app soon after it goes to the background. The service worker can keep sending
+      // (Android Chrome, the installed app included); where it can't, the app sends what it can before it freezes.
+      sync.handoff().then(function (ok) { if (!ok) sync.run(); });
+    }
     else sync.run({ pull: true });
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function (e) {
+    if (e.data === 'qn-sent' && document.visibilityState === 'visible') sync.run();
   });
   window.addEventListener('pagehide', function () { if (S.canvas) S.canvas.flush(); saveNow(); });
   window.addEventListener('online', function () { sync.run({ pull: true }); });

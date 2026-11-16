@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Copy notes in from Notion · Quick Notes</title>
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+  :root { --paper: #f6f3ec; --surface: #fff; --ink: #22201c; --muted: #6d675d; --rule: #e2ddd2; --accent: #8a5a12; --accent-soft: #f3e6cf; --bad: #a33a2b;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #17161a; --surface: #211f24; --ink: #ebe7df; --muted: #a39d93; --rule: #34313a; --accent: #e9b25e; --accent-soft: #3a2f1d; --bad: #f08a7a; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--font);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  main { max-width: 720px; margin: 0 auto; padding: 20px 18px 60px; }
+  h1 { font-size: 24px; margin: 8px 0 4px; }
+  h2 { font-size: 18px; margin: 0 0 8px; }
+  section { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; margin: 14px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .bad { color: var(--bad); font-size: 14px; }
+  .hidden { display: none !important; }
+  button, .button { font: 500 15px/1 var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 11px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.primary, .button { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .pick { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--rule); cursor: pointer; overflow-wrap: anywhere; }
+  .pick input, .opt input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+  .track { height: 10px; background: var(--accent-soft); border-radius: 5px; overflow: hidden; margin: 10px 0 6px; }
+  #bar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  ol, ul { padding-left: 20px; }
+  a { color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  #pause { background: var(--accent-soft); border-radius: 10px; padding: 12px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="./">← Quick Notes</a></p>
+  <h1>Copy notes in from Notion</h1>
+  <p class="muted">A one-time copy, not a sync: your Notion pages stay as they are, and edits made in Quick Notes stay in Quick Notes. Pages go to Readables › Notes › Notion, with sub-pages in folders named after their parent page, and images and files in Notion › Attachments. Running it again later only adds pages that aren't there yet.</p>
+  <p id="demoNote" class="bad hidden">Demo mode: this copy uses a pretend Drive. Use the real app at vikmmn.github.io/quick-notes/notion.html to copy for real.</p>
+
+  <section>
+    <h2>1. Export from Notion</h2>
+    <ol class="muted">
+      <li>In Notion: Settings › General (or Workspace › Settings) › <b>Export all workspace content</b>. For one page and its sub-pages: the page's ••• menu › Export.</li>
+      <li>Export format <b>Markdown &amp; CSV</b>, include content <b>Everything</b>, and turn on <b>Include subpages</b> and <b>Create folders for subpages</b>.</li>
+      <li>Notion emails a download link. Save the zip to this device, or to your Google Drive.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>2. Choose the export</h2>
+    <div id="signedOut" class="hidden"><p class="muted">Sign in with Google to read the export from your Drive and save the notes.</p><button id="signInBtn" class="primary" type="button">Sign in with Google</button></div>
+    <div id="driveZips"></div>
+    <p class="muted" style="margin-top:12px">Or choose the export zip from this device:</p>
+    <input id="localZips" type="file" accept=".zip,application/zip" multiple>
+    <div id="localList" class="muted"></div>
+    <div class="row"><button id="scanBtn" class="primary" type="button">Look inside</button></div>
+    <p id="status" class="muted"></p>
+  </section>
+
+  <section id="step3" class="hidden">
+    <div id="summary"></div>
+    <label class="opt"><input type="checkbox" id="optFiles" checked><span>Images and files (to Notion › Attachments, shown in their notes). On a slow connection, untick this to copy the pages first; run again later with it ticked to add the files.</span></label>
+    <div class="row"><button id="importBtn" class="primary" type="button">Copy into Quick Notes</button></div>
+    <div id="progress" class="hidden">
+      <div class="track"><div id="bar"></div></div>
+      <div id="count" class="muted"></div>
+      <div id="now" class="muted"></div>
+      <div id="pause" class="hidden"><b>Your Google sign-in ran out.</b> The copy is paused, nothing is lost. <div class="row"><button id="continueBtn" class="primary" type="button">Continue</button></div></div>
+      <div class="row"><button id="stopBtn" type="button">Stop</button></div>
+      <p class="muted">The screen stays on while this runs. If you switch away, it carries on when you come back. It's fine to stop and run it again: pages already copied are skipped.</p>
+      <div id="result"></div>
+    </div>
+  </section>
+</main>
+<script src="config.js"></script>
+<script src="drive.js"></script>
+<script src="zip.js"></script>
+<script src="notion.js"></script>
+</body>
+</html>
