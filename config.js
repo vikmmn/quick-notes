@@ -15,8 +15,8 @@ window.APP_CONFIG = {
   NOTES_FOLDER_NAME: 'Notes',
 
   // The sign-in helper (server/sign-in-helper.js on Cloudflare) that keeps you signed in. Empty = one-hour sign-ins.
-  TOKEN_SERVER: '',
+  TOKEN_SERVER: 'https://quick-notes-signin.vikrammaan-s-trehan.workers.dev',
 
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '3.0.0'
+  VERSION: '3.0.1'
 };
