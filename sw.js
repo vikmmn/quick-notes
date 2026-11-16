@@ -1,6 +1,6 @@
 // Keeps the installed app exactly as it is until you tap "Update now".
 // Releasing a new version = change VERSION below (and in config.js), then publish.
-var VERSION = '2.1.2';
+var VERSION = '2.1.3';
 var SHELL_CACHE = 'qn-shell-' + VERSION;
 var SHELL = [
   './', './index.html', './import.html', './import.js', './zip.js', './app.js', './notes.js', './canvas.js', './search.js', './vendor.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',
@@ -9,7 +9,20 @@ var SHELL = [
 
 self.addEventListener('install', function (event) {
   // No skipWaiting here: a new version waits until the app asks for it.
-  event.waitUntil(caches.open(SHELL_CACHE).then(function (c) { return c.addAll(SHELL); }));
+  // Fetch fresh copies (past any stale copy GitHub's servers still hold for a few minutes after a release),
+  // and check each one really is this version before keeping it.
+  event.waitUntil(caches.open(SHELL_CACHE).then(function (c) {
+    return Promise.all(SHELL.map(function (u) {
+      return fetch(new Request(u + (u.indexOf('?') < 0 ? '?' : '&') + 'v=' + VERSION, { cache: 'reload' })).then(function (r) {
+        if (!r.ok) throw new Error('Could not fetch ' + u);
+        if (u === './config.js') return r.clone().text().then(function (t) {
+          if (t.indexOf("'" + VERSION + "'") < 0) throw new Error('Not published yet');
+          return c.put(u, r);
+        });
+        return c.put(u, r);
+      });
+    }));
+  }));
 });
 
 self.addEventListener('activate', function (event) {
