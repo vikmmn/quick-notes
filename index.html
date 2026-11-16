@@ -95,6 +95,9 @@
   .card .prev li.task { list-style: none; margin-left: -20px; display: flex; gap: 8px; align-items: flex-start; }
   .card .prev li.task input { margin: 4px 0 0; width: 17px; height: 17px; flex: none; accent-color: var(--accent); }
   .card .prev li.task.done { color: var(--muted); text-decoration: line-through; }
+  img.qn-img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 4px 0; }
+  img.qn-img.pending { min-height: 48px; min-width: 80px; background: var(--accent-soft); }
+  .card .prev img.qn-img { max-height: 220px; object-fit: cover; }
   .card .ink-thumb { display: block; max-width: 100%; height: auto; margin-top: 6px; }
   .card .foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }
   .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
@@ -288,6 +291,7 @@
   <footer id="footer">
     <span id="versionLabel"></span>
     <button id="checkUpdateBtn" type="button">Check for update</button>
+    <a href="import.html" style="color:var(--accent)">Import from Google Keep</a>
     <span id="demoTools" class="hidden">
       <button id="demoOffline" type="button" aria-pressed="false">Pretend offline</button>
       <button id="demoElsewhere" type="button">Pretend the laptop edited the last note</button>

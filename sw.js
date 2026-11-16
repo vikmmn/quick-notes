@@ -1,9 +1,9 @@
 // Keeps the installed app exactly as it is until you tap "Update now".
 // Releasing a new version = change VERSION below (and in config.js), then publish.
-var VERSION = '2.0.0';
+var VERSION = '2.1.0';
 var SHELL_CACHE = 'qn-shell-' + VERSION;
 var SHELL = [
-  './', './index.html', './app.js', './notes.js', './canvas.js', './search.js', './vendor.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',
+  './', './index.html', './import.html', './import.js', './zip.js', './app.js', './notes.js', './canvas.js', './search.js', './vendor.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './maskable-512.png', './apple-touch-icon.png'
 ];
 

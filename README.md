@@ -48,6 +48,13 @@ Text of that box
 | `sw.js` | Makes it installable and holds updates until approved |
 | `manifest.webmanifest`, `*.png` | App name, icons and the Android share target |
 | `demo-data.js` | Pretend notes for demo mode only |
+| `import.html`, `import.js`, `zip.js` | Import from Google Keep (Takeout): reads the export from Drive in pieces, writes Notes › Keep |
+
+## Importing Google Keep
+Open `import.html` (link at the bottom of the notes grid), pick the Takeout export (found in Drive automatically,
+or chosen from the device), look inside, then Import. Everything goes to Notes › Keep (archived notes to
+Keep › Archive, Keep's Trash to Keep › Trash, images and recordings to Keep › Attachments). Running it again
+skips what is already there.
 
 ## Releasing an approved update
 1. Change `VERSION` in both `config.js` and `sw.js` (e.g. 1.0.0 → 1.0.1).

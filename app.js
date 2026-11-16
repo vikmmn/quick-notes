@@ -79,6 +79,38 @@
   function countIn(id) { return live().filter(function (n) { return inSubtree(folderOf(n), id); }).length; }
   function folderName(id) { var f = tree()[id]; return f ? f.name : id === rootId() ? CFG.NOTES_FOLDER_NAME : ''; }
 
+  // ---------- Files linked from notes (Keep images, recordings) live in an Attachments folder in Drive ----------
+  var imgCache = {}, attIndex = null;
+  function attachments() {
+    if (!attIndex) attIndex = (async function () {
+      var t = tree(), map = {};
+      var ids = Object.keys(t).filter(function (k) { return t[k].name === 'Attachments'; });
+      for (var i = 0; i < ids.length; i++) (await Drive.list(ids[i])).forEach(function (f) { map[f.name] = f.id; });
+      return map;
+    })().catch(function () { attIndex = null; return {}; });
+    return attIndex;
+  }
+  async function attachmentUrl(name) {
+    if (imgCache[name]) return imgCache[name];
+    var map = await attachments(), id = map[name];
+    if (!id) { attIndex = null; return null; }
+    imgCache[name] = URL.createObjectURL(await Drive.readBlob(id));
+    return imgCache[name];
+  }
+  function isLocalRef(src) { return src && !/^(https?:|data:|blob:|mailto:|#)/i.test(src); }
+  function refName(src) { try { return decodeURIComponent(String(src).split('/').pop()); } catch (e) { return String(src).split('/').pop(); } }
+  window.QNResolveImg = function (src, img) {
+    if (!isLocalRef(src)) { img.src = src; return; }
+    var name = refName(src);
+    img.title = name; img.classList.add('pending');
+    attachmentUrl(name).then(function (u) { if (u) { img.src = u; img.classList.remove('pending'); } }).catch(function () {});
+  };
+  function resolveImagesIn(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('img[data-src]'), function (img) {
+      var src = img.getAttribute('data-src'); img.removeAttribute('data-src'); window.QNResolveImg(src, img);
+    });
+  }
+
   // ---------- Sync ----------
   var sync = N.Sync(store, notes, {
     status: renderStatus,
@@ -180,7 +212,7 @@
   function preview(n) {
     var md = String(n.body || '').replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '');
     if (md.length > 1600) md = md.slice(0, 1600);
-    var html = taskify(LIB.md.render(md));
+    var html = taskify(LIB.md.render(md)).replace(/<img src="(?!https?:|data:|blob:)([^"]*)"/g, '<img class="qn-img" data-src="$1"');
     return '<div class="prev' + (n.body.length > 500 || n.body.split('\n').length > 12 ? ' long' : '') + '">' + html + '</div>';
   }
   function card(n, extra) {
@@ -242,6 +274,7 @@
     $('pinnedHead').classList.toggle('hidden', !pinned.length);
     $('othersHead').classList.toggle('hidden', !pinned.length || !others.length);
     $('emptyMsg').classList.toggle('hidden', !!shown.length);
+    resolveImagesIn($('browse'));
     $('emptyMsg').textContent = S.label ? 'No notes with this label here.' : S.folder ? 'No notes in this folder yet. Tap + to write one here.' : 'No notes yet. Tap + to write one.';
   }
   $('crumbs').addEventListener('click', function (e) { var a = e.target.closest('[data-go]'); if (a) goFolder(a.dataset.go || null); });
@@ -278,6 +311,13 @@
     if (!n) return;
     var tick = e.target.closest('input[data-tick]');
     if (tick) { tickTask(n, +tick.dataset.tick); setTimeout(renderList, 200); return; }
+    var link = e.target.closest('a');
+    if (link && isLocalRef(link.getAttribute('href'))) { // a file from Drive, e.g. a Keep voice recording
+      e.preventDefault();
+      var w = window.open('', '_blank');
+      attachmentUrl(refName(link.getAttribute('href'))).then(function (u) { if (u && w) w.location = u; else { if (w) w.close(); toast('That file isn\'t in Drive yet, or you are offline.'); } });
+      return;
+    }
     if (e.target.closest('input, a')) return;
     if (S.q.trim()) window.QNSearch.remember(S.q);
     openNote(n);

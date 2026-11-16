@@ -5,7 +5,7 @@
   var CFG = window.APP_CONFIG;
   var API = 'https://www.googleapis.com/drive/v3';
   var UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
-  var FIELDS = 'id,name,mimeType,modifiedTime,createdTime,parents,md5Checksum,trashed';
+  var FIELDS = 'id,name,mimeType,size,modifiedTime,createdTime,parents,md5Checksum,trashed';
   var FOLDER = 'application/vnd.google-apps.folder';
   var SCOPE = 'https://www.googleapis.com/auth/drive';
 
@@ -173,6 +173,26 @@
           method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: '{}'
         });
       },
+      // For the Keep import: any file (images, audio), part of a big file, and finding Takeout zips.
+      upload: async function (name, parentId, blob, mime) {
+        var b = 'bnd' + Math.random().toString(36).slice(2);
+        var body = new Blob(['--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify({ name: name, parents: [parentId] }) + '\r\n--' + b + '\r\nContent-Type: ' + (mime || 'application/octet-stream') + '\r\n\r\n',
+          blob, '\r\n--' + b + '--']);
+        var r = await api(UPLOAD + '/files?uploadType=multipart&fields=' + FIELDS, {
+          method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body: body
+        });
+        return r.json();
+      },
+      readRange: async function (id, start, end) {
+        var r = await api(API + '/files/' + id + '?alt=media', { headers: { Range: 'bytes=' + start + '-' + end } });
+        return new Uint8Array(await r.arrayBuffer());
+      },
+      readBlob: async function (id) { return (await api(API + '/files/' + id + '?alt=media')).blob(); },
+      size: async function (id) { return Number((await (await api(API + '/files/' + id + '?fields=size')).json()).size); },
+      findTakeout: function () {
+        return query("name contains 'takeout-' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
+      },
       findExact: async function (name, parentId, mime) {
         var q = "name = '" + qs(name) + "' and trashed = false and '" + qs(parentId) + "' in parents" +
           (mime ? " and mimeType = '" + qs(mime) + "'" : '');
@@ -245,6 +265,10 @@
       },
       trash: function (id) { return wait().then(function () { if (files[id]) files[id].trashed = true; }); },
       rename: function (id, name) { return wait().then(function () { files[id].name = name; }); },
+      upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
+      findTakeout: function () { return wait([]); },
+      readBlob: function (id) { return wait(files[id].blob || new Blob([files[id].text])); },
+      _files: files,
       move: function (id, newParent) { return wait().then(function () { files[id].parents = [newParent]; files[id].rev++; }); },
       findExact: function (name, parentId, mime) {
         var f = live().filter(function (x) { return x.name === name && x.parents[0] === parentId && (!mime || x.mimeType === mime); })[0];
