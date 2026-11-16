@@ -12,6 +12,9 @@ window.APP_CONFIG = {
   NOTES_FOLDER_NAME: 'Notes',
   SUBFOLDERS: ['Inbox', 'Keep', 'Notion'],
 
+  // The sign-in helper (server/sign-in-helper.js on Cloudflare) that keeps you signed in. Empty = one-hour sign-ins.
+  TOKEN_SERVER: '',
+
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '2.3.0'
+  VERSION: '2.4.0'
 };

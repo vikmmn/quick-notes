@@ -1,6 +1,6 @@
 // Keeps the installed app exactly as it is until you tap "Update now".
 // Releasing a new version = change VERSION below (and in config.js), then publish.
-var VERSION = '2.3.0';
+var VERSION = '2.4.0';
 var SHELL_CACHE = 'qn-shell-' + VERSION;
 var SHELL = [
   './', './index.html', './import.html', './import.js', './notion.html', './notion.js', './zip.js', './app.js', './notes.js', './canvas.js', './search.js', './vendor.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',
@@ -142,7 +142,20 @@ async function drain() {
     var r = db.transaction('meta', 'readonly').objectStore('meta').get('token');
     r.onsuccess = function () { ok(r.result); }; r.onerror = function () { ok(null); };
   });
-  if (!tok || tok.expiresAt < Date.now()) return; // the sign-in has run out: the app sends them when you open it
+  if (!tok) return;
+  // The one-hour sign-in ran out: with the sign-in helper, get a fresh one; without it, the app sends them later.
+  async function renew() {
+    if (!tok.refresh || !tok.server) return false;
+    try {
+      var r = await fetch(tok.server + '/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh: tok.refresh }) });
+      if (!r.ok) return false;
+      var d = await r.json();
+      tok.token = d.access_token; tok.expiresAt = Date.now() + (Number(d.expires_in || 3600) - 120) * 1000;
+      return true;
+    } catch (e) { return false; }
+  }
+  if ((!tok.token || tok.expiresAt < Date.now()) && !(await renew())) return;
+  var renewed = false;
   var retry = null, sent = 0;
   for (;;) {
     var job = await claimNext(db);
@@ -153,6 +166,7 @@ async function drain() {
       await finish(db, job); sent++;
     } catch (e) {
       await release(db, job);
+      if (e.stop && !renewed && (await renew())) { renewed = true; continue; } // sign-in ran out mid-way: renew once
       if (!e.stop) retry = e; // offline or Drive busy: the browser tries again later
       break;
     }

@@ -220,7 +220,7 @@
         return new Promise(function (resolve, reject) {
           var t = db.transaction(['outbox', 'meta'], 'readwrite');
           jobs.forEach(function (j) { t.objectStore('outbox').put(j); });
-          t.objectStore('meta').put({ key: 'token', token: token.token, expiresAt: token.expiresAt });
+          t.objectStore('meta').put({ key: 'token', token: token.token, expiresAt: token.expiresAt, refresh: token.refresh || '', server: token.server || '' });
           t.oncomplete = function () { resolve(); }; t.onerror = function () { reject(t.error); }; t.onabort = function () { reject(t.error); };
         });
       },
@@ -387,7 +387,7 @@
       if (Drive.demo || !store.persistent || !folders || !folders.notes || running) return false;
       if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller || !window.SyncManager) return false;
       var tok = Drive.token && Drive.token();
-      if (!tok || tok.expiresAt - Date.now() < 3 * 60000) return false;
+      if (!tok || (!tok.refresh && tok.expiresAt - Date.now() < 3 * 60000)) return false;
       var reg = await navigator.serviceWorker.ready;
       if (!reg.sync) return false;
       var before = await store.outboxPeek();

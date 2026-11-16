@@ -122,46 +122,76 @@
         else { renderConflict(); renderMeta(); }
       }
     },
-    progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; $('syncPill').textContent = 'Syncing ' + n + '/' + total; },
+    progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; },
     folders: function () { if (S.view === 'list') renderList(); if (!$('drawer').classList.contains('hidden')) renderTree(); renderMeta(); }
   });
   function editingNow() { return document.activeElement && $('editorView').contains(document.activeElement) && document.activeElement !== document.body; }
 
+  // ---------- Is everything in Drive? ----------
+  // A small cloud at the top answers that at a glance: a tick when every note is in Drive, an arrow while
+  // changes are on their way, a struck-out cloud when offline (notes are safe on this device), and amber
+  // with a banner only when something needs you.
+  function health(st) {
+    st = st || sync.status();
+    var w = st.waiting.length, now = Date.now();
+    var oldest = st.waiting.reduce(function (m, n) { var t = Date.parse(n.updated) || now; return Math.min(m, t); }, now);
+    var age = now - oldest, many = function (k, one, more) { return k === 1 ? one : k + ' ' + more; };
+    if (st.conflicts.length) return { s: 'attention', text: many(st.conflicts.length, 'A note was', 'notes were') + ' changed on two devices. Choose which version to keep.', act: 'review', btn: 'Review' };
+    if (st.phase === 'signin') return Drive.signedInBefore() || w
+      ? { s: 'attention', text: (w ? many(w, 'One change is', 'changes are') + ' only on this phone. ' : '') + 'Sign in to Google so notes reach Drive.', act: 'signin', btn: 'Sign in' }
+      : { s: 'attention', text: 'Sign in to Google to keep your notes in Drive.', act: 'signin', btn: 'Sign in' };
+    if (st.phase === 'offline') return w && age > 24 * 3600e3
+      ? { s: 'attention', text: 'Offline for a while: ' + many(w, 'one change is', 'changes are') + ' only on this phone. They go to Drive when you\'re online.' }
+      : { s: 'offline', text: w ? 'Offline. ' + many(w, 'One change is', 'changes are') + ' saved on this phone and will go to Drive when you\'re back online.' : 'Offline. Every note is in Drive; new changes wait on this phone.' };
+    if (st.phase === 'error' && w) return { s: 'attention', text: 'Drive had a problem: ' + ((st.error && st.error.message) || 'unknown') + '. Your notes are safe on this phone.', act: 'sync', btn: 'Try again' };
+    if (w && age > 10 * 60000 && st.phase !== 'syncing') return { s: 'attention', text: many(w, 'One change hasn\'t', 'changes haven\'t') + ' reached Drive yet.', act: 'sync', btn: 'Sync now' };
+    if (st.phase === 'syncing' || w) return { s: 'busy', text: w ? 'Sending ' + many(w, 'one change', 'changes') + ' to Drive…' : 'Checking Drive…' };
+    return { s: 'ok', text: 'Every note is in Google Drive › Readables › Notes.' + (st.lastSynced ? ' Checked at ' + new Date(st.lastSynced).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + '.' : '') };
+  }
+  var CLOUD = {
+    ok: '<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.6 9.1 4.75 4.75 0 007 18.5z"/><path d="M9.5 13.6l2 2 3.8-3.9"/>',
+    busy: '<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.6 9.1 4.75 4.75 0 007 18.5z"/><path d="M12 16v-5M9.8 13l2.2-2.2 2.2 2.2"/>',
+    offline: '<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.6 9.1 4.75 4.75 0 007 18.5z"/><path d="M4 4l16 16"/>',
+    attention: '<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.6 9.1 4.75 4.75 0 007 18.5z"/><path d="M12 10.5v3.2M12 16.2v.1"/>'
+  };
   function renderStatus(st) {
     st = st || sync.status();
-    var n = st.waiting.length, c = st.conflicts.length, text, cls = '';
-    if (st.phase === 'syncing') text = 'Syncing…';
-    else if (c) { text = c === 1 ? '1 needs a look' : c + ' need a look'; cls = 'waiting'; }
-    else if (st.phase === 'offline') { text = n ? 'Offline · ' + n : 'Offline'; cls = n ? 'waiting' : ''; }
-    else if (st.phase === 'signin') { text = n ? 'Sign in · ' + n : 'Sign in to sync'; cls = 'waiting'; }
-    else if (st.phase === 'error') { text = 'Sync problem'; cls = 'bad'; }
-    else if (n) { text = n + ' waiting'; cls = 'waiting'; }
-    else text = 'Saved';
+    var h = health(st);
     ['syncPill', 'syncPill2'].forEach(function (id) {
-      $(id).innerHTML = (cls ? '<span class="dot"></span>' : '') + esc(text);
-      $(id).className = 'pill ' + cls;
+      $(id).innerHTML = '<svg class="i" viewBox="0 0 24 24">' + CLOUD[h.s] + '</svg>';
+      $(id).className = 'icon cloud ' + h.s;
+      $(id).setAttribute('aria-label', h.text);
+      $(id).title = h.text;
     });
-    $('syncPill2').classList.toggle('hidden', !cls && st.phase !== 'syncing');
+    var bn = $('syncBanner');
+    bn.classList.toggle('hidden', h.s !== 'attention');
+    if (h.s === 'attention') {
+      bn.querySelector('span').textContent = h.text;
+      var btn = bn.querySelector('button');
+      btn.classList.toggle('hidden', !h.btn); btn.textContent = h.btn || ''; btn.dataset.act = h.act || '';
+    }
     if (S.sheet === 'sync') renderSyncSheet();
     renderMeta();
   }
+  async function healthAction(act) {
+    if (act === 'signin') { try { await Drive.signIn(); sync.run({ pull: true }); } catch (e) { toast(e.message); } }
+    if (act === 'sync') sync.run({ pull: true });
+    if (act === 'review') renderSyncSheet();
+  }
+  $('syncBanner').querySelector('button').onclick = function () { healthAction(this.dataset.act); };
   function renderSyncSheet() {
-    var st = sync.status(), text, items = st.conflicts.concat(st.waiting);
-    if (st.phase === 'signin') text = 'Notes are saved on this device. Sign in with Google to send them to Drive › Readables › Notes. A sign-in lasts about an hour and renews when you tap.';
-    else if (st.phase === 'offline') text = "You're offline. Notes are saved on this device and go to Drive when you're back online.";
-    else if (st.phase === 'error') text = 'Drive said: ' + ((st.error && st.error.message) || 'something went wrong') + '. Notes are safe on this device.';
-    else if (st.phase === 'syncing') text = 'Sending changes to Drive…';
-    else text = items.length ? 'These go to Drive in a moment.' : 'Everything is in Drive › Readables › Notes.' +
-      (st.lastSynced ? ' Last checked ' + new Date(st.lastSynced).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + '.' : '');
+    var st = sync.status(), h = health(st), items = st.conflicts.concat(st.waiting);
     S.sheet = 'sync';
-    openSheet('<h2>Sync</h2><p>' + esc(text) + '</p>' + (items.length ? '<ul>' + items.map(function (n) {
-      return '<li>' + esc(n.title || N.fileName(n).replace(/^\S+ \S+ |\.md$/g, '')) + (n.conflict ? ' — changed on another device' : n.deleted ? ' — to delete' : '') + '</li>';
-    }).join('') + '</ul>' : '') + '<div class="row">' +
-      (st.phase === 'signin' ? '<button class="primary" data-act="signin" type="button">Sign in with Google</button>' : '') +
+    openSheet('<h2>' + (h.s === 'ok' ? 'All saved in Drive' : h.s === 'offline' ? 'Offline' : h.s === 'busy' ? 'Saving to Drive' : 'Needs a look') + '</h2><p>' + esc(h.text) + '</p>' +
+      (items.length ? '<ul>' + items.slice(0, 30).map(function (n) {
+        return '<li data-open="' + esc(n.id) + '" style="cursor:pointer">' + esc(n.title || N.fileName(n).replace(/^\S+ \S+ |\.md$/g, '')) + (n.conflict ? ' — changed on two devices' : n.deleted ? ' — to delete' : '') + '</li>';
+      }).join('') + (items.length > 30 ? '<li>…and ' + (items.length - 30) + ' more</li>' : '') + '</ul>' : '') +
+      '<p style="font-size:13px">Notes are saved on this phone the moment you type, then copied to Drive. While the phone sleeps, Android keeps sending them in the background.</p>' +
+      '<div class="row">' + (h.act === 'signin' ? '<button class="primary" data-act="signin" type="button">Sign in with Google</button>' : '') +
       '<button data-act="sync" type="button"' + (st.phase === 'syncing' ? ' disabled' : '') + '>Sync now</button><button data-act="close" type="button">Close</button></div>',
-    async function (act) {
-      if (act === 'signin') { try { await Drive.signIn(); sync.run({ pull: true }); } catch (e) { toast(e.message); } }
-      if (act === 'sync') sync.run({ pull: true });
+    function (act) { if (act === 'signin' || act === 'sync') healthAction(act); });
+    $('sheet').querySelectorAll('[data-open]').forEach(function (li) {
+      li.onclick = function () { var n = notes[li.dataset.open]; if (n && !n.deleted) { closeSheet(); openNote(n); } };
     });
   }
   $('syncPill').onclick = $('syncPill2').onclick = function () { renderSyncSheet(); };
@@ -171,7 +201,7 @@
   // Renew the sign-in on your first tap once it has run out (or is about to).
   var lastRenew = 0;
   document.addEventListener('click', function () {
-    if (Drive.demo || !Drive.signedInBefore() || !navigator.onLine) return;
+    if (Drive.demo || Drive.persistent || !Drive.signedInBefore() || !navigator.onLine) return; // the sign-in helper renews by itself
     if (Drive.signedIn() && Drive.minutesLeft() > 6) return;
     if (Date.now() - lastRenew < 60000) return;
     lastRenew = Date.now();
@@ -228,7 +258,6 @@
     }
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
-    else if (n.dirty) foot.push('<span class="flag">Waiting</span>');
     if (foot.length) inner += '<div class="foot">' + foot.join('') + '</div>';
     return '<article class="card" tabindex="0" data-id="' + esc(n.id) + '">' + (inner || '<p class="where">Empty note</p>') + '</article>';
   }
@@ -446,7 +475,7 @@
     if (o) { closeDrawer(); goFolder(o.dataset.open || null); }
   });
   $('addRootFolder').onclick = function () { newFolderSheet(rootId()); };
-  $('importBtn').onclick = function () {
+  if ($('importBtn')) $('importBtn').onclick = function () {
     closeDrawer();
     setTimeout(importSheet, 250); // after the drawer's history step is undone
   };
@@ -664,7 +693,17 @@
     $('penOpts').innerHTML = html;
     if (S.canvas) S.canvas.setPen({ c: PREF.pen.c, s: PREF.pen.s, hc: PREF.hl });
   }
+  // The drawing tools live behind one button, so a note opens as a plain page, like Keep.
+  function showTools(on) {
+    PREF.showTools = !!on; savePref();
+    $('tools').classList.toggle('hidden', !on);
+    $('toolsBtn').setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (!on && PREF.tool !== 'type') setTool('type');
+    if (S.canvas) requestAnimationFrame(S.canvas.relayout);
+  }
+  $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
+  setTimeout(function () { showTools(PREF.showTools); }, 0);
   $('tools').addEventListener('click', function (e) {
     var b = e.target.closest('button');
     if (!b) return;
@@ -989,7 +1028,7 @@
     if (registration && registration.waiting) registration.waiting.postMessage('skipWaiting');
     else location.reload();
   };
-  $('checkUpdateBtn').onclick = async function () {
+  async function checkUpdate() {
     if (!registration) { toast(Drive.demo ? 'Updates work in the installed app, not in the demo.' : 'Updates work once the app is installed from its web address.'); return; }
     toast('Checking for update…');
     try { await registration.update(); } catch (e) {}
@@ -997,25 +1036,44 @@
       if (registration.waiting || registration.installing) { hideToast(); offerUpdate(); }
       else toast('You have the latest version.');
     }, 1500);
-  };
-  $('versionLabel').textContent = 'Quick Notes ' + CFG.VERSION + (Drive.demo ? ' · demo: pretend Drive, resets on reload' : '');
-
-  // ---------- Demo switches ----------
-  if (Drive.demo) {
-    $('demoTools').classList.remove('hidden');
-    $('demoOffline').onclick = function () {
-      var off = !Drive.isOffline();
-      Drive.setOffline(off);
-      this.setAttribute('aria-pressed', off ? 'true' : 'false');
-      sync.run({ pull: true });
-    };
-    $('demoElsewhere').onclick = function () {
-      var n = S.lastOpened && notes[S.lastOpened];
-      if (!n || !n.fileId) { toast('Open a note that is already in Drive first.'); return; }
-      Drive.editElsewhere(n.fileId);
-      toast('“' + (n.title || 'That note') + '” was changed on the pretend laptop. Edit it here before syncing to see the warning.', null, null, 7000);
-    };
   }
+
+  // ---------- Settings (in the Folders menu) ----------
+  function settingsSheet() {
+    var st = sync.status(), h = health(st), who = Drive.account ? Drive.account() : '';
+    var signin = Drive.demo ? 'Demo mode: a pretend Drive that resets when the page reloads.' :
+      !Drive.signedIn() ? 'Not signed in. Notes are kept on this phone until you sign in.' :
+      Drive.lasting && Drive.lasting() ? 'Signed in' + (who ? ' as ' + who : '') + '. You stay signed in on this phone.' :
+      'Signed in' + (who ? ' as ' + who : '') + ' for about an hour at a time' + (Drive.persistent ? '. Sign in once more to stay signed in.' : '.');
+    openSheet('<h2>Settings</h2>' +
+      '<div class="set"><b>Google account</b><p>' + esc(signin) + '</p>' +
+        (!Drive.demo && (!Drive.signedIn() || (Drive.persistent && !Drive.lasting())) ? '<button class="primary" type="button" data-act="signin">Sign in with Google</button>' : '') + '</div>' +
+      '<div class="set"><b>Sync</b><p>' + esc(h.text) + '</p><button type="button" data-act="sync">Sync now</button></div>' +
+      '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
+        '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
+      '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in Google Drive › Readables › Notes, readable by any notes app.</p>' +
+        '<button type="button" data-act="update">Check for update</button></div>' +
+      (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
+        '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +
+      '<div class="row"><button type="button" data-act="close">Close</button></div>',
+    function (act) {
+      if (act === 'signin') healthAction('signin');
+      if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
+      if (act === 'keep') location.href = 'import.html';
+      if (act === 'notion') location.href = 'notion.html';
+      if (act === 'update') { closeSheet(); checkUpdate(); }
+      if (act === 'demoOffline') { Drive.setOffline(!Drive.isOffline()); sync.run({ pull: true }); settingsSheet(); }
+      if (act === 'demoElsewhere') {
+        closeSheet();
+        var n = S.lastOpened && notes[S.lastOpened];
+        if (!n || !n.fileId) { toast('Open a note that is already in Drive first.'); return; }
+        Drive.editElsewhere(n.fileId);
+        toast('“' + (n.title || 'That note') + '” was changed on the pretend laptop. Edit it here before syncing to see the warning.', null, null, 7000);
+      }
+    });
+  }
+  $('settingsBtn').onclick = function () { closeDrawer(); setTimeout(settingsSheet, 250); };
+  Drive.beforeLeave = function () { if (S.canvas) S.canvas.flush(); saveNow(); };
 
   // ---------- Start: the notes grid ----------
   (async function start() {
@@ -1035,6 +1093,11 @@
     }
 
     if (Drive.demo) await Drive.signIn();
+    await Drive.ready; // back from Google's sign-in page: finish signing in first
+    var err = Drive.takeSignInError && Drive.takeSignInError();
+    if (err) toast(err);
+    // Ask the phone to keep this app's data even when storage runs low.
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     renderStatus();
     sync.run({ pull: true });
   })();

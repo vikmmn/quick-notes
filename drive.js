@@ -48,8 +48,71 @@
       });
     }
 
+    // ---- Staying signed in (when config.js names a TOKEN_SERVER, the small sign-in helper) ----
+    // Google gives a web page only one-hour sign-ins. Signing in once through the helper gives a lasting
+    // permission, kept on this device sealed so only the helper can use it; the helper turns it into a fresh
+    // one-hour sign-in whenever needed, silently.
+    var SERVER = String(CFG.TOKEN_SERVER || '').replace(/\/+$/, '');
+    var REFRESH_KEY = 'qn-refresh', STATE_KEY = 'qn-oauth-state', RETURN_KEY = 'qn-oauth-return';
+    function refreshBlob() { try { return localStorage.getItem(REFRESH_KEY) || ''; } catch (e) { return ''; } }
+    function keep(r) {
+      token = r.access_token;
+      expiresAt = Date.now() + (Number(r.expires_in || 3600) - 120) * 1000;
+      try {
+        localStorage.setItem('signed-in-before', '1');
+        localStorage.setItem(TOKEN_KEY, JSON.stringify({ token: token, expiresAt: expiresAt }));
+        if (r.refresh) localStorage.setItem(REFRESH_KEY, r.refresh);
+      } catch (e) {}
+    }
+    var renewing = null, lastError = null;
+    function renew() {
+      if (!SERVER || !refreshBlob() || !navigator.onLine) return Promise.resolve(false);
+      if (!renewing) renewing = (async function () {
+        try {
+          var r = await fetch(SERVER + '/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh: refreshBlob() }) });
+          if (r.status === 401) { try { localStorage.removeItem(REFRESH_KEY); } catch (e) {} return false; } // permission withdrawn
+          if (!r.ok) return false;
+          keep(await r.json());
+          return true;
+        } catch (e) { return false; }
+      })().then(function (ok) { renewing = null; return ok; });
+      return renewing;
+    }
+    function appRoot() { return location.origin + location.pathname.replace(/[^/]*$/, ''); }
+    function lastingSignIn() {
+      var state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { localStorage.setItem(STATE_KEY, state); localStorage.setItem(RETURN_KEY, location.href); } catch (e) {}
+      if (window.Drive && window.Drive.beforeLeave) { try { window.Drive.beforeLeave(); } catch (e) {} }
+      var q = { client_id: CFG.CLIENT_ID, redirect_uri: appRoot(), response_type: 'code', scope: SCOPE, access_type: 'offline',
+        prompt: 'consent', include_granted_scopes: 'true', state: state };
+      if (account()) q.login_hint = account();
+      var url = 'https://accounts.google.com/o/oauth2/v2/auth?' + Object.keys(q).map(function (k) { return k + '=' + encodeURIComponent(q[k]); }).join('&');
+      setTimeout(function () { location.href = url; }, 150); // a moment for the last save on this device
+      return new Promise(function () {}); // the page goes to Google and comes back
+    }
+    // Coming back from Google with ?code=…: hand it to the helper, keep the lasting permission, tidy the address.
+    var finished = (async function () {
+      if (!SERVER) return;
+      var p = new URLSearchParams(location.search), code = p.get('code'), err = p.get('error');
+      if (!code && !err) return;
+      var expected = null, back = null;
+      try { expected = localStorage.getItem(STATE_KEY); back = localStorage.getItem(RETURN_KEY); localStorage.removeItem(STATE_KEY); localStorage.removeItem(RETURN_KEY); } catch (e) {}
+      try { history.replaceState(history.state, '', location.pathname); } catch (e) {}
+      if (err) { lastError = err === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in did not finish (' + err + ').'; return; }
+      if (!expected || p.get('state') !== expected) { lastError = 'That sign-in link was out of date. Please sign in again.'; return; }
+      try {
+        var r = await fetch(SERVER + '/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code, redirect_uri: appRoot() }) });
+        var d = await r.json();
+        if (!r.ok || !d.access_token) throw new Error(d.error_description || d.error || 'The sign-in helper said no.');
+        keep(d);
+        learnAccount();
+        if (back && back.split('?')[0] !== location.href.split('?')[0]) location.replace(back.split('?')[0]);
+      } catch (e) { lastError = 'Signing in did not finish: ' + e.message; }
+    })();
+
     // Must be called from a tap or click: Google opens a small sign-in window.
     async function signIn() {
+      if (SERVER) return lastingSignIn();
       await loadGis();
       if (!client) {
         client = google.accounts.oauth2.initTokenClient({ client_id: CFG.CLIENT_ID, scope: SCOPE, callback: function () {} });
@@ -79,12 +142,13 @@
       });
     }
 
-    function signedIn() { return !!token && Date.now() < expiresAt; }
-    function minutesLeft() { return token ? (expiresAt - Date.now()) / 60000 : 0; }
+    function tokenOk() { return !!token && Date.now() < expiresAt; }
+    function signedIn() { return tokenOk() || (!!SERVER && !!refreshBlob()); }
+    function minutesLeft() { return SERVER && refreshBlob() ? 9999 : token ? (expiresAt - Date.now()) / 60000 : 0; }
 
-    async function api(url, opts) {
+    async function api(url, opts, retried) {
       if (!navigator.onLine) throw fail('offline', 'No internet connection.');
-      if (!signedIn()) throw fail('auth', 'Please sign in to Google again.');
+      if (!tokenOk() && !(await renew())) throw fail('auth', 'Please sign in to Google again.');
       opts = opts || {};
       var headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + token });
       var r;
@@ -93,6 +157,7 @@
       if (r.status === 401) {
         token = null;
         try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+        if (!retried && await renew()) return api(url, opts, true);
         throw fail('auth', 'Your Google sign-in has ended. Please sign in again.');
       }
       if (!r.ok) {
@@ -117,8 +182,14 @@
       return out;
     }
 
-    return {
+    var self = {
       demo: false,
+      takeSignInError: function () { var e = lastError; lastError = null; return e; },
+      persistent: !!SERVER,
+      ready: finished,
+      lasting: function () { return !!SERVER && !!refreshBlob(); },
+      account: account,
+      signOut: function () { token = null; try { [TOKEN_KEY, REFRESH_KEY].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {} },
       signIn: signIn,
       signedIn: signedIn,
       minutesLeft: minutesLeft,
@@ -202,13 +273,17 @@
       findZips: function (term) {
         return query("name contains '" + qs(term) + "' and (mimeType = 'application/x-zip' or mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed') and trashed = false", 50, 1);
       },
-      token: function () { return signedIn() ? { token: token, expiresAt: expiresAt } : null; },
+      token: function () {
+        if (!signedIn()) return null;
+        return { token: tokenOk() ? token : '', expiresAt: tokenOk() ? expiresAt : 0, refresh: SERVER ? refreshBlob() : '', server: SERVER };
+      },
       findExact: async function (name, parentId, mime) {
         var q = "name = '" + qs(name) + "' and trashed = false and '" + qs(parentId) + "' in parents" +
           (mime ? " and mimeType = '" + qs(mime) + "'" : '');
         return (await query(q, 10, 1))[0] || null;
       }
     };
+    return self;
   }
 
   // ---------------- Pretend Drive for demo mode ----------------
@@ -280,6 +355,7 @@
       findTakeout: function () { return wait([]); },
       findZips: function () { return wait([]); },
       token: function () { return null; },
+      persistent: false, ready: Promise.resolve(), takeSignInError: function () { return null; }, lasting: function () { return false; }, account: function () { return ''; }, signOut: function () { signed = false; },
       readBlob: function (id) { return wait(files[id].blob || new Blob([files[id].text])); },
       revisions: function (id) { var f = files[id]; return wait((f.revs || []).map(function (r) { return { id: r.id, modifiedTime: r.modifiedTime, size: r.size }; }).concat([{ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length) }])); },
       readRevision: function (id, revId) { var f = files[id], r = (f.revs || []).filter(function (x) { return x.id === revId; })[0]; return wait(r ? r.text : f.text); },

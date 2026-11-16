@@ -6,21 +6,21 @@
 <title>Copy notes in from Notion · Quick Notes</title>
 <link rel="icon" type="image/png" href="icon-192.png">
 <style>
-  :root { --paper: #f6f3ec; --surface: #fff; --ink: #22201c; --muted: #6d675d; --rule: #e2ddd2; --accent: #8a5a12; --accent-soft: #f3e6cf; --bad: #a33a2b;
-    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
-  @media (prefers-color-scheme: dark) { :root { --paper: #17161a; --surface: #211f24; --ink: #ebe7df; --muted: #a39d93; --rule: #34313a; --accent: #e9b25e; --accent-soft: #3a2f1d; --bad: #f08a7a; color-scheme: dark; } }
+  :root { --paper: #ffffff; --surface: #fff; --ink: #1f1f1f; --muted: #5f6368; --rule: #e0e3e7; --accent: #00796b; --accent-soft: #d8efec; --bad: #b3261e;
+    --font: "Google Sans", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #1f1f1f; --surface: #1f1f1f; --ink: #e3e3e3; --muted: #a8adb3; --rule: #444746; --accent: #5fc4b5; --accent-soft: #1f3a37; --bad: #f2b8b5; color-scheme: dark; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--font);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   main { max-width: 720px; margin: 0 auto; padding: 20px 18px 60px; }
-  h1 { font-size: 24px; margin: 8px 0 4px; }
+  h1 { font-size: 24px; font-weight: 400; margin: 8px 0 4px; }
   h2 { font-size: 18px; margin: 0 0 8px; }
   section { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; margin: 14px 0; }
   .muted { color: var(--muted); font-size: 14px; }
   .bad { color: var(--bad); font-size: 14px; }
   .hidden { display: none !important; }
-  button, .button { font: 500 15px/1 var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 11px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
-  button.primary, .button { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button, .button { font: 500 15px/1 var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 11px 18px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.primary, .button { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   button:disabled { opacity: .5; cursor: default; }
   .pick { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--rule); cursor: pointer; overflow-wrap: anywhere; }
   .pick input, .opt input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }

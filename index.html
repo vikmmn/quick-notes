@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Quick Notes</title>
-<meta name="theme-color" content="#f6f3ec" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#17161a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1f1f" media="(prefers-color-scheme: dark)">
 <meta name="description" content="Quick notes saved as Markdown files in Google Drive.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icon-192.png">
@@ -13,18 +13,18 @@
 <style>
   /* Two views: the notes grid (opens first) and a note's canvas. System fonts only, so it opens fast. */
   :root {
-    --paper: #f6f3ec; --surface: #ffffff; --ink: #22201c; --muted: #6d675d; --rule: #e2ddd2;
-    --accent: #8a5a12; --accent-soft: #f3e6cf; --accent-ink: #ffffff;
-    --warn-bg: #fbefd5; --warn-ink: #5e4300; --bad: #a33a2b; --mark: #fde68a;
-    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    --radius: 12px; --shadow: 0 8px 28px rgba(0,0,0,.18);
+    --paper: #ffffff; --surface: #ffffff; --field: #f0f4f4; --ink: #1f1f1f; --muted: #5f6368; --rule: #e0e3e7;
+    --accent: #00796b; --accent-soft: #d8efec; --accent-ink: #ffffff;
+    --warn-bg: #fef7e0; --warn-ink: #6b4a00; --bad: #b3261e; --mark: #fde68a;
+    --font: "Google Sans", Roboto, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+    --radius: 12px; --shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --paper: #17161a; --surface: #211f24; --ink: #ebe7df; --muted: #a39d93; --rule: #34313a;
-      --accent: #e9b25e; --accent-soft: #3a2f1d; --accent-ink: #1d1404; --warn-bg: #3a3017; --warn-ink: #f3dc9a; --bad: #f08a7a; --mark: #6b5414;
-      --shadow: 0 8px 28px rgba(0,0,0,.5);
+      --paper: #1f1f1f; --surface: #1f1f1f; --field: #2d3131; --ink: #e3e3e3; --muted: #a8adb3; --rule: #444746;
+      --accent: #5fc4b5; --accent-soft: #1f3a37; --accent-ink: #00201c; --warn-bg: #3d3214; --warn-ink: #f6dd9a; --bad: #f2b8b5; --mark: #6b5414;
+      --shadow: 0 1px 3px rgba(0,0,0,.6), 0 4px 8px 3px rgba(0,0,0,.35);
       color-scheme: dark;
     }
   }
@@ -35,19 +35,24 @@
   .hidden { display: none !important; }
   svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
 
-  button { font: 500 15px/1 var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule);
-    border-radius: 10px; padding: 10px 13px; cursor: pointer; min-height: 40px; }
+  button { font: 500 15px/1 var(--font); color: var(--accent); background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 999px; padding: 10px 16px; cursor: pointer; min-height: 40px; letter-spacing: .01em; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   button.ghost { background: transparent; border-color: transparent; }
-  button.icon { padding: 0; width: 40px; height: 40px; display: inline-grid; place-items: center; background: transparent; border-color: transparent; }
+  button.icon { padding: 0; width: 44px; height: 44px; display: inline-grid; place-items: center; background: transparent; border-color: transparent; color: var(--muted); border-radius: 50%; }
+  button.icon:hover { background: var(--field); }
+  button.cloud.ok, button.cloud.busy, button.cloud.offline { color: var(--muted); }
+  button.cloud.attention { color: #e37400; }
+  button.cloud.busy svg { animation: qn-pulse 1.6s ease-in-out infinite; }
+  @keyframes qn-pulse { 50% { opacity: .45; } }
   button.icon[aria-pressed="true"], button.tool[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
   button:disabled { opacity: .4; cursor: default; }
   button.danger { color: var(--bad); }
   button:focus-visible, input:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input[type=text], input[type=search] { font: 16px var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; width: 100%; }
 
-  .bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--paper); }
-  .bar h1 { flex: 1; min-width: 0; margin: 0 4px; font: 600 19px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 2px; padding: 6px 6px; background: var(--paper); }
+  .bar h1 { flex: 1; min-width: 0; margin: 0 6px; font: 400 22px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar .spacer { flex: 1; }
   .pill { font-size: 13px; padding: 7px 11px; min-height: 34px; border-radius: 999px; color: var(--muted); white-space: nowrap; }
   .pill.waiting { color: var(--warn-ink); background: var(--warn-bg); border-color: transparent; }
@@ -55,14 +60,19 @@
   .pill .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; }
 
   .notice { border-radius: var(--radius); padding: 12px 14px; margin: 8px 12px; background: var(--warn-bg); color: var(--warn-ink); font-size: 15px; }
+  #syncBanner { display: flex; align-items: center; gap: 10px; max-width: 1072px; margin: 4px auto 8px; }
+  #syncBanner:not(.hidden) { margin-left: max(14px, calc(50% - 536px)); margin-right: max(14px, calc(50% - 536px)); }
+  #syncBanner span { flex: 1; }
+  #syncBanner button { flex: none; background: transparent; border-color: currentColor; color: inherit; }
   .notice b { display: block; margin-bottom: 4px; }
   .notice .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
   /* ---------- Home: notes grid ---------- */
-  #listView main { max-width: 1100px; margin: 0 auto; padding: 0 14px 20px; }
+  #listView main { max-width: 1100px; margin: 0 auto; padding: 0 14px 110px; }
   .searchwrap { position: relative; margin: 2px 0 10px; }
-  .searchwrap input { border-radius: 999px; padding: 11px 16px 11px 42px; }
-  .searchwrap svg.i { position: absolute; left: 14px; top: 12px; color: var(--muted); }
+  .searchwrap input { border-radius: 999px; padding: 13px 16px 13px 46px; background: var(--field); border-color: transparent; }
+  .searchwrap input:focus { background: var(--surface); border-color: var(--rule); box-shadow: var(--shadow); outline: 0; }
+  .searchwrap svg.i { position: absolute; left: 16px; top: 14px; color: var(--muted); }
   .recent { position: absolute; left: 0; right: 0; top: 48px; z-index: 15; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; }
   .recent div { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
   .recent div:hover { background: var(--paper); }
@@ -70,21 +80,23 @@
   .recent button { min-height: 0; padding: 2px 6px; border: 0; background: transparent; color: var(--muted); }
   .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 6px; scrollbar-width: none; }
   .chips:empty { display: none; }
-  .chips button { flex: none; font-size: 14px; min-height: 34px; padding: 7px 12px; border-radius: 999px; }
-  .chips button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .chips button { flex: none; font-size: 14px; min-height: 34px; padding: 7px 14px; border-radius: 8px; color: var(--ink); }
+  .chips button[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; color: var(--ink); }
   .crumbs { font-size: 13px; color: var(--muted); margin: 0 2px 8px; }
   .crumbs:empty { display: none; }
   .crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
   .folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 6px; }
-  .folder { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); cursor: pointer; font-size: 15px; min-width: 0; }
+  .folder { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); cursor: pointer; font-size: 15px; min-width: 0; }
+  .folder:hover { background: var(--field); }
   .folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .folder small { color: var(--muted); }
   .folder svg.i { color: var(--accent); flex: none; }
   .section-head { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 16px 4px 8px; }
   .grid { columns: 2 170px; column-gap: 10px; }
-  .card { position: relative; break-inside: avoid; margin: 0 0 10px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--rule);
-    border-radius: var(--radius); cursor: pointer; overflow-wrap: anywhere; }
-  .card h3 { margin: 0 0 4px; font: 600 16px/1.3 var(--font); padding-right: 18px; }
+  .card { position: relative; break-inside: avoid; margin: 0 0 10px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--rule);
+    border-radius: var(--radius); cursor: pointer; overflow-wrap: anywhere; transition: box-shadow .15s; }
+  .card:hover { box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 4px; font: 500 16px/1.35 var(--font); padding-right: 18px; }
   .card .pin { position: absolute; top: 10px; right: 10px; color: var(--accent); }
   .card .pin svg.i { width: 16px; height: 16px; }
   .card .prev { font-size: 15px; max-height: 280px; overflow: hidden; }
@@ -100,7 +112,7 @@
   .card .prev img.qn-img { max-height: 220px; object-fit: cover; }
   .card .ink-thumb { display: block; max-width: 100%; height: auto; margin-top: 6px; }
   .card .foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }
-  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--field); color: var(--ink); }
   .chip button { min-height: 0; padding: 0 2px; border: 0; background: transparent; color: var(--muted); font-size: 15px; }
   .flag { font-size: 12px; color: var(--warn-ink); background: var(--warn-bg); border-radius: 999px; padding: 3px 8px; }
   .where { font-size: 12px; color: var(--muted); }
@@ -108,10 +120,14 @@
   .results .snip { font-size: 14px; color: var(--muted); margin-top: 4px; }
   mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
   .empty { color: var(--muted); padding: 24px 4px; }
-  .fab { position: fixed; z-index: 25; width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; padding: 0;
+  .fab { position: fixed; z-index: 25; width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; padding: 0; color: var(--ink);
     box-shadow: var(--shadow); bottom: calc(18px + env(safe-area-inset-bottom)); }
   .fab svg.i { width: 26px; height: 26px; }
   #newFab { right: 18px; }
+  button.fab.primary { background: var(--accent-soft); border-color: transparent; color: var(--ink); }
+  .set { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .set b { display: block; font-weight: 500; margin-bottom: 2px; }
+  .set p { margin: 0 0 10px !important; }
   footer { max-width: 1100px; margin: 0 auto; padding: 24px 14px 100px; font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   footer button { font-size: 12px; padding: 6px 9px; min-height: 0; }
 
@@ -119,8 +135,8 @@
   .drawer-back { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.35); }
   .drawer { position: fixed; z-index: 41; top: 0; bottom: 0; left: 0; width: min(330px, 86vw); background: var(--paper); box-shadow: var(--shadow);
     padding: calc(12px + env(safe-area-inset-top)) 10px calc(12px + env(safe-area-inset-bottom)); overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .drawer h2 { font: 600 18px/1.3 var(--font); margin: 4px 8px 10px; }
-  .tree-row { display: flex; align-items: center; gap: 2px; border-radius: 10px; min-height: 44px; padding-right: 2px; }
+  .drawer h2 { font: 500 18px/1.3 var(--font); margin: 4px 12px 10px; }
+  .tree-row { display: flex; align-items: center; gap: 2px; border-radius: 0 999px 999px 0; min-height: 46px; padding-right: 2px; }
   .tree-row.on { background: var(--accent-soft); }
   .tree-row .tw { width: 28px; height: 32px; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--muted); flex: none; display: grid; place-items: center; }
   .tree-row .tw svg.i { width: 16px; height: 16px; }
@@ -136,7 +152,7 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
   #editorView .bar { position: static; }
   .tools { display: flex; align-items: center; gap: 2px; padding: 0 8px 4px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--rule); flex: none; }
-  .tools .tool { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; min-height: 36px; border-color: transparent; background: transparent; font-size: 14px; flex: none; }
+  .tools .tool { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; min-height: 36px; border-color: transparent; background: transparent; font-size: 14px; flex: none; color: var(--ink); }
   .tools .sep { width: 1px; height: 22px; background: var(--rule); margin: 0 6px; flex: none; }
   .swatch { width: 26px; height: 26px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); flex: none; margin: 0 2px; }
   .swatch[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--paper) inset; }
@@ -145,7 +161,7 @@
   .size[aria-pressed="true"] { background: var(--accent-soft); }
   #canvasWrap { flex: 1; min-height: 0; overflow: auto; position: relative; overscroll-behavior: contain; padding-bottom: 80px; }
   #noteHead { padding: 8px 16px 0; position: sticky; left: 0; max-width: 100vw; }
-  #noteTitle { display: block; width: 100%; outline: 0; color: var(--ink); font: 600 22px/1.3 var(--font); }
+  #noteTitle { display: block; width: 100%; outline: 0; color: var(--ink); font: 400 22px/1.3 var(--font); }
   #noteMeta { font-size: 12px; color: var(--muted); }
   #noteLabels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   #noteLabels:empty { display: none; }
@@ -215,10 +231,10 @@
 
   /* Sheets (dialogs) */
   .sheet-back { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; }
-  .sheet { width: 100%; max-width: 560px; max-height: 85vh; overflow: auto; background: var(--paper); border-radius: 18px 18px 0 0;
+  .sheet { width: 100%; max-width: 560px; max-height: 85vh; overflow: auto; background: var(--paper); border-radius: 28px 28px 0 0;
     padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
   @media (min-width: 700px) { .sheet-back { align-items: center; } .sheet { border-radius: 18px; } }
-  .sheet h2 { margin: 0 0 6px; font: 600 18px/1.3 var(--font); }
+  .sheet h2 { margin: 0 0 6px; font: 400 22px/1.3 var(--font); }
   .sheet p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
   .sheet ul { margin: 0 0 14px; padding-left: 18px; font-size: 15px; }
   .sheet .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -234,9 +250,9 @@
   .sheet .vprev p, .sheet .vprev ul { margin: 0 0 6px; }
 
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 60;
-    display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 12px; background: var(--ink); color: var(--paper);
+    display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 6px; background: #303030; color: #f2f2f2;
     box-shadow: var(--shadow); max-width: calc(100% - 32px); font-size: 15px; }
-  .toast button { background: transparent; color: var(--paper); border-color: transparent; font-weight: 600; }
+  .toast button { background: transparent; color: #8fd8cc; border-color: transparent; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -261,6 +277,7 @@
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/></symbol>
   <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 103-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-chevd" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-notes" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="9" rx="1.5"/><rect x="13" y="4" width="7" height="6" rx="1.5"/><rect x="4" y="15" width="7" height="5" rx="1.5"/><rect x="13" y="12" width="7" height="8" rx="1.5"/></symbol>
@@ -271,8 +288,9 @@
   <header class="bar">
     <button id="drawerBtn" class="icon" type="button" aria-label="Folders"><svg class="i"><use href="#i-menu"/></svg></button>
     <h1 id="folderTitle">All notes</h1>
-    <button id="syncPill" class="pill" type="button" aria-live="polite"></button>
+    <button id="syncPill" class="icon cloud ok" type="button"></button>
   </header>
+  <div id="syncBanner" class="notice hidden" role="status"><span></span><button type="button"></button></div>
   <main>
     <div class="searchwrap">
       <svg class="i"><use href="#i-search"/></svg>
@@ -292,14 +310,6 @@
       <p id="emptyMsg" class="empty hidden"></p>
     </div>
   </main>
-  <footer id="footer">
-    <span id="versionLabel"></span>
-    <button id="checkUpdateBtn" type="button">Check for update</button>
-    <span id="demoTools" class="hidden">
-      <button id="demoOffline" type="button" aria-pressed="false">Pretend offline</button>
-      <button id="demoElsewhere" type="button">Pretend the laptop edited the last note</button>
-    </span>
-  </footer>
   <button id="newFab" class="fab primary" type="button" aria-label="New note"><svg class="i"><use href="#i-plus"/></svg></button>
 </section>
 
@@ -309,7 +319,7 @@
   <div id="tree"></div>
   <button id="addRootFolder" class="add" type="button">+ New folder</button>
   <span style="flex:1"></span>
-  <button id="importBtn" class="add ghost" type="button" style="color:var(--muted);font-size:14px">Copy notes in from Keep or Notion…</button>
+  <button id="settingsBtn" class="add ghost" type="button" style="color:var(--ink);text-align:left;display:flex;align-items:center;gap:12px"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
 </nav>
 
 <!-- ============ A note ============ -->
@@ -317,12 +327,13 @@
   <header class="bar">
     <button id="backBtn" class="icon" type="button" aria-label="Back to notes"><svg class="i"><use href="#i-back"/></svg></button>
     <span class="spacer"></span>
-    <button id="syncPill2" class="pill" type="button"></button>
+    <button id="syncPill2" class="icon cloud ok" type="button"></button>
+    <button id="toolsBtn" class="icon" type="button" aria-label="Pen and drawing tools" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg></button>
     <button id="undoBtn" class="icon" type="button" aria-label="Undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
     <button id="redoBtn" class="icon" type="button" aria-label="Redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
     <button id="pinBtn" class="icon" type="button" aria-label="Pin note" aria-pressed="false"><svg class="i"><use href="#i-pin"/></svg></button>
   </header>
-  <div class="tools" id="tools">
+  <div class="tools hidden" id="tools">
     <button class="tool" type="button" data-tool="type" aria-pressed="true"><svg class="i"><use href="#i-type"/></svg>Type</button>
     <button class="tool" type="button" data-tool="pen" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg>Pen</button>
     <button class="tool" type="button" data-tool="highlighter" aria-pressed="false"><svg class="i"><use href="#i-hl"/></svg>Highlight</button>

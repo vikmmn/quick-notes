@@ -16,7 +16,9 @@ Google Drive › 03. Readables › Notes. Installable on phone, tablet and lapto
 - Labels work across folders: tap one to see every note with it, narrow by folder, rename it everywhere.
 - Android "Share to Quick Notes" for links and text (once installed).
 - Keeps sending changes while the phone sleeps (Background Sync in the service worker, Android Chrome).
-- Updates only when you tap **Update now**.
+- Updates only when you tap **Update now** (Settings › Check for update).
+- A cloud icon shows at a glance whether every note is in Drive; a banner appears only when something needs you.
+- Stays signed in with the optional sign-in helper (see below).
 
 Anywhere other than https://vikmmn.github.io it opens in demo mode with a pretend Drive.
 
@@ -47,7 +49,8 @@ Text of that box
 | `notes.js` | Note file format, the copy on this device, syncing with Drive (notes and folders) |
 | `vendor.js` | Bundled libraries: TipTap (rich text + Markdown), perfect-freehand (ink), markdown-it (previews) |
 | `drive.js` | Google sign-in and Google Drive (plus the pretend Drive for demo mode) |
-| `config.js` | Settings: sign-in key, Readables folder, version number |
+| `config.js` | Settings: sign-in key, sign-in helper address, Readables folder, version number |
+| `server/sign-in-helper.js` | The Cloudflare Worker that keeps you signed in (deployed separately, holds no data) |
 | `sw.js` | Makes it installable, holds updates until approved, and sends changes handed over while the phone sleeps |
 | `manifest.webmanifest`, `*.png` | App name, icons and the Android share target |
 | `demo-data.js` | Pretend notes for demo mode only |
@@ -55,7 +58,7 @@ Text of that box
 | `notion.html`, `notion.js` | One-time copy from a Notion "Markdown & CSV" export, writes Notes › Notion |
 
 ## Copying notes in from Keep or Notion
-These are one-time copies, not syncs. Open them from the Folders menu › "Copy notes in from Keep or Notion…".
+These are one-time copies, not syncs. Open them from the Folders menu › Settings › Copy notes in.
 
 Keep: open `import.html`, pick the Takeout export (found in Drive automatically,
 or chosen from the device), look inside, then Import. Everything goes to Notes › Keep (archived notes to
@@ -71,6 +74,34 @@ When the app goes to the background it writes its unsent changes to an outbox in
 Background Sync. The service worker sends them with the current Google sign-in even after the app is frozen,
 and updates the note's copy on the device. The app takes back anything not yet started when it comes back, so a
 change is never sent twice. Where Background Sync isn't available (iPhone), the app sends what it can before freezing.
+
+## Staying signed in (the sign-in helper)
+Google gives a web app only one-hour sign-ins. `server/sign-in-helper.js` is a tiny Cloudflare Worker (free plan)
+that turns one sign-in into a lasting one: it swaps Google's one-time code for a lasting permission, seals it with
+your own key, and later turns the sealed copy into fresh one-hour sign-ins, silently. Nothing is stored on Cloudflare.
+With `TOKEN_SERVER` empty in `config.js`, the app keeps using one-hour sign-ins.
+
+One-time setup:
+1. **Google Cloud Console** › Google Auth Platform › Clients › the Quick Notes web client:
+   add the authorized redirect URI `https://vikmmn.github.io/quick-notes/`, and copy the client secret
+   (Add secret if none is shown).
+2. **Google Auth Platform › Audience**: set the publishing status to **In production**. In Testing, Google ends
+   lasting sign-ins after 7 days. Google then shows an "unverified app" screen when you sign in: tap
+   Advanced › Go to Quick Notes (fine for your own use).
+3. **Cloudflare** (dash.cloudflare.com, free account) › Workers & Pages › Create › Worker, name it
+   `quick-notes-signin`, Deploy, then Edit code: paste `server/sign-in-helper.js` and Deploy.
+4. The Worker's **Settings › Variables and secrets**:
+   `CLIENT_ID` (text, the ID in `config.js`), `CLIENT_SECRET` (secret), `SEAL_KEY` (secret, any long random text),
+   `ALLOWED_ORIGIN` (text, `https://vikmmn.github.io`).
+5. Put the Worker's address (`https://quick-notes-signin.<your-account>.workers.dev`) in `TOKEN_SERVER` in
+   `config.js`, bump the version, push.
+6. In the app: Update now, then Settings › Sign in with Google, once.
+
+## Knowing everything is in Drive
+The cloud at the top right: a tick when every note is in Drive, an arrow while changes are on their way, struck out
+when offline (notes are safe on the phone). It turns amber, with a banner on the notes grid, only when something
+needs you: a sign-in, a note changed on two devices, or changes that haven't reached Drive for 10 minutes while
+online. Tap the cloud for details.
 
 ## Releasing an approved update
 1. Change `VERSION` in both `config.js` and `sw.js` (e.g. 1.0.0 → 1.0.1).
