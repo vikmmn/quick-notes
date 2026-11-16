@@ -23,6 +23,9 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Labels work across folders: tap one to see every note with it, narrow by folder, rename it everywhere.
 - Android "Share to Quick Notes" for links and text (once installed).
 - Keeps sending changes while the phone sleeps (Background Sync in the service worker, Android Chrome).
+- A bug button (drag it anywhere; hide it in Settings): takes a picture of the screen to draw on, asks what went
+  wrong, and saves a note in "Bug reports" with the picture and the details (version, device, what was on screen,
+  the last taps and any errors). `bug.js`, with `screenshot.js` (html-to-image, MIT) for the picture.
 - Updates only when you tap **Update now** (Settings › Check for update).
 - A cloud icon shows at a glance whether every note is in Drive; a banner appears only when something needs you.
 - Stays signed in with the optional sign-in helper (see below).

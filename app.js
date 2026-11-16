@@ -1253,6 +1253,8 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
+      '<div class="set"><b>Bug button</b><p>A small red button you can drag anywhere. It takes a picture of the screen to draw on and describe a bug, and saves it in the “Bug reports” folder.</p>' +
+        '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the bug button' : 'Show the bug button') + '</button> <button type="button" data-act="bugnow">Report a bug now</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
@@ -1264,6 +1266,8 @@
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
       });
       if (act === 'whatsnew') { closeSheet(); return whatsNew(true); }
+      if (act === 'bugbtn') { PREF.bugBtn = PREF.bugBtn === false; savePref(); if (window.QNBug) QNBug.show(PREF.bugBtn); settingsSheet(); return; }
+      if (act === 'bugnow') { closeSheet(); if (window.QNBug) setTimeout(function () { QNBug.open(); }, 350); return; }
       if (act === 'signin') healthAction('signin');
       if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
       if (act === 'keep') location.href = 'import.html';
@@ -1286,6 +1290,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Found a bug? Tap the bug', d: 'The small red bug button takes a picture of the screen. Draw on it to point at the problem, say what went wrong, and it is saved in your “Bug reports” folder, with the details needed to fix it. Drag the button anywhere; hide it in Settings.',
+      a: art('<rect x="60" y="12" width="120" height="116" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="74" y="28" width="92" height="10" rx="5" fill="' + MUT + '" opacity=".35"/><rect x="74" y="46" width="70" height="10" rx="5" fill="' + MUT + '" opacity=".35"/>' +
+        '<ellipse cx="128" cy="86" rx="30" ry="18" fill="none" stroke="#d93025" stroke-width="4"/><circle cx="54" cy="96" r="20" fill="#d93025"/><path d="M48 90h12v14a6 6 0 01-12 0zM54 90v20M46 98h-5M62 98h5" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>') },
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-8 120 70)"><rect x="70" y="34" width="100" height="72" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M84 84c10-14 20 6 30-4s16-10 24 0" fill="none" stroke="' + INKC + '" stroke-width="3.5" stroke-linecap="round"/></g>' +
         '<circle cx="54" cy="104" r="9" fill="' + A + '" opacity=".35"/><circle cx="186" cy="38" r="9" fill="' + A + '" opacity=".35"/><path d="M60 98l14-12M180 44l-14 12" stroke="' + A + '" stroke-width="3" stroke-linecap="round"/>') },
@@ -1339,6 +1346,49 @@
       if (dx > 50 && i > 0) { i--; draw('from-left'); }
     };
     draw(); el.classList.remove('hidden');
+  }
+
+  // ---------- Bug reports: saved as notes in "Bug reports", with the annotated picture and the details ----------
+  if (window.QNBug) {
+    QNBug.context = function () {
+      var v = S.canvas && S.canvas.viewOps ? S.canvas.viewOps.info() : null, st = sync.status();
+      return {
+        'On screen': S.view === 'note' ? 'a note' + (S.cur && S.cur.title ? ' (“' + S.cur.title + '”)' : '') : 'notes list',
+        'Folder': S.folder ? pathOf(S.folder).map(function (f) { return f.name; }).join(' / ') : 'All notes',
+        'Label': S.label || '', 'Search': S.q || '',
+        'Tool': S.view === 'note' ? PREF.tool + (PREF.tool === 'pen' ? ' (' + INKOPT.pen.b + ')' : '') + (PREF.showTools ? '' : ', tools hidden') : '',
+        'View': v ? Math.round(v.z * 100) + '% zoom, turned ' + Math.round(v.r * 180 / Math.PI) + '°' : '',
+        'Note': S.cur ? S.cur.id + ', ' + (S.cur.boxes || []).length + ' text boxes, ' + (N.hasInk(S.cur) ? 'has drawing' : 'no drawing') : '',
+        'Sync': health(st).text,
+        'Sign-in': Drive.demo ? 'demo' : Drive.lasting && Drive.lasting() ? 'lasting' : Drive.signedIn() ? 'one hour' : 'signed out',
+        'Notes on phone': live().length + (st.waiting.length ? ', ' + st.waiting.length + ' waiting' : '')
+      };
+    };
+    QNBug.save = async function (r) {
+      var md = r.text || '(no description)';
+      var title = 'Bug: ' + md.split(/\s+/).slice(0, 7).join(' ').replace(/[\n#]/g, ' ').slice(0, 60);
+      var img = '';
+      if (r.png && navigator.onLine && Drive.signedIn()) {
+        try {
+          var name = 'bug-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + N.shortId() + '.png';
+          var made = await Drive.upload(name, await attachmentsFolder(), r.png, 'image/png');
+          var map = await attachments(); map[name] = made.id; imgCache[name] = URL.createObjectURL(r.png);
+          img = '![](Attachments/' + encodeURIComponent(name) + ')';
+        } catch (e) { img = ''; }
+      }
+      if (!img && r.small) img = '![](' + r.small + ')';
+      var body = md + (img ? '\n\n' + img : '') + '\n\n### Details\n\n```\n' + r.details + '\n```';
+      // The "Bug reports" folder (made the first time, when online).
+      var folder = null, t = tree();
+      Object.keys(t).forEach(function (k) { if (t[k].name === 'Bug reports' && t[k].parentId === rootId()) folder = k; });
+      if (!folder && navigator.onLine && Drive.signedIn() && rootId()) { try { folder = await sync.createFolder('Bug reports', rootId()); } catch (e) {} }
+      var n = newDraft(title, body);
+      n.labels = ['bug']; n.folderId = folder || null;
+      touchNote(n); store.put(n); sync.schedule(1500); renderStatus();
+      if (S.view === 'list') renderList();
+      toast('Bug report saved in “Bug reports”. Tell Claude to read it.', null, null, 4000);
+    };
+    QNBug.show(PREF.bugBtn !== false);
   }
 
   // ---------- Start: the notes grid ----------
