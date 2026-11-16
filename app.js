@@ -95,10 +95,16 @@
   };
   $('sheetSync').onclick = function () { sync.run({ pull: true }); };
 
-  // Renew the sign-in while you're tapping around, before it runs out (needs a tap, so it can't happen on its own).
-  document.addEventListener('pointerdown', function () {
-    if (Drive.demo || !Drive.signedIn() || Drive.minutesLeft() > 6 || !navigator.onLine) return;
-    Drive.signIn().catch(function () {});
+  // Renew the sign-in on your first tap once it has run out (or is about to). Google needs a tap to open its
+  // window; after the first sign-in it closes again by itself. Notes keep saving on the device meanwhile.
+  var lastRenew = 0;
+  document.addEventListener('click', function () {
+    if (Drive.demo || !Drive.signedInBefore() || !navigator.onLine) return;
+    if (Drive.signedIn() && Drive.minutesLeft() > 6) return;
+    if (Date.now() - lastRenew < 60000) return; // don't keep popping up if Google says no
+    lastRenew = Date.now();
+    var wasOut = !Drive.signedIn();
+    Drive.signIn().then(function () { if (wasOut) sync.run({ pull: true }); }).catch(function () {});
   }, true);
 
   // ---------- Saving ----------

@@ -1,6 +1,6 @@
 // Keeps the installed app exactly as it is until you tap "Update now".
 // Releasing a new version = change VERSION below (and in config.js), then publish.
-var VERSION = '1.0.0';
+var VERSION = '1.0.1';
 var SHELL_CACHE = 'qn-shell-' + VERSION;
 var SHELL = [
   './', './index.html', './app.js', './notes.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',
