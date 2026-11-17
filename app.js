@@ -895,7 +895,34 @@
   var MYSTYLES = [];
   try { MYSTYLES = JSON.parse(localStorage.getItem('qn-styles') || '[]') || []; } catch (e) { MYSTYLES = []; }
   window.QNInk.addDefs(MYSTYLES);
-  function saveStyles() { try { localStorage.setItem('qn-styles', JSON.stringify(MYSTYLES)); } catch (e) { toast('Could not keep that style on this device.'); } }
+  var GONE = {}; // styles deleted here (id → when), so Drive does not bring them back
+  try { GONE = JSON.parse(localStorage.getItem('qn-styles-gone') || '{}') || {}; } catch (e) {}
+  function saveStyles(noSync) {
+    try { localStorage.setItem('qn-styles', JSON.stringify(MYSTYLES)); localStorage.setItem('qn-styles-gone', JSON.stringify(GONE)); } catch (e) { toast('Could not keep that style on this device.'); }
+    if (!noSync) { clearTimeout(saveStyles.t); saveStyles.t = setTimeout(syncStyles, 3000); }
+  }
+  // Your styles also live in Drive (Offshoot's main folder › .offshoot › styles.json), so every device has them.
+  // Each style carries u (when it was last saved): the newer one wins; deleted ones stay deleted.
+  async function syncStyles() {
+    if (Drive.demo || !Drive.signedIn() || !navigator.onLine || !sync.root()) return;
+    try {
+      var dir = await Drive.markedFolder('.offshoot', sync.root(), 'qnSettings');
+      var f = await Drive.findExact('styles.json', dir.id), remote = { styles: [], gone: {} };
+      if (f) { try { remote = JSON.parse(await Drive.readText(f.id)) || remote; } catch (e) {} }
+      var by = {}, changed = false, gone = Object.assign({}, remote.gone || {}, GONE);
+      Object.keys(GONE).forEach(function (k) { if ((remote.gone || {})[k] > gone[k]) gone[k] = remote.gone[k]; });
+      (remote.styles || []).concat(MYSTYLES).forEach(function (d) { if (!d || !d.id) return; var o = by[d.id]; if (!o || (d.u || 0) > (o.u || 0)) by[d.id] = d; });
+      var merged = Object.keys(by).map(function (k) { return by[k]; }).filter(function (d) { return !(gone[d.id] && gone[d.id] >= (d.u || 0)); });
+      var mine = JSON.stringify(MYSTYLES), theirs = JSON.stringify(remote.styles || []), now = JSON.stringify(merged);
+      if (now !== mine || JSON.stringify(gone) !== JSON.stringify(GONE)) { MYSTYLES = merged; GONE = gone; window.QNInk.addDefs(MYSTYLES); saveStyles(true); changed = true; }
+      if (now !== theirs || JSON.stringify(gone) !== JSON.stringify(remote.gone || {})) {
+        var text = JSON.stringify({ v: 1, styles: merged, gone: gone });
+        if (f) await Drive.saveText(f.id, text); else await Drive.create('styles.json', dir.id, text);
+      }
+      if (changed && S.canvas) S.canvas.ink().redraw();
+    } catch (e) { /* tried again at the next change or start */ }
+  }
+  setTimeout(syncStyles, 8000);
   var DEFKIND = { tip: 'Pen tip', line: 'Line style', pat: 'Fill pattern' };
   function defPreview(d, big) { // a little picture of a style, for the cards
     var I = window.QNInk, inner = d.items.map(function (p) { return I.itemSvg(d.k === 'pat' ? p : Object.assign({}, p, { c: 'currentColor' })); }).join('');
@@ -936,6 +963,9 @@
       (kind === 'pat' ? '<div class="de-tools">' + SWATCH.map(function (c) { return '<button type="button" class="sw" data-act="col" data-v="' + c + '" style="background:' + (c === 'ink' ? 'var(--ink)' : c) + '" aria-label="Colour"' + (pen.c === c ? ' aria-pressed="true"' : '') + '></button>'; }).join('') + '</div>' +
         '<label class="de-sl">Tile size on the page <input type="range" min="12" max="200" value="' + st.sz + '" id="deTile"></label>' : '') +
       (kind === 'tip' ? '<div class="de-tools">' + chip('Turns with the line', 'data-act="rot"', !!st.rot) + '</div>' +
+        '<div class="de-tools"><span class="where">Pressing harder</span>' + chip('Makes it bigger', 'data-act="pm" data-v="size"', (st.pm || 'size') === 'size') +
+          chip('Shows more of it', 'data-act="pm" data-v="reveal" title="The tip stays the same size; light pressure shows only its middle"', st.pm === 'reveal') +
+          chip('Both', 'data-act="pm" data-v="both"', st.pm === 'both') + '</div>' +
         '<label class="de-sl">Spacing <input type="range" min="5" max="150" value="' + Math.round((st.sp || 0.25) * 100) + '" id="deSp"></label>' : '') +
       '<label class="de-sl">Name <input type="text" id="deName" maxlength="40" value="' + esc(st.name || '') + '" placeholder="' + DEFKIND[kind] + '"></label>' +
       '<div class="row"><button class="primary" type="button" data-act="save">Save</button>' + (def ? '<button type="button" data-act="saveas">Save as new</button>' : '') +
@@ -944,11 +974,12 @@
       if (act === 'brush') { pen.b = b.dataset.v; mark(b); return; }
       if (act === 'col') { pen.c = b.dataset.v; mark(b); return; }
       if (act === 'rub') { pen.erase = !pen.erase; b.setAttribute('aria-pressed', pen.erase); return; }
+      if (act === 'pm') { st.pm = b.dataset.v; mark(b); return; }
       if (act === 'rot') { st.rot = st.rot ? 0 : 1; b.setAttribute('aria-pressed', !!st.rot); return; }
       if (act === 'undo') { if (undo.length) { st.items = undo.pop(); draw(); } return; }
       if (act === 'clear') { if (st.items.length) { undo.push(st.items.slice()); st.items = []; draw(); } return; }
       if (act === 'del') {
-        MYSTYLES = MYSTYLES.filter(function (d) { return d.id !== st.id; }); saveStyles();
+        MYSTYLES = MYSTYLES.filter(function (d) { return d.id !== st.id; }); GONE[st.id] = Date.now(); saveStyles();
         if (INKOPT.pen.cs === st.id) delete INKOPT.pen.cs; if (INKOPT.fill.pt === st.id) delete INKOPT.fill.pt;
         applyInk(); savePref(); closeSheet(); setTool(PREF.tool);
         toast('Deleted. Drawings that use it keep their own copy.'); return;
@@ -957,6 +988,7 @@
         if (!st.items.length) { toast('Draw something first.'); return; }
         st.name = $('deName').value.trim();
         if (act === 'saveas') { st = JSON.parse(JSON.stringify(st)); st.id = 'd' + Math.random().toString(36).slice(2, 9); if (st.name && def && st.name === def.name) st.name += ' 2'; }
+        st.u = Date.now();
         var i = MYSTYLES.findIndex(function (d) { return d.id === st.id; });
         if (i > -1) MYSTYLES[i] = st; else MYSTYLES.push(st);
         saveStyles(); I.addDefs([st]);
@@ -1038,6 +1070,7 @@
         G(swatches(o.pen.c, 'pen')) + '<div class="osec">My tips &amp; lines</div>' + G(styleChips('pen', o.pen.cs, 'data-cs')) +
         G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
           slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
+        G(chip('Hold to make shapes', 'data-snap title="Draw a rough circle, box, triangle, star, line… and keep the pen still at the end: it becomes a clean shape. Keep holding and move to size or turn it."', o.pen.snap !== false)) +
         G(HINT('Finger') + chip('Auto', 'data-finger="auto" title="Draws until a pen is used, then moves the page"', fm === 'auto') +
           chip('Draws', 'data-finger="draw"', fm === 'draw') + chip('Moves the page', 'data-finger="scroll"', fm === 'scroll')) +
         // How the pen's pressure and tilt shape the line (from the next stroke on; like Affinity's pressure and tilt).
@@ -1212,6 +1245,7 @@
     }
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.act === 'image') { imgWhere = 'page'; imgInput.value = ''; imgInput.click(); return; } // straight onto the page
+    if (b.dataset.snap != null) { INKOPT.pen.snap = INKOPT.pen.snap === false; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.cs != null) { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.pt != null) { if (b.dataset.pt) INKOPT.fill.pt = b.dataset.pt; else delete INKOPT.fill.pt; applyInk(); savePref(); return setTool('fill'); }
     if (b.dataset.newdef) return editStyle(b.dataset.newdef, null);
@@ -1816,6 +1850,21 @@
   }
 
   // ---------- Settings (in the Folders menu) ----------
+  async function renameRootSheet() {
+    if (!Drive.signedIn() || !navigator.onLine) { toast('Connect and sign in to Google first.'); return; }
+    var parents = [];
+    try { parents = await sync.rootParents(); } catch (e) { toast('Could not reach Drive just now.'); return; }
+    var inReadables = CFG.READABLES_FOLDER_ID && parents.indexOf(CFG.READABLES_FOLDER_ID) > -1;
+    openSheet('<form><h2>Main folder</h2><p>Offshoot finds this folder by a hidden mark, so renaming or moving it is safe on every device.</p>' +
+      '<input id="rootName" type="text" maxlength="80" value="' + esc(sync.rootName() === 'Notes' ? 'Offshoot' : sync.rootName()) + '" autofocus>' +
+      (inReadables ? '<label class="chk" style="display:flex;gap:10px;align-items:center;margin:12px 0"><input type="checkbox" id="rootOut" checked> Move it out of “Readables”, to the top of My Drive</label>' : '') +
+      '<div class="row"><button class="primary" type="submit">Save</button><button type="button" data-act="close">Cancel</button></div></form>', null, async function () {
+      var name = $('rootName').value.trim(), out = $('rootOut') && $('rootOut').checked;
+      if (!name) return;
+      try { await sync.renameRoot(name, out ? CFG.READABLES_FOLDER_ID : null); closeSheet(); toast('Main folder is now “' + name + '”' + (out ? ', at the top of My Drive' : '')); }
+      catch (e) { toast('Could not change it: ' + (e.message || e)); }
+    });
+  }
   function settingsSheet() {
     var st = sync.status(), h = health(st), who = Drive.account ? Drive.account() : '';
     var signin = Drive.demo ? 'Demo mode: a pretend Drive that resets when the page reloads.' :
@@ -1828,6 +1877,8 @@
       '<div class="set"><b>Sync</b><p>' + esc(h.text) + '</p><button type="button" data-act="sync">Sync now</button></div>' +
       '<div class="set"><b>Folders</b><p>Default folder: <b style="display:inline;font-weight:500">' + esc(defaultFolder() ? folderName(defaultFolder()) : 'Inbox') + '</b>. New notes go here unless you are inside another folder.</p>' +
         '<button type="button" data-act="pickdefault">Choose default folder</button>' +
+        '<p style="margin-top:12px !important">Main folder in Drive: <b style="display:inline;font-weight:500">' + esc(sync.rootName()) + '</b> (your notes, and your pen tips, lines and patterns in its hidden .offshoot folder).</p>' +
+        (Drive.demo ? '' : '<button type="button" data-act="renameroot">Rename or move the main folder</button>') +
         '<p style="margin-top:12px !important">When the app opens, show:</p><div class="pick" style="margin:0">' +
         [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
@@ -1847,6 +1898,7 @@
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
       });
       if (act === 'whatsnew') { closeSheet(); return whatsNew(true); }
+      if (act === 'renameroot') return renameRootSheet();
       if (act === 'bugbtn') { PREF.bugBtn = PREF.bugBtn === false; savePref(); if (window.QNBug) QNBug.show(PREF.bugBtn); settingsSheet(); return; }
       if (act === 'fbinbox') { if (S.repliesSheet) S.repliesSheet(); return; }
       if (act === 'bugnow') { closeSheet(); if (window.QNBug) setTimeout(function () { QNBug.open(); }, 350); return; }
@@ -1872,6 +1924,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Shapes by holding, Distort, and styles everywhere', d: 'Draw a rough circle, box, triangle, star or line and keep the pen still at the end: it becomes a clean shape; keep holding and move to size or turn it. Select something and tap Distort: drag corners for perspective, the dots on the sides to skew. Lines now look right while you draw them (pencil, your own tips and lines). A tip can grow, or show more of itself, as you press harder. Your tips, lines and patterns are kept in Drive, so every device has them; rename or move the main folder in Settings.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="62" cy="70" r="26" fill="none" stroke="' + INKC + '" stroke-width="3"/><path d="M110 46l40 6-6 52-44-10z" fill="none" stroke="' + A + '" stroke-width="3"/>' +
+        '<path d="M190 44l7 15 16 2-12 11 3 16-14-8-14 8 3-16-12-11 16-2z" fill="none" stroke="' + Y + '" stroke-width="2.5" stroke-linejoin="round"/>') },
     { t: 'Make your own pen tips, lines and patterns', d: 'Tap Pen again, then + Tip or + Line: draw a tip shape in the circle, or one stretch of a line between the marks, and every line you draw uses it. Tap Fill again, then + Pattern: draw one tile with any pen and colour, and fills use it, repeating seamlessly. Pick Edit to change one (Save changes it everywhere, Save as new keeps both). Notes carry a copy of the styles they use.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><defs><pattern id="wnp" patternUnits="userSpaceOnUse" width="12" height="12"><circle cx="4" cy="4" r="2" fill="' + A + '"/><circle cx="10" cy="9" r="1.3" fill="#c0392b"/></pattern></defs>' +
         '<circle cx="160" cy="70" r="36" fill="url(#wnp)"/><path d="M40 90l8-12 8 12 8-12 8 12 8-12 8 12" fill="none" stroke="' + INKC + '" stroke-width="2.5" stroke-linejoin="round"/><g fill="' + Y + '"><circle cx="44" cy="52" r="5"/><circle cx="60" cy="48" r="5"/><circle cx="76" cy="46" r="5"/><circle cx="92" cy="48" r="5"/><circle cx="108" cy="52" r="5"/></g>') },

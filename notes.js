@@ -475,6 +475,14 @@
       },
       // ---- Folders: Drive folders inside Notes. Changing them needs a connection. ----
       root: function () { return folders && folders.notes; },
+      // The main folder: renamed, and (from earlier versions, where it sat inside "Readables") maybe moved to the top of My Drive.
+      renameRoot: async function (name, moveOutOf) {
+        needReady(); await ensureFolders();
+        await Drive.rename(folders.notes, name);
+        if (moveOutOf) await Drive.move(folders.notes, 'root', moveOutOf);
+        folders.rootName = name; saveFolders(); hooks.folders();
+      },
+      rootParents: async function () { needReady(); await ensureFolders(); var f = await Drive.get(folders.notes); return f.parents || []; },
       rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Offshoot'; },
       inbox: function () { return folders && folders[CFG.SUBFOLDERS[0]]; },
       tree: function () { return tree; },
