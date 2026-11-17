@@ -10,7 +10,12 @@
 //   shapes { id, t: 'b', op: 'union'|'subtract'|'intersect'|'exclude', k: [items, bottom one first], c, o, g }
 //            (a non-destructive boolean: the parts stay whole and can be released; each part remembers its layer in L)
 //   image  { id, t: 'i', src (a link, or Attachments/<name> in Drive), x, y (top-left corner), w, h, r: angle, o, g } p: [[x, y, pressure], …] }
-//   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …] }   (one or more closed outlines)
+//   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …], pt: a fill pattern's id (optional) }   (one or more closed outlines)
+//   A stroke may have cs: the id of a home-made pen tip or line style. Those (and fill patterns) are "defs":
+//     { id, k: 'tip' | 'line' | 'pat', name, items: [strokes, drawn in the def's own little space], rot (tip turns with the stroke), sp (tip spacing), sz (pattern tile size) }
+//     tip: a round box, −50…50 across; line: one repeat, 0…400 along and −50…50 across; pattern: one tile, 0…100 both ways
+//     (drawn in hundredths of the size they are used at, so the pen's maths works at a normal scale).
+//     A note keeps a copy of every def it uses, in its saved drawing.
 // Saved inside the note's Markdown file as <!-- qn:ink {"v":2,"layers":[…]} -->.
 // Older notes (groups of strokes, positions relative to the group) are converted when they are opened.
 (function () {
@@ -34,7 +39,11 @@
   function widthOf(it) { return (it.s || 3) * ((BRUSH[it.b] || BRUSH.pen).size); }
 
   // ---------- Reading and saving ----------
+  var DEFS = {};
+  // A note's copy only fills a gap: the one in this device's own collection (maybe just edited) wins.
+  function addDefs(list, weak) { (list || []).forEach(function (d) { if (d && d.id && d.items && !(weak && DEFS[d.id])) DEFS[d.id] = d; }); }
   function normalize(raw) {
+    if (raw && !Array.isArray(raw) && raw.defs) addDefs(raw.defs, true);
     if (raw && !Array.isArray(raw) && raw.layers) raw = raw.layers;
     if (!Array.isArray(raw) || !raw.length) return [newLayer()];
     if (raw[0] && raw[0].items) {
@@ -66,10 +75,13 @@
   function hasInk(layers) { return Array.isArray(layers) && layers.some(function (l) { return l.items && l.items.length; }); }
   function r1(v) { return Math.round(v * 10) / 10; }
   function toJSON(layers) {
-    return { v: 2, layers: layers.map(function (l) {
+    var used = {};
+    var out = { v: 2, layers: layers.map(function (l) {
       var o = { id: l.id, name: l.name, items: l.items.map(function ser(it) {
         var x = { id: it.id, t: it.t, c: it.c };
         if (it.L) x.L = it.L;
+        if (it.cs) { x.cs = it.cs; used[it.cs] = 1; }
+        if (it.pt) { x.pt = it.pt; used[it.pt] = 1; }
         if (it.o != null && it.o !== 1) x.o = Math.round(it.o * 100) / 100;
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
@@ -96,6 +108,9 @@
       if (l.gid) { o.gid = l.gid; o.gname = l.gname || 'Group'; }
       return o;
     }) };
+    var defs = Object.keys(used).map(function (id) { return DEFS[id]; }).filter(Boolean);
+    if (defs.length) out.defs = defs;
+    return out;
   }
 
   // ---------- Drawing ----------
@@ -184,10 +199,63 @@
     if (!u) return '<rect data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" rx="6" fill="var(--field, #8882)" stroke="var(--rule, #8886)" stroke-dasharray="6 5"/>';
     return '<image data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '/>';
   }
+  // ---- Home-made pen tips, line styles and fill patterns ----
+  function defItems(d, col) { // the def's own strokes, in the colour given (or their own)
+    return d.items.map(function (p) { return bare(itemSvg(col ? Object.assign({}, p, { c: col }) : p, true)); }).join('');
+  }
+  function along(pts) { // a stroke's line, measured, to find points and directions by distance along it
+    var L = [0];
+    for (var i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    var j = 1;
+    return { len: L[L.length - 1], at: function (s) {
+      if (pts.length === 1) return [pts[0][0], pts[0][1], 1, 0, pts[0][2]];
+      if (s < L[j - 1]) j = 1;
+      while (j < pts.length - 1 && L[j] < s) j++;
+      var a = pts[j - 1], b = pts[j], seg = L[j] - L[j - 1] || 1, t = Math.max(0, Math.min(1, (s - L[j - 1]) / seg));
+      var dx = (b[0] - a[0]) / seg, dy = (b[1] - a[1]) / seg;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, dx || 1, dy, (a[2] == null ? 0.5 : a[2]) * (1 - t) + (b[2] == null ? 0.5 : b[2]) * t];
+    } };
+  }
+  function tipSvg(it, d) { // the tip, stamped along the line: bigger where pressed harder, turned with the line if asked
+    var w = widthOf(it), sp = Math.max(0.05, d.sp || 0.25) * w, A = along(it.p), o = (it.o == null ? 1 : it.o) * (it.co || 1);
+    var tid = 'tp-' + it.id, uses = '';
+    for (var s = 0; s <= A.len + 0.01; s += sp) {
+      var q = A.at(s), k = w * (it.f ? 0.45 + 1.1 * q[4] : 1), ang = d.rot ? Math.atan2(q[3], q[2]) * 180 / Math.PI : 0;
+      uses += '<use href="#' + tid + '" transform="translate(' + q[0].toFixed(1) + ' ' + q[1].toFixed(1) + ')' + (ang ? ' rotate(' + ang.toFixed(1) + ')' : '') + ' scale(' + (k / 100).toFixed(4) + ')"/>';
+      if (A.len === 0) break;
+    }
+    return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '><defs><g id="' + tid + '">' + defItems(d, colorOf(it.c)) + '</g></defs>' + uses + '</g>';
+  }
+  function lineSvg(it, d) { // one repeat of the style, bent along the line, again and again
+    var w = widthOf(it), rep = 4 * w, A = along(it.p), o = (it.o == null ? 1 : it.o) * (it.co || 1), col = colorOf(it.c), out = '';
+    d.items.forEach(function (p) {
+      var dd = '', pw = Math.max(0.4, widthOf(p) / 100 * w * 0.8);
+      for (var k = 0; k * rep < A.len; k++) {
+        var started = false;
+        p.p.forEach(function (q) {
+          var s = k * rep + q[0] / 100 * w; if (s > A.len) { started = false; return; }
+          var m = A.at(s), x = m[0] - m[3] * q[1] / 100 * w, y = m[1] + m[2] * q[1] / 100 * w;
+          dd += (started ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1); started = true;
+        });
+      }
+      if (dd) out += '<path d="' + dd + '" fill="none" stroke="' + col + '" stroke-width="' + pw.toFixed(2) + '" stroke-linecap="round" stroke-linejoin="round"' + (p.o != null && p.o !== 1 ? ' stroke-opacity="' + p.o + '"' : '') + '/>';
+    });
+    return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + out + '</g>';
+  }
+  function patternDef(d, pid) { // a tile, with its edges wrapped round so the pattern runs on without seams
+    var sz = d.sz || 48, inner = defItems(d), nine = '';
+    [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
+    return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + sz + '" height="' + sz + '"><g transform="scale(' + (sz / 100) + ')">' + nine + '</g></pattern>';
+  }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
     if (it.t === 'i') return imageSvg(it);
     if (it.t === 'b') return boolSvg(it);
+    if (it.cs && DEFS[it.cs] && it.p && it.p.length) return DEFS[it.cs].k === 'line' ? lineSvg(it, DEFS[it.cs]) : tipSvg(it, DEFS[it.cs]);
+    if (it.pt && DEFS[it.pt] && it.t === 'f') {
+      var pid = 'pt-' + it.id, po = (it.o == null ? 1 : it.o) * (it.co || 1);
+      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
+    }
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
     var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
@@ -999,6 +1067,7 @@
         if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
         var pen = opt.pen, isPen = ev.pointerType === 'pen';
         var it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [shapePt(p, isPen)] };
+        if (pen.cs && DEFS[pen.cs]) it.cs = pen.cs; // a home-made tip or line style
         if (pen.st != null) it.st = pen.st;
         if (isPen) { it.f = 1; if (pen.th != null) it.th = pen.th; }
         drag = { stroke: it, layer: L };
@@ -1126,6 +1195,7 @@
     }
     function addFill(L, rings) {
       var f = { id: uid('f'), t: 'f', c: opt.fill.c, o: opt.fill.o, d: rings };
+      if (opt.fill.pt && DEFS[opt.fill.pt]) f.pt = opt.fill.pt; // a home-made pattern
       var at = L.items.findIndex(function (it) { return it.t !== 'f'; });
       if (at < 0) L.items.push(f); else L.items.splice(at, 0, f); // colour goes under the lines
       done();
@@ -1141,6 +1211,7 @@
     // ---- What the canvas and the app can ask ----
     self.render = render;
     self.viewChanged = function () { drawUi(); };
+    self.redraw = function () { layers.forEach(function (l) { l.items.forEach(invalidate); }); render(); }; // a tip, line style or pattern changed
     self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
@@ -1345,6 +1416,6 @@
     return { layers: lmap, groups: gmap };
   }
   function boundsOf(layers) { var all = []; layers.forEach(function (l) { all = all.concat(l.items); }); return unionBox(all); }
-  window.QNInk = { Engine: Engine, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  window.QNInk = { Engine: Engine, addDefs: addDefs, defs: DEFS, itemSvg: function (it) { return itemSvg(it); }, patternDef: patternDef, widthOf: widthOf, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();

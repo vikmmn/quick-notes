@@ -891,6 +891,119 @@
   });
 
   // ---------- Tools: type, pen (five brushes), erase, lasso, nudge, fill, move text; layers ----------
+  // ---------- Home-made pen tips, line styles and fill patterns ("my styles"), kept on this device ----------
+  var MYSTYLES = [];
+  try { MYSTYLES = JSON.parse(localStorage.getItem('qn-styles') || '[]') || []; } catch (e) { MYSTYLES = []; }
+  window.QNInk.addDefs(MYSTYLES);
+  function saveStyles() { try { localStorage.setItem('qn-styles', JSON.stringify(MYSTYLES)); } catch (e) { toast('Could not keep that style on this device.'); } }
+  var DEFKIND = { tip: 'Pen tip', line: 'Line style', pat: 'Fill pattern' };
+  function defPreview(d, big) { // a little picture of a style, for the cards
+    var I = window.QNInk, inner = d.items.map(function (p) { return I.itemSvg(d.k === 'pat' ? p : Object.assign({}, p, { c: 'currentColor' })); }).join('');
+    if (d.k === 'tip') return '<svg viewBox="-60 -60 120 120" width="22" height="22" style="color:var(--ink)">' + inner + '</svg>';
+    if (d.k === 'line') return '<svg viewBox="-10 -60 420 120" width="46" height="14" style="color:var(--ink)">' + inner + '</svg>';
+    var pid = 'pp-' + d.id + (big ? 'b' : '');
+    return '<svg viewBox="0 0 30 30" width="22" height="22"><defs>' + I.patternDef(Object.assign({}, d, { sz: 12 }), pid) + '</defs><rect width="30" height="30" rx="5" fill="url(#' + pid + ')" stroke="var(--rule)"/></svg>';
+  }
+  function styleChips(kind, cur, attr) { // the row in a tool's card: Plain, each style, and + new / Edit
+    var kinds = kind === 'pen' ? ['tip', 'line'] : ['pat'];
+    var mine = MYSTYLES.filter(function (d) { return kinds.indexOf(d.k) > -1; });
+    var curDef = cur && mine.filter(function (d) { return d.id === cur; })[0];
+    return chip('Plain', attr + '=""', !curDef) +
+      mine.map(function (d) { return chip(defPreview(d), attr + '="' + esc(d.id) + '" title="' + esc(d.name || DEFKIND[d.k]) + '"', d.id === cur); }).join('') +
+      (curDef ? chip('Edit', 'data-editdef="' + esc(curDef.id) + '"') : '') +
+      kinds.map(function (k) { return chip('+ ' + (k === 'tip' ? 'Tip' : k === 'line' ? 'Line' : 'Pattern'), 'data-newdef="' + k + '" title="Make your own ' + DEFKIND[k].toLowerCase() + '"'); }).join('');
+  }
+  // The style maker: a round box (tip), a long box (line: one repeat) or a square (pattern: one tile).
+  function editStyle(kind, def) {
+    var B = window.QNInk.BRUSH, I = window.QNInk;
+    var st = def ? JSON.parse(JSON.stringify(def)) : { id: 'd' + Math.random().toString(36).slice(2, 9), k: kind, name: '', items: [], rot: kind === 'tip' ? 0 : undefined, sp: kind === 'tip' ? 0.25 : undefined, sz: kind === 'pat' ? 48 : undefined };
+    kind = st.k;
+    var vb = kind === 'tip' ? [-50, -50, 100, 100] : kind === 'line' ? [0, -50, 400, 100] : [0, 0, 100, 100];
+    var pen = { b: INKOPT.pen.b === 'highlighter' ? 'pen' : INKOPT.pen.b, s: kind === 'tip' ? 14 : kind === 'line' ? 8 : 6, c: kind === 'pat' ? (INKOPT.pen.c || 'ink') : 'ink', erase: false };
+    var undo = [];
+    var guide = kind === 'tip' ? '<circle r="50" fill="none" stroke="var(--rule)" stroke-width="0.4" stroke-dasharray="2 2"/><path d="M-50 0H50M0 -50V50" stroke="var(--rule)" stroke-width="0.2"/>'
+      : kind === 'line' ? '<path d="M0 0H400" stroke="var(--rule)" stroke-width="0.8" stroke-dasharray="5 5"/><path d="M0 -50V50M400 -50V50" stroke="var(--accent)" stroke-width="1"/>'
+      : '<rect width="100" height="100" fill="none" stroke="var(--rule)" stroke-width="0.4" stroke-dasharray="2 2"/>';
+    var html = '<h2>' + (def ? 'Edit ' : 'New ') + DEFKIND[kind].toLowerCase() + '</h2>' +
+      '<p>' + (kind === 'tip' ? 'Draw the shape of the tip in the circle. It is stamped along every line, in the pen’s colour.'
+        : kind === 'line' ? 'Draw one stretch of the line between the two marks. It repeats along every line you draw, bending with it, in the pen’s colour.'
+        : 'Draw one tile. It repeats in every direction (lines running off one edge come back on the other).') + '</p>' +
+      '<div class="de-wrap"><svg id="deBox" class="de-box de-' + kind + '" viewBox="' + vb.join(' ') + '">' + guide + '<g id="deInk"></g></svg>' +
+      (kind === 'pat' ? '<svg id="dePrev" class="de-prev" viewBox="0 0 120 120"></svg>' : '') + '</div>' +
+      '<div class="de-tools">' + Object.keys(B).filter(function (k) { return k !== 'highlighter'; }).map(function (k) { return chip(B[k].label, 'data-act="brush" data-v="' + k + '"', pen.b === k); }).join('') +
+      chip('Rub out', 'data-act="rub"', false) + '<button type="button" class="ochip" data-act="undo">Undo</button><button type="button" class="ochip" data-act="clear">Clear</button></div>' +
+      '<label class="de-sl">Line size <input type="range" min="1" max="40" step="0.5" value="' + pen.s + '" id="deSize"></label>' +
+      (kind === 'pat' ? '<div class="de-tools">' + SWATCH.map(function (c) { return '<button type="button" class="sw" data-act="col" data-v="' + c + '" style="background:' + (c === 'ink' ? 'var(--ink)' : c) + '" aria-label="Colour"' + (pen.c === c ? ' aria-pressed="true"' : '') + '></button>'; }).join('') + '</div>' +
+        '<label class="de-sl">Tile size on the page <input type="range" min="12" max="200" value="' + st.sz + '" id="deTile"></label>' : '') +
+      (kind === 'tip' ? '<div class="de-tools">' + chip('Turns with the line', 'data-act="rot"', !!st.rot) + '</div>' +
+        '<label class="de-sl">Spacing <input type="range" min="5" max="150" value="' + Math.round((st.sp || 0.25) * 100) + '" id="deSp"></label>' : '') +
+      '<label class="de-sl">Name <input type="text" id="deName" maxlength="40" value="' + esc(st.name || '') + '" placeholder="' + DEFKIND[kind] + '"></label>' +
+      '<div class="row"><button class="primary" type="button" data-act="save">Save</button>' + (def ? '<button type="button" data-act="saveas">Save as new</button>' : '') +
+      '<button type="button" data-act="close">Cancel</button>' + (def ? '<button type="button" class="danger" data-act="del">Delete</button>' : '') + '</div>';
+    openSheet(html, function (act, b) {
+      if (act === 'brush') { pen.b = b.dataset.v; mark(b); return; }
+      if (act === 'col') { pen.c = b.dataset.v; mark(b); return; }
+      if (act === 'rub') { pen.erase = !pen.erase; b.setAttribute('aria-pressed', pen.erase); return; }
+      if (act === 'rot') { st.rot = st.rot ? 0 : 1; b.setAttribute('aria-pressed', !!st.rot); return; }
+      if (act === 'undo') { if (undo.length) { st.items = undo.pop(); draw(); } return; }
+      if (act === 'clear') { if (st.items.length) { undo.push(st.items.slice()); st.items = []; draw(); } return; }
+      if (act === 'del') {
+        MYSTYLES = MYSTYLES.filter(function (d) { return d.id !== st.id; }); saveStyles();
+        if (INKOPT.pen.cs === st.id) delete INKOPT.pen.cs; if (INKOPT.fill.pt === st.id) delete INKOPT.fill.pt;
+        applyInk(); savePref(); closeSheet(); setTool(PREF.tool);
+        toast('Deleted. Drawings that use it keep their own copy.'); return;
+      }
+      if (act === 'save' || act === 'saveas') {
+        if (!st.items.length) { toast('Draw something first.'); return; }
+        st.name = $('deName').value.trim();
+        if (act === 'saveas') { st = JSON.parse(JSON.stringify(st)); st.id = 'd' + Math.random().toString(36).slice(2, 9); if (st.name && def && st.name === def.name) st.name += ' 2'; }
+        var i = MYSTYLES.findIndex(function (d) { return d.id === st.id; });
+        if (i > -1) MYSTYLES[i] = st; else MYSTYLES.push(st);
+        saveStyles(); I.addDefs([st]);
+        if (kind === 'pat') INKOPT.fill.pt = st.id; else INKOPT.pen.cs = st.id;
+        applyInk(); savePref(); closeSheet();
+        if (S.canvas) S.canvas.ink().redraw();
+        setTool(kind === 'pat' ? 'fill' : 'pen');
+        toast(act === 'saveas' ? 'Saved as a new ' + DEFKIND[kind].toLowerCase() : 'Saved'); return;
+      }
+    });
+    function mark(b) { Array.prototype.forEach.call(b.parentNode.querySelectorAll('[data-act="' + b.dataset.act + '"]'), function (x) { x.setAttribute('aria-pressed', x === b); }); }
+    var box = $('deBox'), ink = $('deInk'), prev = $('dePrev');
+    function draw() {
+      ink.innerHTML = st.items.map(function (p) { return I.itemSvg(p); }).join('');
+      if (prev) prev.innerHTML = '<defs>' + I.patternDef(Object.assign({}, st, { sz: 40 }), 'dep-' + st.id) + '</defs><rect width="120" height="120" rx="8" fill="url(#dep-' + st.id + ')" stroke="var(--rule)"/>';
+    }
+    draw();
+    var tileIn = $('deTile'); if (tileIn) tileIn.oninput = function () { st.sz = +tileIn.value; };
+    var spIn = $('deSp'); if (spIn) spIn.oninput = function () { st.sp = +spIn.value / 100; };
+    $('deSize').oninput = function () { pen.s = +this.value; };
+    var cur = null;
+    function at(e) { var m = box.getScreenCTM().inverse(), pt = box.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; pt = pt.matrixTransform(m); return [pt.x, pt.y]; }
+    function perUnit() { return box.getBoundingClientRect().width / vb[2]; }
+    function rubAt(p) {
+      var r = 12 / perUnit(), before = st.items.length;
+      var keep = st.items.filter(function (it) { return !it.p.some(function (q) { return Math.hypot(q[0] - p[0], q[1] - p[1]) < r + I.widthOf(it) / 2; }); });
+      if (keep.length !== before) { undo.push(st.items); st.items = keep; draw(); }
+    }
+    box.addEventListener('pointerdown', function (e) {
+      e.preventDefault(); box.setPointerCapture(e.pointerId);
+      var p = at(e);
+      if (pen.erase) { cur = { rub: true }; rubAt(p); return; }
+      var isPen = e.pointerType === 'pen';
+      cur = { id: 's' + Math.random().toString(36).slice(2, 8), t: 's', b: pen.b, c: pen.c, s: pen.s / perUnit(), o: 1, p: [[p[0], p[1], isPen ? e.pressure || 0.5 : 0.5]] };
+      if (isPen) cur.f = 1;
+      undo.push(st.items.slice()); st.items = st.items.concat([cur]); draw();
+    });
+    box.addEventListener('pointermove', function (e) {
+      if (!cur) return;
+      var p = at(e);
+      if (cur.rub) { rubAt(p); return; }
+      cur.p.push([p[0], p[1], cur.f ? e.pressure || 0.5 : 0.5]); draw();
+    });
+    var end = function () { cur = null; };
+    box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+  }
+
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
   var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
     lasso: { m: 'most', how: 'loop', sc: 'all' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
@@ -922,7 +1035,8 @@
     if (t === 'pen') {
       var fm = PREF.finger || 'auto';
       html = G(Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('')) +
-        G(swatches(o.pen.c, 'pen')) + G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
+        G(swatches(o.pen.c, 'pen')) + '<div class="osec">My tips &amp; lines</div>' + G(styleChips('pen', o.pen.cs, 'data-cs')) +
+        G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
           slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
         G(HINT('Finger') + chip('Auto', 'data-finger="auto" title="Draws until a pen is used, then moves the page"', fm === 'auto') +
           chip('Draws', 'data-finger="draw"', fm === 'draw') + chip('Moves the page', 'data-finger="scroll"', fm === 'scroll')) +
@@ -953,7 +1067,8 @@
         G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
     } else if (t === 'fill') {
       html = G(chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap')) +
-        G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
+        G(swatches(o.fill.c, 'fill')) + '<div class="osec">Pattern</div>' + G(styleChips('fill', o.fill.pt, 'data-pt')) +
+        G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
     } else if (t === 'text') {
       // Artistic text: part of the drawing, in the current layer. (Double-tap still makes a normal text box.)
       var TF = [['"Google Sans", Roboto, system-ui, sans-serif', 'Sans'], ['Lora, serif', 'Serif'], ['"JetBrains Mono", monospace', 'Mono'],
@@ -1097,6 +1212,10 @@
     }
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.act === 'image') { imgWhere = 'page'; imgInput.value = ''; imgInput.click(); return; } // straight onto the page
+    if (b.dataset.cs != null) { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; applyInk(); savePref(); return setTool('pen'); }
+    if (b.dataset.pt != null) { if (b.dataset.pt) INKOPT.fill.pt = b.dataset.pt; else delete INKOPT.fill.pt; applyInk(); savePref(); return setTool('fill'); }
+    if (b.dataset.newdef) return editStyle(b.dataset.newdef, null);
+    if (b.dataset.editdef) { var dd = MYSTYLES.filter(function (d) { return d.id === b.dataset.editdef; })[0]; if (dd) editStyle(dd.k, dd); return; }
     if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
@@ -1753,6 +1872,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Make your own pen tips, lines and patterns', d: 'Tap Pen again, then + Tip or + Line: draw a tip shape in the circle, or one stretch of a line between the marks, and every line you draw uses it. Tap Fill again, then + Pattern: draw one tile with any pen and colour, and fills use it, repeating seamlessly. Pick Edit to change one (Save changes it everywhere, Save as new keeps both). Notes carry a copy of the styles they use.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><defs><pattern id="wnp" patternUnits="userSpaceOnUse" width="12" height="12"><circle cx="4" cy="4" r="2" fill="' + A + '"/><circle cx="10" cy="9" r="1.3" fill="#c0392b"/></pattern></defs>' +
+        '<circle cx="160" cy="70" r="36" fill="url(#wnp)"/><path d="M40 90l8-12 8 12 8-12 8 12 8-12 8 12" fill="none" stroke="' + INKC + '" stroke-width="2.5" stroke-linejoin="round"/><g fill="' + Y + '"><circle cx="44" cy="52" r="5"/><circle cx="60" cy="48" r="5"/><circle cx="76" cy="46" r="5"/><circle cx="92" cy="48" r="5"/><circle cx="108" cy="52" r="5"/></g>') },
     { t: 'Quick choices, and text you can draw on', d: 'Each tool now keeps its most-used choice in the bottom-left corner: pen size, Text art size and font (tap Aa), Whole or Slice for the eraser, Lasso or Tap for Select, Nudge or Smooth, Shape or Tap area for Fill. Tap a tool again for everything else. Select Text art and tap To outlines: each letter becomes pen lines you can erase, nudge, fill or redraw. Move is gone: Select and the Hand do it.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="30" y="56" width="28" height="60" rx="14" fill="' + SOFT + '" stroke="' + RULE + '"/><circle cx="44" cy="70" r="6" fill="' + INKC + '"/>' +
         '<text x="80" y="90" font-family="Lora, serif" font-size="44" fill="none" stroke="' + A + '" stroke-width="1.6">Abc</text>') },
