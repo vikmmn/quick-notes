@@ -1,4 +1,4 @@
-// Quick Notes: the drawing engine. Layers of vector strokes and fills, drawn as SVG.
+// Offshoot: the drawing engine. Layers of vector strokes and fills, drawn as SVG.
 //
 // A note's drawing is a list of layers, bottom first:
 //   { id, name, vis, lock, op (opacity 0–1), blend ('normal', 'multiply'…), clip (masked by the layer below), items: [...] }
@@ -6,7 +6,8 @@
 //   stroke { id, t: 's', b: brush, c: colour, s: size, o: opacity, f: 1 if drawn with a pen (real pressure), st: smoothing 0–1 (optional),
 //            th: how much pressure thins the line 0–1 (optional), g: group id,
 //   text   { id, t: 'x', txt, x, y (top-left corner), r: angle (radians), fs: font size, font: CSS font family, c, o, g }
-//            (artistic text: a drawing object in its layer, in front of or behind other layers, masked, lassoed…) p: [[x, y, pressure], …] }
+//            (artistic text: a drawing object in its layer, in front of or behind other layers, masked, lassoed…)
+//   image  { id, t: 'i', src (a link, or Attachments/<name> in Drive), x, y (top-left corner), w, h, r: angle, o, g } p: [[x, y, pressure], …] }
 //   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …] }   (one or more closed outlines)
 // Saved inside the note's Markdown file as <!-- qn:ink {"v":2,"layers":[…]} -->.
 // Older notes (groups of strokes, positions relative to the group) are converted when they are opened.
@@ -37,7 +38,7 @@
     if (raw[0] && raw[0].items) {
       return raw.map(function (l, i) {
         return { id: l.id || uid('L'), name: l.name || 'Layer ' + (i + 1), vis: l.vis !== false, lock: !!l.lock, op: l.op == null ? 1 : +l.op,
-          blend: l.blend || 'normal', clip: !!l.clip, gid: l.gid || undefined, gname: l.gname || undefined, items: (l.items || []).filter(function (it) { return it && (it.t === 'f' ? it.d && it.d.length : it.t === 'x' ? !!it.txt : it.p && it.p.length); }) };
+          blend: l.blend || 'normal', clip: !!l.clip, gid: l.gid || undefined, gname: l.gname || undefined, items: (l.items || []).filter(function (it) { return it && (it.t === 'f' ? it.d && it.d.length : it.t === 'x' ? !!it.txt : it.t === 'i' ? !!it.src && it.w > 0 : it.p && it.p.length); }) };
       });
     }
     // Version 1: groups of strokes, each placed at the group's position.
@@ -65,6 +66,7 @@
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
         if (it.t === 'f') x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); });
+        else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
         else {
           x.b = it.b; x.s = r1(it.s);
@@ -108,8 +110,9 @@
     lines.forEach(function (l) { w = Math.max(w, mctx.measureText(l).width); });
     return { w: Math.max(w, it.fs * 0.4), h: lines.length * it.fs * 1.25 };
   }
+  function boxy(it) { return it.t === 'x' || it.t === 'i'; } // placed by a corner, a size and an angle
   function textCorners(it) {
-    var s = textSize(it), c = Math.cos(it.r || 0), sn = Math.sin(it.r || 0);
+    var s = it.t === 'i' ? { w: it.w, h: it.h } : textSize(it), c = Math.cos(it.r || 0), sn = Math.sin(it.r || 0);
     return [[0, 0], [s.w, 0], [s.w, s.h], [0, s.h]].map(function (q) { return [it.x + q[0] * c - q[1] * sn, it.y + q[0] * sn + q[1] * c]; });
   }
   function xmlEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -121,7 +124,7 @@
       lines.map(function (l, i) { return '<tspan x="0" y="' + (it.fs * (0.93 + 1.25 * i)).toFixed(1) + '">' + (xmlEsc(l) || ' ') + '</tspan>'; }).join('') + '</text>';
   }
   function itemD(it) {
-    if (it.t === 'x') return '';
+    if (boxy(it)) return '';
     var d = cache.get(it);
     if (d != null) return d;
     if (it.t === 'f') {
@@ -155,8 +158,26 @@
     }
     return '<mask id="pm-' + it.id + '" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000"><g style="mix-blend-mode:lighten;isolation:isolate">' + parts + '</g></mask>';
   }
+  // ---- Images: their files are fetched (from Drive) by the app; until then a dashed frame stands in ----
+  var IMG = { url: {}, asked: {}, resolve: null, ready: null };
+  function imageUrl(src) {
+    if (/^(https?:|data:|blob:)/i.test(src)) return src;
+    if (IMG.url[src]) return IMG.url[src];
+    if (IMG.resolve && !IMG.asked[src]) {
+      IMG.asked[src] = 1;
+      Promise.resolve(IMG.resolve(src)).then(function (u) { if (u) { IMG.url[src] = u; if (IMG.ready) IMG.ready(); } }).catch(function () { delete IMG.asked[src]; });
+    }
+    return null;
+  }
+  function imageSvg(it) {
+    var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, u = imageUrl(it.src);
+    var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
+    if (!u) return '<rect data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" rx="6" fill="var(--field, #8882)" stroke="var(--rule, #8886)" stroke-dasharray="6 5"/>';
+    return '<image data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '/>';
+  }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
+    if (it.t === 'i') return imageSvg(it);
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
     var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
@@ -188,9 +209,9 @@
   function itemBox(it) {
     var cached = boxCache.get(it);
     if (cached) return cached;
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, pad = it.t === 'f' || it.t === 'x' ? 0 : widthOf(it) / 2;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, pad = it.t === 'f' || boxy(it) ? 0 : widthOf(it) / 2;
     var each = function (q) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; };
-    if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(each); }); else if (it.t === 'x') textCorners(it).forEach(each); else it.p.forEach(each);
+    if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(each); }); else if (boxy(it)) textCorners(it).forEach(each); else it.p.forEach(each);
     var r = x0 === Infinity ? { x: 0, y: 0, w: 0, h: 0 } : { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
     boxCache.set(it, r);
     return r;
@@ -221,7 +242,7 @@
     var bb = itemBox(it);
     if (x < bb.x - r || y < bb.y - r || x > bb.x + bb.w + r || y > bb.y + bb.h + r) return false;
     if (it.t === 'f') return it.d.some(function (ring) { return inPoly(x, y, ring); });
-    if (it.t === 'x') return inPoly(x, y, textCorners(it)) || textCorners(it).some(function (q, i, a) { var n = a[(i + 1) % 4]; return segDist(x, y, q[0], q[1], n[0], n[1]) <= r; });
+    if (boxy(it)) return inPoly(x, y, textCorners(it)) || textCorners(it).some(function (q, i, a) { var n = a[(i + 1) % 4]; return segDist(x, y, q[0], q[1], n[0], n[1]) <= r; });
     var w = widthOf(it) / 2 + r, p = it.p;
     if (p.length === 1) return Math.hypot(p[0][0] - x, p[0][1] - y) <= w;
     for (var i = 1; i < p.length; i++) if (segDist(x, y, p[i - 1][0], p[i - 1][1], p[i][0], p[i][1]) <= w) return true;
@@ -255,8 +276,8 @@
     });
   }
   // (For text, its corners: looking at them is fine, but moving text is done with x and y.)
-  function eachPoint(it, fn) { if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (it.t === 'x') textCorners(it).forEach(fn); else it.p.forEach(fn); }
-  function shiftItem(it, dx, dy) { if (it.t === 'x') { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
+  function eachPoint(it, fn) { if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (boxy(it)) textCorners(it).forEach(fn); else it.p.forEach(fn); }
+  function shiftItem(it, dx, dy) { if (boxy(it)) { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
   function nudge(it, x, y, dx, dy, R, k) {
     if (it.t !== 'f') it.p = densify(it.p, x, y, R, Math.max(2, R / 10));
     var moved = false;
@@ -307,7 +328,7 @@
     ctx.fillStyle = '#000'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2 / scale; ctx.lineJoin = 'round';
     layers.forEach(function (l) {
       if (!l.vis) return;
-      l.items.forEach(function (it) { if (it.t !== 'f' && it.t !== 'x') { var path = new Path2D(itemD(it)); ctx.fill(path); ctx.stroke(path); } });
+      l.items.forEach(function (it) { if (it.t !== 'f' && !boxy(it)) { var path = new Path2D(itemD(it)); ctx.fill(path); ctx.stroke(path); } });
     });
     var data = ctx.getImageData(0, 0, W, H).data;
     var sx = Math.round((x - view.x) * scale), sy = Math.round((y - view.y) * scale);
@@ -382,6 +403,8 @@
     var self = this;
     var layers = o.layers;           // the note's own array (kept, changed in place)
     var svg = o.svg, stage = o.stage, M = o.margin;
+    if (o.imageUrl) IMG.resolve = o.imageUrl;
+    IMG.ready = function () { soon(); }; // an image file has arrived: draw it
     var ui = document.createElementNS(NS, 'svg'); ui.setAttribute('class', 'ink-ui'); stage.appendChild(ui);
     var bar = document.createElement('div'); bar.className = 'inkbar hidden'; (o.uiHost || stage).appendChild(bar);
     // Handles, tool circles and tap distances stay the same size on screen at any zoom.
@@ -423,7 +446,7 @@
       list.forEach(function (it) {
         var e = elOf(it); if (!e) return;
         var tg = e.tagName.toLowerCase();
-        if (tg === 'g' || tg === 'text') { e.insertAdjacentHTML('afterend', itemSvg(it)); e.remove(); } // a fading stroke (its mask moves too) or text
+        if (tg === 'g' || tg === 'text' || tg === 'image' || tg === 'rect') { e.insertAdjacentHTML('afterend', itemSvg(it)); e.remove(); } // a fading stroke (its mask moves too) or text
         else e.setAttribute('d', itemD(it));
       });
       drawUi();
@@ -532,7 +555,8 @@
       var inkSel = sel.items.length > 0, h;
       var hasArt = sel.items.some(function (it) { return it.t === 'x'; });
       if (mode === 'color') {
-        h = SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('') +
+        var onlyImg = sel.items.every(function (it) { return it.t === 'i'; });
+        h = (onlyImg ? '' : SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('')) +
           '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label><button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
@@ -551,12 +575,13 @@
         h = '<button type="button" data-act="dup">Duplicate</button><button type="button" data-act="del">Delete</button>' +
           (grouped ? '<button type="button" data-act="ungroup" title="The items go back to being separate">Break up</button><button type="button" data-act="cop">Opacity</button>'
             : count > 1 ? '<button type="button" data-act="group" title="Move, turn and fade these together, whatever layer each is on">Collective</button>' : '') +
-          (inkSel ? '<button type="button" data-act="color">Colour</button>' : '') +
+          (inkSel ? '<button type="button" data-act="color">' + (sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour') + '</button>' : '') +
           (count > 1 || inkSel ? '<button type="button" data-act="arrange">Arrange</button>' : '') +
+          (sel.boxes.length && BX.hasImages(sel.boxes) ? '<button type="button" data-act="imgout" title="Each image becomes its own object on the page">Take images out</button>' : '') +
           (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
           (hasArt ? '<button type="button" data-act="tobox" title="Make this normal, editable text">To text box</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
           (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '') +
-          ((sel.items.some(function (it) { return it.t === 'x' && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? '<button type="button" data-act="straight">Straighten</button>' : '');
+          ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? '<button type="button" data-act="straight">Straighten</button>' : '');
       }
       bar.innerHTML = h; bar.classList.remove('hidden'); placeBar();
     }
@@ -600,7 +625,7 @@
       }
       if (act === 'back') return renderBar();
       if (act === 'straight') { // text lines up with the page again
-        sel.items.slice().forEach(function (it) { if (it.t === 'x' && it.r) { var t = own(it); t.r = 0; invalidate(t); } });
+        sel.items.slice().forEach(function (it) { if (boxy(it) && it.r) { var t = own(it); t.r = 0; invalidate(t); } });
         if (sel.boxes.length) BX.straighten(sel.boxes);
         refreshBox(); render(); commit(); renderBar(); return;
       }
@@ -617,6 +642,15 @@
         });
         BX.remove(specs.map(function (s) { return s.id; }));
         render(); commit(); setSel(sel.items.concat(made), []); return;
+      }
+      if (act === 'imgout') { // images inside text boxes become free objects, where they were, in the box's layer
+        var outs = BX.takeImages(sel.boxes), got = [];
+        outs.forEach(function (s) {
+          var L = layers.filter(function (l) { return l.id === s.lid; })[0] || layers[0];
+          var it = { id: uid('i'), t: 'i', src: s.src, x: s.x, y: s.y, w: s.w, h: s.h, r: s.r || 0, c: 'ink', o: 1 };
+          L.items.push(it); got.push(it);
+        });
+        render(); commit(); setSel(got, []); return;
       }
       if (act === 'tobox') { // Text art becomes normal text boxes
         var arts = sel.items.filter(function (it) { return it.t === 'x'; }), nb = [];
@@ -749,7 +783,11 @@
       sel.items.forEach(function (it, i) {
         var src = d.orig[i];
         if (it.t === 'f') it.d = src.d.map(function (ring) { return ring.map(map); });
-        else if (it.t === 'x') { var a0 = map([src.x, src.y]); it.x = a0[0]; it.y = a0[1]; if (d.kind === 'rotate') it.r = (src.r || 0) + ang; if (d.kind === 'scale') it.fs = Math.max(4, src.fs * s); }
+        else if (boxy(it)) {
+          var a0 = map([src.x, src.y]); it.x = a0[0]; it.y = a0[1];
+          if (d.kind === 'rotate') it.r = (src.r || 0) + ang;
+          if (d.kind === 'scale') { if (it.t === 'x') it.fs = Math.max(4, src.fs * s); else { it.w = Math.max(4, src.w * s); it.h = Math.max(4, src.h * s); } }
+        }
         else { it.p = src.p.map(function (q) { var m = map(q); var o2 = [m[0], m[1], q[2]]; if (q[3] != null) o2.push(q[3]); return o2; }); if (d.kind === 'scale') it.s = src.s * s; }
         invalidate(it);
       });
@@ -828,7 +866,7 @@
         layers.forEach(function (l) {
           if (!editable(l)) return;
           l.items.forEach(function (it) {
-            if (it.t === 'x') return; // nudging bends lines; text is moved with the Lasso
+            if (boxy(it)) return; // nudging bends lines; text and images are moved with Select
             var b = itemBox(it);
             if (p[0] < b.x - R || p[0] > b.x + b.w + R || p[1] < b.y - R || p[1] > b.y + b.h + R) return;
             var t = own(it);
@@ -899,7 +937,7 @@
         if (!editable(l)) return;
         for (var i = l.items.length - 1; i >= 0; i--) {
           var it = l.items[i];
-          if (!hits(it, p[0], p[1], r)) continue;
+          if (it.t === 'i' || !hits(it, p[0], p[1], r)) continue; // images are removed with Select › Delete, never rubbed out by accident
           var e = elOf(it);
           if (opt.erase.m === 'slice' && it.t !== 'f' && it.t !== 'x') {
             var parts = slice(it, p[0], p[1], r);
@@ -1008,6 +1046,12 @@
       editText({ id: uid('x'), t: 'x', txt: '', x: p[0] + Math.sin(a) * t.fs * 0.6, y: p[1] - Math.cos(a) * t.fs * 0.6, r: Math.abs(a) > 0.01 ? Math.round(a * 1000) / 1000 : 0, fs: t.fs, font: t.font, c: t.c, o: t.o }, true);
     };
     self.finishText = finishText;
+    // A new image on the page: in the layer being worked on, straight to the screen (angle), selected.
+    self.addImage = function (src, x, y, w, h, angle) {
+      var L = active(); if (!editable(L)) { o.notice('This layer is locked or hidden.'); return null; }
+      var it = { id: uid('i'), t: 'i', src: src, x: x, y: y, w: w, h: h, r: Math.abs(angle || 0) > 0.01 ? Math.round(angle * 1000) / 1000 : 0, c: 'ink', o: 1 };
+      L.items.push(it); render(); commit(); setSel([it], []); return it.id;
+    };
     self.editingText = function () { return !!editing; };
     // Fonts arrive a moment after the page: measure and draw text again with them.
     if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', function () {

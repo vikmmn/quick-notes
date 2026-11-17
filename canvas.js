@@ -1,4 +1,4 @@
-// Quick Notes: the note canvas. Text boxes (rich text, saved as Markdown) and ink, placed anywhere.
+// Offshoot: the note canvas. Text boxes (rich text, saved as Markdown) and ink, placed anywhere.
 // The page starts like Keep: one text box at the top left. Double-tap empty space for another text box,
 // draw with the pen (an S Pen draws without switching tools), and move things with the Move tool.
 (function () {
@@ -100,6 +100,7 @@
       changed: function () { changed('ink'); },
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
       textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
+      imageUrl: function (src) { return hooks.imageUrl ? hooks.imageUrl(src) : null; },
       view: function () { // the part of the page on screen, as a box in page coordinates
         var W = host.clientWidth, H = host.clientHeight, pts = [toWorld(0, 0), toWorld(W, 0), toWorld(0, H), toWorld(W, H)];
         var xs = pts.map(function (q) { return q[0]; }), ys = pts.map(function (q) { return q[1]; });
@@ -295,6 +296,33 @@
         setGroup: function (ids, g, co) {
           ids.forEach(function (id) { var b = byId(id); if (!b) return; if (g) b.g = g; else { delete b.g; delete b.co; } if (co != null) { if (co >= 1) delete b.co; else b.co = co; } });
           applyBoxLayers();
+        },
+        hasImages: function (ids) { return ids.some(function (id) { var e = editors[id]; return e && e.el.querySelector('.ProseMirror img:not(.ProseMirror-separator)'); }); },
+        // Images in text boxes → their sources, sizes and places on the page; they leave the text.
+        takeImages: function (ids) {
+          var out = [];
+          ids.forEach(function (id) {
+            var b = byId(id), e = editors[id]; if (!b || !e) return;
+            var imgs = e.el.querySelectorAll('.ProseMirror img:not(.ProseMirror-separator)'), k = 0, a = b.r || 0, found = [];
+            e.ed.state.doc.descendants(function (node, pos) {
+              if (node.type.name !== 'image') return;
+              var im = imgs[k++]; if (!im) return;
+              var dx = 0, dy = 0;
+              for (var n = im; n && n !== e.el; n = n.offsetParent) { dx += n.offsetLeft; dy += n.offsetTop; }
+              var iw = im.offsetWidth, ih = im.offsetHeight;
+              if (!iw || !ih) { iw = Math.min(e.el.offsetWidth || 300, im.naturalWidth || 300); ih = im.naturalWidth ? iw * im.naturalHeight / im.naturalWidth : iw * 0.75; }
+              found.push({ pos: pos, size: node.nodeSize, src: node.attrs.src, w: iw, h: ih,
+                x: b.x + dx * Math.cos(a) - dy * Math.sin(a), y: b.y + dx * Math.sin(a) + dy * Math.cos(a), r: a, lid: lid(b) });
+            });
+            if (!found.length) return;
+            var tr = e.ed.state.tr;
+            found.slice().reverse().forEach(function (f) { tr.delete(f.pos, f.pos + f.size); });
+            e.ed.view.dispatch(tr);
+            flushText(id);
+            if (!String(b.md || '').trim() && boxes[0] !== b) this.remove([id]);
+            out = out.concat(found);
+          }, this);
+          return out;
         },
         // Text box → Text art: its words, font, size and place (the box goes).
         toArt: function (ids) {
@@ -834,6 +862,15 @@
       eng.shift(dx, dy); changed('layout');
     };
     // An image: at the caret, beside the text (both side by side), or in a new text box below.
+    // An image as its own object on the page: in the middle of the screen, straight to it, at most about 60% of it.
+    self.placeImage = function (src, nw, nh) {
+      var c = toWorld(host.clientWidth / 2, host.clientHeight / 2), cx = c[0] - M, cy = c[1] - M;
+      var k = Math.min(host.clientWidth * 0.6 / view.z / nw, host.clientHeight * 0.6 / view.z / nh, 1 / view.z); // never blown up past its own size
+      var w = Math.max(20, nw * k), h = Math.max(20, nh * k), a = -(view.r || 0);
+      a = Math.atan2(Math.sin(a), Math.cos(a));
+      if (hooks.autoTool) hooks.autoTool('lasso');
+      eng.addImage(src, cx - (w / 2 * Math.cos(a) - h / 2 * Math.sin(a)), cy - (w / 2 * Math.sin(a) + h / 2 * Math.cos(a)), w, h, a);
+    };
     self.insertImage = function (src, where) {
       var a = self.active() ? active : null;
       if (where === 'caret' && a) { a.ed.chain().focus().setImage({ src: src }).run(); flushText(a.box.id); changed('text'); return; }

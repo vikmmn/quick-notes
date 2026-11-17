@@ -1,4 +1,4 @@
-// Quick Notes: opens on the notes grid; a note is a canvas of text boxes and ink; folders are Drive folders.
+// Offshoot: opens on the notes grid; a note is a canvas of text boxes and ink; folders are Drive folders.
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG;
@@ -535,7 +535,7 @@
     setTimeout(importSheet, 250); // after the drawer's history step is undone
   };
   function importSheet() {
-    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Quick Notes. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
+    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Offshoot. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
       '<div class="pick"><button type="button" data-act="keep">' + icon('notes') + 'From Google Keep (Takeout export)</button>' +
       '<button type="button" data-act="notion">' + icon('notes') + 'From Notion (Markdown export)</button></div>' +
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
@@ -643,6 +643,7 @@
     finger: function () { return PREF.finger || 'auto'; },
     head: function () { return $('noteHead'); },
     autoTool: function (t) { setTool(t); },
+    imageUrl: function (src) { return isLocalRef(src) ? attachmentUrl(refName(src)) : Promise.resolve(src); },
     textLook: function (t) { Object.assign(INKOPT.text, t); savePref(); if (PREF.tool === 'text') setTool('text'); } // tapped text: the card shows its look
   };
   function openNote(n, isNew) {
@@ -919,6 +920,7 @@
       return setTool(PREF.tool);
     }
     if (b.dataset.act === 'layers') return toggleLayers();
+    if (b.dataset.act === 'image') { imgWhere = 'page'; imgInput.value = ''; imgInput.click(); return; } // straight onto the page
     if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
@@ -1293,12 +1295,13 @@
   function pickImage() {
     if (!S.canvas) return;
     var hasCaret = !!S.canvas.active();
-    openSheet('<h2>Add an image</h2><p>Where should it go? You can drag the bar on the right of a text box to change its width.</p><div class="pick">' +
+    openSheet('<h2>Add an image</h2><p>Where should it go?</p><div class="pick">' +
+      '<button type="button" data-act="page"><b>On the page</b>: move, resize and turn it freely, in front of or behind drawings</button>' +
       (hasCaret ? '<button type="button" data-act="caret">At the cursor</button>' : '') +
       '<button type="button" data-act="beside">Beside the text (side by side)</button>' +
       '<button type="button" data-act="below">Below everything</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
     function (act) {
-      if (act !== 'caret' && act !== 'beside' && act !== 'below') return;
+      if (act !== 'caret' && act !== 'beside' && act !== 'below' && act !== 'page') return;
       imgWhere = act; closeSheet();
       imgInput.value = ''; imgInput.click();
     });
@@ -1318,7 +1321,10 @@
       var made = await Drive.upload(name, folder, blob, blob.type);
       var map = await attachments(); map[name] = made.id;
       imgCache[name] = URL.createObjectURL(blob);
-      S.canvas.insertImage('Attachments/' + encodeURIComponent(name), imgWhere);
+      if (imgWhere === 'page') {
+        var dims = await new Promise(function (res) { var im = new Image(); im.onload = function () { res([im.naturalWidth || 400, im.naturalHeight || 300]); }; im.onerror = function () { res([400, 300]); }; im.src = imgCache[name]; });
+        S.canvas.placeImage('Attachments/' + encodeURIComponent(name), dims[0], dims[1]);
+      } else S.canvas.insertImage('Attachments/' + encodeURIComponent(name), imgWhere);
       hideToast();
     } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : 'The image could not be added: ' + (e.message || e)); }
   };
@@ -1537,7 +1543,7 @@
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
         '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button> <button type="button" data-act="fbinbox">Your feedback and replies</button></div>' +
-      '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
+      '<div class="set"><b>About</b><p>Offshoot ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Offshoot can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
         '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +
@@ -1573,6 +1579,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Offshoot, and images on the page', d: 'Quick Notes is now Offshoot: an endless page where ideas branch off. Your notes and Drive folder stay as they are. Images can now sit anywhere on the page: use the new Image button in the tools, move, resize and turn them with Select, and put them in front of or behind drawings. Select a text box holding images (Keep notes, for example) and tap Take images out to free them.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-6 120 70)"><rect x="96" y="34" width="96" height="64" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M102 92l24-24 18 18 12-12 30 18" fill="none" stroke="' + A + '" stroke-width="3"/></g>' +
+        '<path d="M50 112c6-30 14-50 22-70" stroke="' + INKC + '" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M62 74c12-8 22-8 32-18" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="94" cy="56" r="7" fill="' + Y + '"/>') },
     { t: 'Select, line up, and collectives', d: 'The Lasso is now Select. In its card you can choose Lasso or Tap to pick (tap things to add them, tap again to take them out), and whether it picks from all layers, this layer or this group. Arrange lines things up, spreads them evenly, and brings them forward or sends them back. Collective ties things from different layers together, text included, so they move, turn and fade as one. To Text art and To text box switch text between the two kinds.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="50" y="30" width="140" height="70" rx="6" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="6 4"/>' +
         '<path d="M60 40v50" stroke="' + A + '" stroke-width="3"/><rect x="62" y="42" width="60" height="12" rx="3" fill="' + INKC + '" opacity=".7"/><rect x="62" y="60" width="96" height="12" rx="3" fill="#c0392b" opacity=".7"/><rect x="62" y="78" width="40" height="12" rx="3" fill="' + Y + '" opacity=".8"/>') },
@@ -1600,7 +1609,7 @@
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-8 120 70)"><rect x="70" y="34" width="100" height="72" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M84 84c10-14 20 6 30-4s16-10 24 0" fill="none" stroke="' + INKC + '" stroke-width="3.5" stroke-linecap="round"/></g>' +
         '<circle cx="54" cy="104" r="9" fill="' + A + '" opacity=".35"/><circle cx="186" cy="38" r="9" fill="' + A + '" opacity=".35"/><path d="M60 98l14-12M180 44l-14 12" stroke="' + A + '" stroke-width="3" stroke-linecap="round"/>') },
-    { t: 'Sign in once, stay signed in', d: 'Quick Notes now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
+    { t: 'Sign in once, stay signed in', d: 'Offshoot now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
       a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M92 86h52a16 16 0 002.4-31.8A24 24 0 0099 48.6 19 19 0 0092 86z" fill="' + SOFT + '" stroke="' + A + '" stroke-width="3"/><path d="M105 67l9 9 17-18" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>') },
     { t: 'A real sketchbook', d: 'Tap the pen at the top of a note. Pick a tool in the first row; its settings appear right under it: five pens, any colour, size and opacity.',
       a: art('<rect x="20" y="16" width="200" height="30" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/>' + [0, 1, 2, 3, 4, 5].map(function (i) { return '<circle cx="' + (42 + i * 31) + '" cy="31" r="7" fill="' + (i === 1 ? A : MUT) + '" opacity="' + (i === 1 ? 1 : .35) + '"/>'; }).join('') +
@@ -1626,7 +1635,7 @@
     function draw(dir) {
       var sl = SLIDES[i];
       el.innerHTML = '<div class="wn-card" role="dialog" aria-modal="true" aria-label="What’s new">' +
-        '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Quick Notes' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
+        '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Offshoot' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
         '<button type="button" class="wn-skip" data-wn="done">Skip</button></div>' +
         '<div class="wn-slide ' + (dir || '') + '">' + sl.a + '<h2>' + esc(sl.t) + '</h2><p>' + esc(sl.d) + '</p></div>' +
         '<div class="wn-foot"><div class="wn-dots">' + SLIDES.map(function (x, k) { return '<i' + (k === i ? ' class="on"' : '') + '></i>'; }).join('') + '</div>' +
@@ -1811,7 +1820,7 @@
     try { history.replaceState({ v: 'exit' }, ''); history.pushState(navState(), ''); } catch (e) {}
     showList();
 
-    // Android "Share to Quick Notes": arrives as ?title=…&text=…&url=…
+    // Android "Share to Offshoot": arrives as ?title=…&text=…&url=…
     var p = new URLSearchParams(location.search);
     if (p.has('text') || p.has('url') || p.has('title')) {
       var url = p.get('url') || '', text = p.get('text') || '';

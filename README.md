@@ -1,7 +1,7 @@
-# Quick Notes
+# Offshoot
 
 A quick-capture notes app (a Google Keep replacement) that saves every note as a Markdown file in the user's own
-Google Drive › Quick Notes (made on first sign-in). Installable on phone, tablet and laptop; works offline.
+Google Drive › Offshoot (made on first sign-in). Installable on phone, tablet and laptop; works offline.
 It asks Google only for the files it makes (`drive.file`), never the rest of Drive.
 
 - Opens on the notes grid. Folders (nested, real Drive folders inside Notes) and labels.
@@ -23,7 +23,7 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Warns instead of overwriting when a note changed on another device.
 - Images in notes (saved to Notes › Attachments), at the cursor, below, or side by side with text.
 - Labels work across folders: tap one to see every note with it, narrow by folder, rename it everywhere.
-- Android "Share to Quick Notes" for links and text (once installed).
+- Android "Share to Offshoot" for links and text (once installed).
 - Keeps sending changes while the phone sleeps (Background Sync in the service worker, Android Chrome).
 - A feedback button (drag it anywhere; hide it in Settings): takes a picture of the whole app to draw on, asks for a
   problem, idea or question, and saves a note in "Feedback" (or an existing "Bug reports" folder) with the picture and
@@ -112,12 +112,12 @@ your own key, and later turns the sealed copy into fresh one-hour sign-ins, sile
 With `TOKEN_SERVER` empty in `config.js`, the app keeps using one-hour sign-ins.
 
 One-time setup:
-1. **Google Cloud Console** › Google Auth Platform › Clients › the Quick Notes web client:
+1. **Google Cloud Console** › Google Auth Platform › Clients › the Offshoot web client:
    add the authorized redirect URI `https://vikmmn.github.io/quick-notes/`, and copy the client secret
    (Add secret if none is shown).
 2. **Google Auth Platform › Audience**: set the publishing status to **In production**. In Testing, Google ends
    lasting sign-ins after 7 days. Google then shows an "unverified app" screen when you sign in: tap
-   Advanced › Go to Quick Notes (fine for your own use).
+   Advanced › Go to Offshoot (fine for your own use).
 3. **Cloudflare** (dash.cloudflare.com, free account) › Workers & Pages › Create › Worker, name it
    `quick-notes-signin`, Deploy, then Edit code: paste `server/sign-in-helper.js` and Deploy.
 4. The Worker's **Settings › Variables and secrets**:

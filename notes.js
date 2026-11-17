@@ -1,4 +1,4 @@
-// Quick Notes: the note file format, the copy kept on this device, and syncing with Google Drive.
+// Offshoot: the note file format, the copy kept on this device, and syncing with Google Drive.
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG;
@@ -475,7 +475,7 @@
       },
       // ---- Folders: Drive folders inside Notes. Changing them needs a connection. ----
       root: function () { return folders && folders.notes; },
-      rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Quick Notes'; },
+      rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Offshoot'; },
       inbox: function () { return folders && folders[CFG.SUBFOLDERS[0]]; },
       tree: function () { return tree; },
       createFolder: async function (name, parentId) {

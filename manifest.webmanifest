@@ -1,7 +1,7 @@
 {
-  "name": "Quick Notes",
-  "short_name": "Quick Notes",
-  "description": "Quick notes saved as Markdown files in Google Drive.",
+  "name": "Offshoot",
+  "short_name": "Offshoot",
+  "description": "An endless page for notes, drawings and ideas that branch off. Saved as Markdown files in your Google Drive.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
