@@ -33,6 +33,10 @@
   // ---------- The canvas ----------
   function NoteCanvas(host, wrap, note, hooks) {
     var self = this;
+    // Every listener on the shared page elements is removed again when the note closes. (Before 3.4 they stayed,
+    // so each note opened in a session added another copy that handled every touch and pen movement again.)
+    var offs = [];
+    function on(t, type, fn, opt) { t.addEventListener(type, fn, opt); offs.push(function () { t.removeEventListener(type, fn, opt); }); }
     var stage = el('div', 'stage', host);
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'ink-layer');
@@ -45,13 +49,37 @@
     if (!Array.isArray(note.ink) || !note.ink.length) note.ink = [window.QNInk.newLayer()];
     var ink = note.ink;
     var editors = {};          // box id -> { el, ed }
-    var tool = 'type', penSeen = false;
+    var tool = 'type', penSeen = !!(hooks.penKnown && hooks.penKnown());
+    // A finger draws, scrolls, or (auto) draws until a pen has been used on this device.
+    function fingerDraws() { var m = hooks.finger ? hooks.finger() : 'auto'; return m === 'draw' || (m !== 'scroll' && !penSeen); }
+
+    // The title, labels and "Edited" line sit on the page above the text, so they move and zoom with it.
+    var head = hooks.head ? hooks.head() : null, headH = 0, headRO = null;
+    function placeHead() {
+      if (!head) return;
+      head.style.width = Math.max(240, host.clientWidth) + 'px';
+      headH = head.offsetHeight;
+      head.style.top = (-headH) + 'px';
+    }
+    if (head) {
+      head.classList.add('in-page'); stage.appendChild(head); placeHead();
+      if (window.ResizeObserver) headRO = new ResizeObserver(function () {
+        var h = headH; placeHead();
+        if (h === headH) return;
+        if (!h && view) { view.y += headH; applyView(); } // measured for the first time: show it
+        drawNavSoon(true);
+      });
+      if (headRO) headRO.observe(head);
+    }
 
     // ---- The view: an endless page you can move, zoom and turn ----
     // A point on the page (stage coordinates) appears on screen at (x, y) + rotate(r) · z · point.
     var VKEY = 'qn-view:' + note.id;
-    var view = { x: 0, y: 0, z: 1, r: 0 };
-    try { var sv = JSON.parse(localStorage.getItem(VKEY) || 'null'); if (sv && isFinite(sv.z)) view = sv; } catch (e) {}
+    var view = { x: 0, y: headH, z: 1, r: 0, h: 1 };
+    try {
+      var sv = JSON.parse(localStorage.getItem(VKEY) || 'null');
+      if (sv && isFinite(sv.z)) { view = sv; if (!sv.h) { view.y += headH; view.h = 1; } } // saved before the title moved onto the page
+    } catch (e) {}
     var ZMIN = 0.05, ZMAX = 12, viewTimer = null, navRaf = 0;
     function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
     function toWorld(sx, sy) { var dx = sx - view.x, dy = sy - view.y, c = Math.cos(-view.r), s = Math.sin(-view.r); return [(dx * c - dy * s) / view.z, (dx * s + dy * c) / view.z]; }
@@ -82,13 +110,25 @@
     var hist = [], future = [], textTimer = null, mdTimer = null;
     var active = null;         // the editor with the caret
 
-    function snapshot() { return JSON.stringify({ boxes: boxes.map(function (b) { return { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; }), ink: ink }); }
+    // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
+    // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
+    function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { return { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; })), ink: copyLayers(ink) }; }
+    function sameAs(a, b) {
+      if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
+      for (var i = 0; i < a.ink.length; i++) {
+        var x = a.ink[i], y = b.ink[i];
+        if (x.id !== y.id || x.name !== y.name || x.vis !== y.vis || x.lock !== y.lock || x.op !== y.op || x.blend !== y.blend || x.clip !== y.clip || x.items.length !== y.items.length) return false;
+        for (var j = 0; j < x.items.length; j++) if (x.items[j] !== y.items[j]) return false;
+      }
+      return true;
+    }
     hist.push(snapshot());
     var lastRec = Date.now();
     function record() {
       lastRec = Date.now();
       var s = snapshot();
-      if (s === hist[hist.length - 1]) return;
+      if (sameAs(s, hist[hist.length - 1])) return;
       hist.push(s); if (hist.length > 200) hist.shift();
       future = [];
       hooks.history(hist.length > 1, false);
@@ -122,6 +162,7 @@
       var W = Math.max(host.clientWidth, c.r + 2 * M + 160);
       var H = Math.max(host.clientHeight, c.b + 2 * M + 200);
       stage.style.width = W + 'px'; stage.style.height = H + 'px';
+      placeHead();
       svg.setAttribute('width', W); svg.setAttribute('height', H); eng.size(W, H);
       drawSelection(); drawNavSoon(true);
     }
@@ -225,8 +266,9 @@
 
     // ---- Pointer handling ----
     var drag = null, taps = [], panV = null;
-    host.addEventListener('pointerdown', function (ev) {
-      if (ev.pointerType === 'pen') { penSeen = true; hooks.penSeen(); }
+    on(host, 'pointerdown', function (ev) {
+      if (head && head.contains(ev.target)) return; // the title and labels work as usual
+      if (ev.pointerType === 'pen' && !penSeen) { penSeen = true; hooks.penSeen(); }
       if (ev.button && ev.button !== 0 && ev.pointerType === 'mouse') return;
       var p = point(ev);
       var onBox = ev.target.closest('.box');
@@ -252,12 +294,12 @@
       if (tool === 'select') { select(null); startPan(ev); return; }
       // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
       var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
-      if (inkTool && !(isFinger && penSeen)) {
+      if (inkTool && !(isFinger && !fingerDraws())) {
         if (eng.tool() !== inkTool) eng.setTool(inkTool);
         if (eng.down(p, ev)) {
           ev.preventDefault();
           if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
-          drag = { type: 'ink', id: ev.pointerId, finger: isFinger };
+          drag = { type: 'ink', id: ev.pointerId, finger: isFinger, t: ev.timeStamp };
           host.setPointerCapture(ev.pointerId);
           return;
         }
@@ -295,14 +337,22 @@
       drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY];
       if (panV) { cancelAnimationFrame(panV.raf); panV = null; }
     }
-    host.addEventListener('pointermove', function (ev) {
+    // Pen and finger movement while drawing: every in-between point (coalesced events), as early as the browser
+    // gives them (pointerrawupdate), plus where the pen is about to be (predicted events) for the live stroke.
+    function inkMove(ev) {
+      if (ev.pointerId !== drag.id) return;
+      var list = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
+      if (!list.length) list = [ev];
+      list = list.filter(function (e) { return e.timeStamp > drag.t; });
+      if (!list.length) return;
+      drag.t = list[list.length - 1].timeStamp;
+      var pr = ev.getPredictedEvents ? ev.getPredictedEvents() : [];
+      eng.move(point(list[list.length - 1]), ev, list.map(point), pr.map(point));
+    }
+    if ('onpointerrawupdate' in window) on(host, 'pointerrawupdate', function (ev) { if (drag && drag.type === 'ink') inkMove(ev); });
+    on(host, 'pointermove', function (ev) {
       if (!drag) { if (INK[tool]) eng.move(point(ev), ev); return; } // the eraser/nudge circle follows a hovering pen
-      if (drag.type === 'ink') {
-        if (ev.pointerId !== drag.id) return;
-        var cev = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
-        eng.move(point(ev), ev, (cev.length ? cev : [ev]).map(point));
-        return;
-      }
+      if (drag.type === 'ink') { inkMove(ev); return; }
       if (drag.type === 'pan') {
         if (!(ev.pointerId in drag.fingers)) return;
         var prev = drag.fingers[ev.pointerId];
@@ -350,14 +400,14 @@
       }
       if (ev.pointerId !== drag.id) return;
       var d = drag; drag = null;
-      if (d.type === 'ink') { eng.up(point(ev)); return; }
+      if (d.type === 'ink') { drag = d; inkMove(ev); drag = null; eng.up(point(ev)); return; }
       if (d.type === 'move' || d.type === 'resize') {
         if (d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow) changed('layout');
       }
     }
-    host.addEventListener('pointerup', endPointer);
-    host.addEventListener('pointercancel', function (ev) { if (drag && drag.type === 'ink') { eng.cancel(); drag = null; } else endPointer(ev); });
-    host.addEventListener('pointerleave', function () { eng.leave(); });
+    on(host, 'pointerup', endPointer);
+    on(host, 'pointercancel', function (ev) { if (drag && drag.type === 'ink') { eng.cancel(); drag = null; } else endPointer(ev); });
+    on(host, 'pointerleave', function () { eng.leave(); });
 
     // ---- Fingers: two to move, zoom and turn the page; a quick two-finger tap undoes, three-finger tap redoes ----
     var touches = {}, gest = null, rotateOn = true, areaMode = false;
@@ -418,7 +468,7 @@
         if (Math.abs(r - q) < 0.07) animateView(view.z, q, toWorld(host.clientWidth / 2, host.clientHeight / 2));
       }
     }
-    host.addEventListener('pointerdown', function (ev) {
+    on(host, 'pointerdown', function (ev) {
       if (ev.pointerType !== 'touch' || ev.target.closest('.qn-nav, .inkbar, .selbar')) return;
       touches[ev.pointerId] = { x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY };
       if (tcount() >= 2) {
@@ -427,7 +477,7 @@
         ev.stopImmediatePropagation(); ev.preventDefault();
       }
     }, true);
-    host.addEventListener('pointermove', function (ev) {
+    on(host, 'pointermove', function (ev) {
       if (ev.pointerType !== 'touch' || !touches[ev.pointerId]) return;
       touches[ev.pointerId].x = ev.clientX; touches[ev.pointerId].y = ev.clientY;
       if (gest) { moveGesture(); ev.stopImmediatePropagation(); ev.preventDefault(); }
@@ -441,11 +491,11 @@
         else if (gest.moved && tcount() >= 2) startPair();
       }
     }
-    host.addEventListener('pointerup', touchUp, true);
-    host.addEventListener('pointercancel', touchUp, true);
+    on(host, 'pointerup', touchUp, true);
+    on(host, 'pointercancel', touchUp, true);
 
     // ---- Mouse and trackpad: the wheel moves the page; Ctrl + wheel (or a trackpad pinch) zooms ----
-    host.addEventListener('wheel', function (e) {
+    on(host, 'wheel', function (e) {
       e.preventDefault();
       var l = local(e), k = e.deltaMode === 1 ? 30 : 1;
       if (e.ctrlKey || e.metaKey) zoomAt(l[0], l[1], Math.exp(-e.deltaY * k * 0.004));
@@ -453,7 +503,7 @@
     }, { passive: false });
     // The browser scrolls to show the text cursor; turn that into moving the page instead.
     [host, wrap].forEach(function (el) {
-      el.addEventListener('scroll', function () {
+      on(el, 'scroll', function () {
         if (!el.scrollTop && !el.scrollLeft) return;
         if (el === host) { view.x -= el.scrollLeft; view.y -= el.scrollTop; }
         el.scrollTop = 0; el.scrollLeft = 0; applyView();
@@ -490,6 +540,7 @@
         var e = editors[b.id]; return { x: b.x + M, y: b.y + M, w: e ? e.el.offsetWidth : 200, h: e ? e.el.offsetHeight : 40 };
       });
       var ib = eng.box(); if (ib) list.push({ x: ib.x + M, y: ib.y + M, w: ib.w, h: ib.h });
+      if (head && headH) list.push({ x: 0, y: -headH, w: Math.min(head.offsetWidth, 480), h: headH });
       if (!list.length) return null;
       var x0 = Math.min.apply(null, list.map(function (b) { return b.x; })), y0 = Math.min.apply(null, list.map(function (b) { return b.y; }));
       var x1 = Math.max.apply(null, list.map(function (b) { return b.x + b.w; })), y1 = Math.max.apply(null, list.map(function (b) { return b.y + b.h; }));
@@ -509,7 +560,7 @@
 
     // ---- Zoom into an area: drag a box across it ----
     var areaEl = null;
-    host.addEventListener('pointerdown', function (ev) {
+    on(host, 'pointerdown', function (ev) {
       if (!areaMode || ev.target.closest('.qn-nav')) return;
       ev.stopImmediatePropagation(); ev.preventDefault();
       var l = local(ev);
@@ -518,14 +569,14 @@
       host.setPointerCapture(ev.pointerId);
       areaEl.style.left = l[0] + 'px'; areaEl.style.top = l[1] + 'px';
     }, true);
-    host.addEventListener('pointermove', function (ev) {
+    on(host, 'pointermove', function (ev) {
       if (!drag || drag.type !== 'area') return;
       ev.stopImmediatePropagation();
       var l = local(ev), s0 = drag.s;
       areaEl.style.left = Math.min(l[0], s0[0]) + 'px'; areaEl.style.top = Math.min(l[1], s0[1]) + 'px';
       areaEl.style.width = Math.abs(l[0] - s0[0]) + 'px'; areaEl.style.height = Math.abs(l[1] - s0[1]) + 'px';
     }, true);
-    host.addEventListener('pointerup', function (ev) {
+    on(host, 'pointerup', function (ev) {
       if (!drag || drag.type !== 'area') return;
       ev.stopImmediatePropagation();
       var l = local(ev), s0 = drag.s; drag = null; areaMode = false;
@@ -541,7 +592,13 @@
     var navOn = false, navEl = el('div', 'qn-nav hidden', host), navContent = null, navBox = null;
     navEl.innerHTML = '<svg preserveAspectRatio="xMidYMid meet"></svg>';
     var navSvg = navEl.firstChild;
-    function drawNavSoon(contentToo) { if (contentToo) navContent = null; if (navOn && !navRaf) navRaf = requestAnimationFrame(drawNav); }
+    // The map's picture of the page is rebuilt a moment after drawing stops, not after every stroke.
+    var navTimer = null;
+    function drawNavSoon(contentToo) {
+      if (!navOn) return;
+      if (contentToo) { clearTimeout(navTimer); navTimer = setTimeout(function () { navContent = null; drawNavSoon(); }, 700); return; }
+      if (!navRaf) navRaf = requestAnimationFrame(drawNav);
+    }
     function drawNav() {
       navRaf = 0;
       if (!navOn) return;
@@ -552,7 +609,7 @@
         navContent = boxes.map(function (b) {
           var e = editors[b.id]; if (!e || !(b.md && b.md.trim())) return '';
           return '<rect x="' + (b.x + M) + '" y="' + (b.y + M) + '" width="' + e.el.offsetWidth + '" height="' + e.el.offsetHeight + '" rx="6" fill="var(--rule)"/>';
-        }).join('') + window.QNInk.svgFor(ink, 'nv-', M, M);
+        }).join('') + window.QNInk.svgFor(ink, 'nv-', M, M, true);
       }
       var xs = vp.map(function (q) { return q[0]; }), ys = vp.map(function (q) { return q[1]; });
       var b = navBox || { x: xs[0], y: ys[0], w: 1, h: 1 };
@@ -582,6 +639,7 @@
       zoomOut: function () { animateView(view.z / 1.5, view.r, toWorld(host.clientWidth / 2, host.clientHeight / 2)); },
       area: function () { areaMode = true; host.classList.add('picking'); },
       navigator: function (on) { navOn = !!on; navEl.classList.toggle('hidden', !navOn); navContent = null; drawNavSoon(); },
+      gestures: function () { return 'pinch to zoom, two fingers to move, twist to turn, two-finger tap to undo, three-finger tap to redo'; },
       rotate: function (on) { rotateOn = !!on; },
       info: function () { return { z: view.z, r: view.r }; }
     };
@@ -597,6 +655,7 @@
     self.ink = function () { return eng; };
     self.tool = function () { return tool; };
     self.penSeen = function () { return penSeen; };
+    self.busy = function () { return !!drag || eng.busy(); };
     self.active = function () { return active && editors[active.box.id] ? active.ed : null; };
     self.flush = flushAll;
     self.undo = function () {
@@ -609,9 +668,8 @@
       var s = future.pop(); hist.push(s); restore(s);
     };
     function restore(s) {
-      var o = JSON.parse(s);
-      boxes.length = 0; o.boxes.forEach(function (b) { boxes.push(b); });
-      ink.length = 0; o.ink.forEach(function (g) { ink.push(g); });
+      boxes.length = 0; JSON.parse(s.boxes).forEach(function (b) { boxes.push(b); });
+      ink.length = 0; copyLayers(s.ink).forEach(function (g) { ink.push(g); });
       select(null); active = null; eng.reset(); renderAll();
       hooks.change('restore');
       hooks.history(hist.length > 1, future.length > 0);
@@ -649,6 +707,8 @@
     self.destroy = function () {
       flushAll();
       Object.keys(editors).forEach(function (id) { editors[id].ed.destroy(); });
+      if (head) { if (headRO) headRO.disconnect(); head.classList.remove('in-page'); head.style.width = head.style.top = ''; wrap.insertBefore(head, host); }
+      clearTimeout(navTimer);
       editors = {}; host.innerHTML = ''; if (self._unbind) self._unbind();
     };
     self.relayout = layout;
@@ -658,8 +718,8 @@
     stage.style.transformOrigin = '0 0';
     renderAll();
     applyView();
-    window.addEventListener('resize', layout);
-    self._unbind = function () { window.removeEventListener('resize', layout); };
+    on(window, 'resize', layout);
+    self._unbind = function () { offs.forEach(function (f) { f(); }); offs = []; };
   }
 
   window.QNCanvas = { NoteCanvas: NoteCanvas, inkSvg: function (ink, w, h) { return window.QNInk.thumb(ink, w, h); } };

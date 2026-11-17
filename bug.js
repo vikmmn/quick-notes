@@ -1,6 +1,7 @@
-// Quick Notes: report a bug. A small bug button takes a picture of the screen, lets you draw on it and say what
-// went wrong, and saves it as a note in "Bug reports" (with the picture and the details needed to fix it:
-// version, device, what was on screen, the last things tapped and any errors). Loads first, to catch early errors.
+// Quick Notes: send feedback. A small feedback button takes a picture of the whole app screen, lets you draw on it
+// and say what went wrong (or what you'd like), and saves it as a note in "Feedback" (with the picture and the
+// details needed to fix it: version, device, what was on screen, the last things tapped and any errors).
+// Loads first, to catch early errors.
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG || {};
@@ -31,9 +32,13 @@
   // ---- The button ----
   var css = document.createElement('style');
   css.textContent =
-    '.qn-bugbtn{position:fixed;z-index:90;width:44px;height:44px;border-radius:50%;border:0;display:grid;place-items:center;padding:0;min-height:0;' +
-    'background:#d93025;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:.85;touch-action:none;cursor:grab}' +
-    '.qn-bugbtn svg{width:24px;height:24px}' +
+    '.qn-bugbtn{position:fixed;z-index:90;width:38px;height:38px;border-radius:50%;border:0;display:grid;place-items:center;padding:0;min-height:0;' +
+    'background:var(--accent,#00796b);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:.5;touch-action:none;cursor:grab;transition:opacity .2s,left .2s}' +
+    '.qn-bugbtn:hover,.qn-bugbtn.held{opacity:.95;transition:opacity .2s}' +
+    '.qn-bugbtn svg{width:21px;height:21px}' +
+    '.qn-bugview .kinds{display:flex;gap:6px;flex-wrap:wrap}' +
+    '.qn-bugview .kinds button{min-height:32px;padding:4px 12px;font-size:14px;border-radius:999px;color:var(--ink,#222)}' +
+    '.qn-bugview .kinds button[aria-pressed=true]{background:var(--accent-soft,#d8efec);border-color:var(--accent,#00796b)}' +
     '.qn-bugview{position:fixed;inset:0;z-index:95;background:var(--paper,#fff);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}' +
     '.qn-bugview .bh{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--rule,#ddd)}' +
     '.qn-bugview .bh b{flex:1;font:500 17px/1.2 var(--font,system-ui)}' +
@@ -53,18 +58,18 @@
   var btn = null;
   function makeButton() {
     btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'qn-bugbtn qn-bug-ui'; btn.setAttribute('aria-label', 'Report a bug'); btn.title = 'Report a bug (drag to move)';
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="7.5" y="7" width="9" height="12" rx="4.5" fill="currentColor" fill-opacity=".25"/><path d="M12 7v12M9 4.5l1.5 2.5M15 4.5L13.5 7M7.5 11H4M7.5 15H4M16.5 11H20M16.5 15H20M8 18.5l-2.5 2M16 18.5l2.5 2"/></svg>';
+    btn.type = 'button'; btn.className = 'qn-bugbtn qn-bug-ui'; btn.setAttribute('aria-label', 'Send feedback'); btn.title = 'Send feedback (drag to move)';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z" fill="currentColor" fill-opacity=".2"/><path d="M12 8v4M12 14.5v.01"/></svg>';
     var pos = null;
     try { pos = JSON.parse(localStorage.getItem('qn-bugpos') || 'null'); } catch (e) {}
     function place(x, y) {
-      x = Math.max(4, Math.min(innerWidth - 48, x)); y = Math.max(60, Math.min(innerHeight - 120, y));
+      x = Math.max(2, Math.min(innerWidth - 40, x)); y = Math.max(60, Math.min(innerHeight - 120, y));
       btn.style.left = x + 'px'; btn.style.top = y + 'px'; return [x, y];
     }
-    place(pos ? pos[0] : 6, pos ? pos[1] : Math.round(innerHeight * 0.42));
-    // Drag it anywhere; a tap opens the report.
+    place(pos ? (pos[0] + 19 < innerWidth / 2 ? 2 : innerWidth - 40) : 2, pos ? pos[1] : Math.round(innerHeight * 0.42));
+    // Drag it anywhere (it tucks against the nearest side); a tap opens the feedback screen.
     var d = null;
-    btn.addEventListener('pointerdown', function (e) { d = { x: e.clientX, y: e.clientY, l: btn.offsetLeft, t: btn.offsetTop, moved: false }; btn.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener('pointerdown', function (e) { d = { x: e.clientX, y: e.clientY, l: btn.offsetLeft, t: btn.offsetTop, moved: false }; btn.classList.add('held'); btn.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
     btn.addEventListener('pointermove', function (e) {
       if (!d) return;
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 6) d.moved = true;
@@ -72,8 +77,13 @@
     });
     btn.addEventListener('pointerup', function (e) {
       if (!d) return;
-      var moved = d.moved; d = null; e.stopPropagation();
-      if (moved) { try { localStorage.setItem('qn-bugpos', JSON.stringify([btn.offsetLeft, btn.offsetTop])); } catch (x) {} return; }
+      var moved = d.moved; d = null; e.stopPropagation(); btn.classList.remove('held');
+      if (moved) {
+        var side = btn.offsetLeft + 19 < innerWidth / 2 ? 2 : innerWidth - 40;
+        var at = place(side, btn.offsetTop);
+        try { localStorage.setItem('qn-bugpos', JSON.stringify(at)); } catch (x) {}
+        return;
+      }
       open();
     });
     window.addEventListener('resize', function () { place(btn.offsetLeft, btn.offsetTop); });
@@ -110,12 +120,15 @@
     try { shot = await capture(); } catch (e) { failed = e; }
     btn.style.visibility = '';
     view = document.createElement('div'); view.className = 'qn-bugview qn-bug-ui';
-    view.innerHTML = '<div class="bh"><button type="button" data-b="cancel">Cancel</button><b>Report a bug</b><button type="button" class="primary" data-b="save">Save report</button></div>' +
+    var KINDS = { problem: 'Something’s wrong. What happened, and what did you expect?', idea: 'What would make Quick Notes better for you?', question: 'What would you like to know?' };
+    var kind = 'problem';
+    view.innerHTML = '<div class="bh"><button type="button" data-b="cancel">Cancel</button><b>Send feedback</b><button type="button" class="primary" data-b="save">Save</button></div>' +
       '<div class="bt"><button type="button" data-t="pen" aria-pressed="true">Pen</button><button type="button" data-t="box" aria-pressed="false">Box</button>' +
       ['#d93025', '#f9ab00', '#1a73e8', '#111111'].map(function (c, i) { return '<button type="button" class="c" data-c="' + c + '" style="background:' + c + '" aria-pressed="' + !i + '" aria-label="Colour"></button>'; }).join('') +
       '<span style="flex:1"></span><button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button></div>' +
       '<div class="bs"><canvas></canvas>' + (failed ? '<div class="busy">Couldn’t take a picture of the screen (' + String(failed.message || failed) + '). You can still describe the bug.</div>' : '') + '</div>' +
-      '<div class="bf"><textarea placeholder="What went wrong? What did you expect to happen? (Draw on the picture to point at it.)"></textarea>' +
+      '<div class="bf"><div class="kinds">' + [['problem', 'Problem'], ['idea', 'Idea'], ['question', 'Question']].map(function (k) { return '<button type="button" data-k="' + k[0] + '" aria-pressed="' + (k[0] === kind) + '">' + k[1] + '</button>'; }).join('') + '</div>' +
+      '<textarea placeholder="' + KINDS[kind] + ' (Draw on the picture to point at things.)"></textarea>' +
       '<div class="row"><button type="button" data-b="share">Share…</button></div></div>';
     document.body.appendChild(view);
     var cv = view.querySelector('canvas'), g = cv.getContext('2d');
@@ -143,20 +156,22 @@
       var b = e.target.closest('button'); if (!b || busy) return;
       if (b.dataset.t) { tool = b.dataset.t; view.querySelectorAll('[data-t]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); return; }
       if (b.dataset.c) { color = b.dataset.c; view.querySelectorAll('[data-c]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); return; }
+      if (b.dataset.k) { kind = b.dataset.k; view.querySelectorAll('[data-k]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); view.querySelector('textarea').placeholder = KINDS[kind] + ' (Draw on the picture to point at things.)'; return; }
       var act = b.dataset.b;
       if (act === 'undo') { marks.pop(); paint(); }
       if (act === 'clear') { marks = []; paint(); }
       if (act === 'cancel') close();
       if (act === 'save' || act === 'share') {
         var text = view.querySelector('textarea').value.trim();
-        if (!text && !marks.length) { view.querySelector('textarea').focus(); view.querySelector('textarea').placeholder = 'Say a few words about the bug first.'; return; }
+        if (!text && !marks.length) { view.querySelector('textarea').focus(); view.querySelector('textarea').placeholder = 'Say a few words first.'; return; }
         busy = true; b.textContent = act === 'save' ? 'Saving…' : 'Preparing…';
         var report = await build(text, ctx, cv, !!shot);
+        report.kind = kind;
         try {
           if (act === 'share') await share(report);
           else { await QNBug.save(report); close(); }
-        } catch (err) { if (err && err.name !== 'AbortError') alert('Could not ' + act + ' the report: ' + (err.message || err)); }
-        busy = false; b.textContent = act === 'save' ? 'Save report' : 'Share…';
+        } catch (err) { if (err && err.name !== 'AbortError') alert('Could not ' + act + ' the feedback: ' + (err.message || err)); }
+        busy = false; b.textContent = act === 'save' ? 'Save' : 'Share…';
       }
     });
     setTimeout(function () { view.querySelector('textarea').focus(); }, 300);
@@ -186,11 +201,11 @@
     return { text: text, png: png, small: small, details: lines.join('\n') };
   }
   async function share(r) {
-    var body = (r.text || 'Bug report') + '\n\n' + r.details;
-    var files = r.png ? [new File([r.png], 'quick-notes-bug.png', { type: 'image/png' })] : [];
-    if (navigator.share && (!files.length || (navigator.canShare && navigator.canShare({ files: files })))) return navigator.share({ title: 'Quick Notes bug', text: body, files: files });
+    var body = (r.text || 'Feedback') + '\n\n' + r.details;
+    var files = r.png ? [new File([r.png], 'quick-notes-feedback.png', { type: 'image/png' })] : [];
+    if (navigator.share && (!files.length || (navigator.canShare && navigator.canShare({ files: files })))) return navigator.share({ title: 'Quick Notes feedback', text: body, files: files });
     await navigator.clipboard.writeText(body);
-    alert('Copied the report text. Paste it where you want to send it.');
+    alert('Copied the feedback. Paste it where you want to send it.');
   }
 
   var QNBug = window.QNBug = {
