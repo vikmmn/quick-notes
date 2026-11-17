@@ -172,6 +172,11 @@
   .dhead b { font-weight: 500; }
   .dhead img { border-radius: 8px; }
   .dsec { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 12px 6px; }
+  .fbslot { display: flex; align-items: center; }
+  .dsec-btn { display: flex; align-items: center; gap: 6px; background: none; border: 0; padding: 6px 0; min-height: 0; width: calc(100% - 24px); text-align: left; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .06em; }
+  .dsec-btn .i { width: 16px; height: 16px; }
+  .dsec-btn span { flex: 1; }
+  .dsec-btn small { font-weight: 400; letter-spacing: 0; }
   #labelTree .tree-row .nm svg.i { color: var(--muted); }
   .chips .clear { color: var(--accent); }
   .wn { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; touch-action: pan-y; }
@@ -408,6 +413,7 @@
   <header class="bar">
     <button id="drawerBtn" class="icon" type="button" aria-label="Folders"><svg class="i"><use href="#i-menu"/></svg></button>
     <h1 id="folderTitle">All notes</h1>
+    <span id="fbSlotList" class="fbslot"></span>
     <button id="syncPill" class="icon cloud ok" type="button"></button>
   </header>
   <div id="syncBanner" class="notice hidden" role="status"><span></span><button type="button"></button></div>
@@ -438,7 +444,7 @@
   <div class="dhead"><img src="icon-192.png" alt="" width="28" height="28"><b>Quick Notes</b></div>
   <div id="tree"></div>
   <button id="addRootFolder" class="add ghost" type="button">+ New folder</button>
-  <div class="dsec">Labels</div>
+  <button id="labelsHead" class="dsec dsec-btn" type="button" aria-expanded="false">Labels</button>
   <div id="labelTree"></div>
   <span style="flex:1;min-height:12px"></span>
   <button id="settingsBtn" class="add ghost" type="button" style="color:var(--ink);text-align:left;display:flex;align-items:center;gap:12px"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
@@ -449,6 +455,7 @@
   <header class="bar">
     <button id="backBtn" class="icon" type="button" aria-label="Back to notes"><svg class="i"><use href="#i-back"/></svg></button>
     <span class="spacer"></span>
+    <span id="fbSlotNote" class="fbslot"></span>
     <button id="syncPill2" class="icon cloud ok" type="button"></button>
     <button id="toolsBtn" class="icon" type="button" aria-label="Pen and drawing tools" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg></button>
     <button id="undoBtn" class="icon" type="button" aria-label="Undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
@@ -461,7 +468,7 @@
     <button class="tool" type="button" data-tool="pen" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg>Pen</button>
     <button class="tool" type="button" data-tool="erase" aria-pressed="false"><svg class="i"><use href="#i-eraser"/></svg>Erase</button>
     <button class="tool" type="button" data-tool="lasso" aria-pressed="false"><svg class="i"><use href="#i-lasso"/></svg>Lasso</button>
-    <button class="tool" type="button" data-tool="nudge" aria-pressed="false"><svg class="i"><use href="#i-nudge"/></svg>Nudge</button>
+    <button class="tool" type="button" data-tool="nudge" aria-pressed="false"><svg class="i"><use href="#i-nudge"/></svg>Nudge / Smooth</button>
     <button class="tool" type="button" data-tool="fill" aria-pressed="false"><svg class="i"><use href="#i-fill"/></svg>Fill</button>
     <button class="tool" type="button" data-act="layers"><svg class="i"><use href="#i-layers"/></svg>Layers</button>
     <button class="tool" type="button" data-tool="select" aria-pressed="false"><svg class="i"><use href="#i-move"/></svg>Move</button>

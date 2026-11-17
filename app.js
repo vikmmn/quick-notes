@@ -465,6 +465,7 @@
     var html = '<div class="tree-row' + (!S.folder ? ' on' : '') + '"><span class="tw"></span><div class="nm" data-open="">' + icon('notes') + '<span>All notes</span><small>' + live().length + '</small></div></div>';
     function rows(parent, depth) {
       childrenOf(parent).forEach(function (f) {
+        if (parent === root && f.name === 'Attachments') return; // where the app keeps pictures; not a notes folder
         var kids = childrenOf(f.id).length, open = !!S.expanded[f.id];
         html += '<div class="tree-row' + (S.folder === f.id ? ' on' : '') + '" style="padding-left:' + depth * 16 + 'px">' +
           (kids ? '<button class="tw" type="button" data-tw="' + esc(f.id) + '" aria-label="' + (open ? 'Collapse' : 'Expand') + '">' + icon(open ? 'chevd' : 'chev') + '</button>' : '<span class="tw"></span>') +
@@ -474,9 +475,20 @@
       });
     }
     if (root) rows(root, 0);
+    // Feedback saved before 3.5.1 went to a folder called "Bug reports": give it its new name, once.
+    if (root && !S.fbRenamed && navigator.onLine && Drive.signedIn()) {
+      var kidsOfRoot = childrenOf(root), oldF = kidsOfRoot.filter(function (f) { return f.name === 'Bug reports'; })[0];
+      if (oldF && !kidsOfRoot.some(function (f) { return f.name === 'Feedback'; })) {
+        S.fbRenamed = true;
+        sync.renameFolder(oldF.id, 'Feedback').then(function () { renderTree(); }, function () { S.fbRenamed = false; });
+      } else S.fbRenamed = true;
+    }
     else html += '<p class="where" style="padding:8px">Folders appear after the first sync with Google Drive.</p>';
     $('tree').innerHTML = html;
-    var labels = allLabels();
+    var labels = allLabels(), lopen = !!PREF.labelsOpen;
+    $('labelsHead').innerHTML = icon(lopen ? 'chevd' : 'chev') + '<span>Labels</span><small>' + labels.length + '</small>';
+    $('labelsHead').setAttribute('aria-expanded', lopen);
+    $('labelTree').classList.toggle('hidden', !lopen);
     $('labelTree').innerHTML = labels.length ? labels.map(function (l) {
       var n = live().filter(function (x) { return (x.labels || []).some(function (y) { return y.toLowerCase() === l.toLowerCase(); }); }).length;
       return '<div class="tree-row' + (S.label === l ? ' on' : '') + '"><span class="tw"></span><div class="nm" data-label="' + esc(l) + '">' + icon('label') + '<span>' + esc(l) + '</span><small>' + n + '</small></div>' +
@@ -517,6 +529,7 @@
     if (!same) nav(f, l, 'replace');
   }
   $('addRootFolder').onclick = function () { newFolderSheet(rootId()); };
+  $('labelsHead').onclick = function () { PREF.labelsOpen = !PREF.labelsOpen; savePref(); renderTree(); };
   if ($('importBtn')) $('importBtn').onclick = function () {
     closeDrawer();
     setTimeout(importSheet, 250); // after the drawer's history step is undone
@@ -628,12 +641,13 @@
     },
     penKnown: function () { return !!PREF.penSeen; },
     finger: function () { return PREF.finger || 'auto'; },
-    head: function () { return $('noteHead'); }
+    head: function () { return $('noteHead'); },
+    autoTool: function (t) { setTool(t); }
   };
   function openNote(n, isNew) {
     if (S.cur) closeNote();
     S.cur = n; S.lastOpened = n.id;
-    S.view = 'note';
+    S.view = 'note'; dockFeedback();
     $('listView').classList.add('hidden'); $('editorView').classList.remove('hidden');
     closeMenu();
     try { history.pushState({ v: 'note' }, ''); } catch (e) {}
@@ -661,7 +675,7 @@
     sync.run();
   }
   function showList() {
-    S.view = 'list';
+    S.view = 'list'; dockFeedback();
     $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden');
     renderList();
   }
@@ -745,7 +759,7 @@
 
   // ---------- Tools: type, pen (five brushes), erase, lasso, nudge, fill, move text; layers ----------
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
-  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 } };
+  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 } };
   (function migrate() { // settings saved by earlier versions
     if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
     else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
@@ -787,7 +801,7 @@
       html = G(chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth')) +
         G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
     } else if (t === 'fill') {
-      html = G(chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap') + chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso')) +
+      html = G(chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap')) +
         G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
     } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
     $('penOpts').innerHTML = html;
@@ -795,6 +809,8 @@
   }
   // The pen size control on the page: shown while the pen tool is on, or in Type mode once a pen has been used
   // (the pen writes there too).
+  // The feedback button has a fixed place in the top bar of the list and of a note.
+  function dockFeedback() { if (window.QNBug && QNBug.dock) QNBug.dock($(S.view === 'note' ? 'fbSlotNote' : 'fbSlotList')); }
   function updatePenQuick() {
     var q = $('penQuick'), show = S.view === 'note' && !!S.cur && (PREF.tool === 'pen' || PREF.tool === 'type' && !!PREF.penSeen);
     q.classList.toggle('hidden', !show);
@@ -1157,7 +1173,7 @@
     if (S.canvas) { S.canvas.destroy(); S.canvas = null; }
     S.cur = null; updatePenQuick();
     if (history.state && history.state.v === 'note') history.back(); else showList();
-    S.view = 'list'; $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden'); renderList();
+    S.view = 'list'; dockFeedback(); $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden'); renderList();
     toast('Note deleted', 'Undo', function () {
       n.deleted = false; n.v++;
       if (neverSynced || !n.md5) n.dirty = true;
@@ -1298,7 +1314,7 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
-      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). Touching it takes a picture of the app; draw on it, double-tap to write, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
+      '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
         '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button> <button type="button" data-act="fbinbox">Your feedback and replies</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
@@ -1342,9 +1358,9 @@
     { t: 'Layers, made simpler', d: 'Each layer now shows a little picture of what is on it. Tap a layer to draw on it; its opacity, blend, mask and tools open right under it.',
       a: art('<rect x="60" y="14" width="120" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="72" y="28" width="96" height="30" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="72" y="66" width="96" height="30" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/>' +
         '<rect x="78" y="33" width="30" height="20" rx="4" fill="' + SURF + '"/><path d="M82 48c6-8 10 2 16-6" stroke="' + INKC + '" stroke-width="2" fill="none"/><rect x="78" y="71" width="30" height="20" rx="4" fill="' + SOFT + '"/>') },
-    { t: 'Tap to write, pen size at hand', d: 'Tap anywhere on the page to start typing there. The pen size slider now sits on the page while you write. Under Pen › Finger, choose whether your finger draws or moves the page.',
+    { t: 'Double-tap to write, pen size at hand', d: 'Double-tap anywhere on the page with a finger to start typing there; the pen just writes. The pen size slider now sits on the page while you write. Under Pen › Finger, choose whether your finger draws or moves the page.',
       a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M70 90c14-26 30-26 44-6" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/><circle cx="150" cy="70" r="16" fill="' + A + '" opacity=".3"/><circle cx="150" cy="70" r="7" fill="' + A + '"/>') },
-    { t: 'Send feedback', d: 'Touch the small round button at the side: it takes a picture of the app that instant, menus and all. Draw on it right there, double-tap to write a note where you want it, and tap the button again to send.',
+    { t: 'Send feedback', d: 'The round button now sits in the top bar. Touch it and it takes a picture of the app that instant, menus and all. Draw on it with pen or finger, add notes with Text, and tap the button again to send. Two fingers tap to undo, three to redo.',
       a: art('<rect x="60" y="12" width="120" height="116" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="74" y="28" width="92" height="10" rx="5" fill="' + MUT + '" opacity=".35"/><rect x="74" y="46" width="70" height="10" rx="5" fill="' + MUT + '" opacity=".35"/>' +
         '<ellipse cx="128" cy="86" rx="30" ry="18" fill="none" stroke="#d93025" stroke-width="4"/><circle cx="54" cy="96" r="18" fill="' + A + '"/><path d="M45 89h18v11h-11l-5 4z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>') },
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
@@ -1550,7 +1566,7 @@
     setTimeout(function () { flushFeedback().then(function () { checkReplies(); }); }, 6000);
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') checkReplies(); });
     window.addEventListener('online', function () { flushFeedback().then(function () { checkReplies(); }); });
-    QNBug.show(PREF.bugBtn !== false);
+    QNBug.show(PREF.bugBtn !== false); dockFeedback();
   }
 
   // ---------- Start: the notes grid ----------
