@@ -622,7 +622,7 @@
     blur: function () { setTimeout(function () { if (!S.canvas || !S.canvas.active() || !document.activeElement.closest || !document.activeElement.closest('.ProseMirror')) showFmt(false); }, 120); },
     selection: function (ed) { updateFmt(ed); },
     penSeen: function () {
-      PREF.penSeen = true; savePref();
+      PREF.penSeen = true; savePref(); updatePenQuick();
       if (S.penToast || PREF.finger) return; S.penToast = true;
       toast('Pen found: the pen writes, your finger moves the page. To draw with a finger too, choose Pen › Finger › Draws.', null, null, 5000);
     },
@@ -656,6 +656,7 @@
     saveNow();
     if (!n.isDraft && N.isEmpty(n) && !n.fileId) { delete notes[n.id]; store.del(n.id); }
     S.cur = null;
+    updatePenQuick();
     showFmt(false); closeMenu(); closeViewMenu(); $('pop').classList.add('hidden');
     sync.run();
   }
@@ -790,7 +791,23 @@
         G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
     } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
     $('penOpts').innerHTML = html;
+    updatePenQuick();
   }
+  // The pen size control on the page: shown while the pen tool is on, or in Type mode once a pen has been used
+  // (the pen writes there too).
+  function updatePenQuick() {
+    var q = $('penQuick'), show = S.view === 'note' && !!S.cur && (PREF.tool === 'pen' || PREF.tool === 'type' && !!PREF.penSeen);
+    q.classList.toggle('hidden', !show);
+    if (!show) return;
+    var pen = INKOPT.pen, inp = q.querySelector('input'), wpx = Math.max(2, Math.min(22, pen.s * ((window.QNInk.BRUSH[pen.b] || {}).size || 1.6)));
+    if (document.activeElement !== inp) inp.value = pen.s;
+    q.querySelector('.pq-dot').innerHTML = '<i style="width:' + wpx + 'px;height:' + wpx + 'px;background:' + (pen.c === 'ink' ? 'var(--ink)' : pen.c) + '"></i>';
+  }
+  $('penQuick').addEventListener('input', function (e) {
+    INKOPT.pen.s = +e.target.value; applyInk(); savePref(); updatePenQuick();
+    var s = $('penOpts').querySelector('[data-k=pen][data-f=s]'); if (s) s.value = Math.round(INKOPT.pen.s);
+  });
+  $('penQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); });
   // The drawing tools live behind one button, so a note opens as a plain page, like Keep.
   function showTools(on) {
     PREF.showTools = !!on; savePref();
@@ -820,7 +837,7 @@
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
     if (t.dataset.cc) { INKOPT[t.dataset.cc].c = t.value; applyInk(); savePref(); return; }
-    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; applyInk(); savePref(); }
+    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; applyInk(); savePref(); updatePenQuick(); }
   });
   $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
 
@@ -921,7 +938,7 @@
   // ---------- Formatting bar ----------
   function showFmt(on) {
     $('fmtBar').classList.toggle('hidden', !on);
-    $('menuFab').classList.toggle('lift', on); $('noteMenu').classList.toggle('lift', on);
+    $('menuFab').classList.toggle('lift', on); $('noteMenu').classList.toggle('lift', on); $('penQuick').classList.toggle('lift', on);
     $('viewCtl').classList.toggle('lift', on); $('viewMenu').classList.toggle('lift', on);
     if (!on) $('pop').classList.add('hidden');
     placeFmt();
@@ -1138,7 +1155,7 @@
     if (neverSynced) { delete notes[n.id]; store.del(n.id); }
     else { n.deleted = true; n.dirty = true; n.v++; store.put(n); sync.schedule(7000); }
     if (S.canvas) { S.canvas.destroy(); S.canvas = null; }
-    S.cur = null;
+    S.cur = null; updatePenQuick();
     if (history.state && history.state.v === 'note') history.back(); else showList();
     S.view = 'list'; $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden'); renderList();
     toast('Note deleted', 'Undo', function () {
@@ -1281,7 +1298,7 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
-      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). It takes a picture of the app to draw on, so you can point at a problem or an idea and say what you mean. It is saved in your “Feedback” folder.</p>' +
+      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). Touching it takes a picture of the app; draw on it, double-tap to write, and tap the button again to send. It is saved in your “Feedback” folder.</p>' +
         '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
@@ -1324,9 +1341,9 @@
     { t: 'Layers, made simpler', d: 'Each layer now shows a little picture of what is on it. Tap a layer to draw on it; its opacity, blend, mask and tools open right under it.',
       a: art('<rect x="60" y="14" width="120" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="72" y="28" width="96" height="30" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="72" y="66" width="96" height="30" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/>' +
         '<rect x="78" y="33" width="30" height="20" rx="4" fill="' + SURF + '"/><path d="M82 48c6-8 10 2 16-6" stroke="' + INKC + '" stroke-width="2" fill="none"/><rect x="78" y="71" width="30" height="20" rx="4" fill="' + SOFT + '"/>') },
-    { t: 'Your finger, your choice', d: 'Under Pen › Finger: let your finger draw, only move the page, or (Auto) draw until you pick up a pen. The title now zooms and moves with the page.',
+    { t: 'Tap to write, pen size at hand', d: 'Tap anywhere on the page to start typing there. The pen size slider now sits on the page while you write. Under Pen › Finger, choose whether your finger draws or moves the page.',
       a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M70 90c14-26 30-26 44-6" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/><circle cx="150" cy="70" r="16" fill="' + A + '" opacity=".3"/><circle cx="150" cy="70" r="7" fill="' + A + '"/>') },
-    { t: 'Send feedback', d: 'The small round button at the side takes a picture of the whole app. Draw on it, pick Problem, Idea or Question, and say what you mean. It is saved in your Feedback folder with the details needed to fix it.',
+    { t: 'Send feedback', d: 'Touch the small round button at the side: it takes a picture of the app that instant, menus and all. Draw on it right there, double-tap to write a note where you want it, and tap the button again to send.',
       a: art('<rect x="60" y="12" width="120" height="116" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="74" y="28" width="92" height="10" rx="5" fill="' + MUT + '" opacity=".35"/><rect x="74" y="46" width="70" height="10" rx="5" fill="' + MUT + '" opacity=".35"/>' +
         '<ellipse cx="128" cy="86" rx="30" ry="18" fill="none" stroke="#d93025" stroke-width="4"/><circle cx="54" cy="96" r="18" fill="' + A + '"/><path d="M45 89h18v11h-11l-5 4z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>') },
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
