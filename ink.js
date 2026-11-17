@@ -216,15 +216,19 @@
       return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, dx || 1, dy, (a[2] == null ? 0.5 : a[2]) * (1 - t) + (b[2] == null ? 0.5 : b[2]) * t];
     } };
   }
-  function tipSvg(it, d) { // the tip, stamped along the line: bigger where pressed harder, turned with the line if asked
+  // Pressure can change how big each stamp is (pm 'size'), how much of the tip shows, from its middle out ('reveal'), or both.
+  function tipSvg(it, d) { // the tip, stamped along the line, turned with the line if asked
     var w = widthOf(it), sp = Math.max(0.05, d.sp || 0.25) * w, A = along(it.p), o = (it.o == null ? 1 : it.o) * (it.co || 1);
-    var tid = 'tp-' + it.id, uses = '';
+    var pm = d.pm || 'size', tid = 'tp-' + it.id, uses = '', clips = {}, LV = 10;
     for (var s = 0; s <= A.len + 0.01; s += sp) {
-      var q = A.at(s), k = w * (it.f ? 0.45 + 1.1 * q[4] : 1), ang = d.rot ? Math.atan2(q[3], q[2]) * 180 / Math.PI : 0;
-      uses += '<use href="#' + tid + '" transform="translate(' + q[0].toFixed(1) + ' ' + q[1].toFixed(1) + ')' + (ang ? ' rotate(' + ang.toFixed(1) + ')' : '') + ' scale(' + (k / 100).toFixed(4) + ')"/>';
+      var q = A.at(s), pr = it.f ? q[4] : 0.5, ang = d.rot ? Math.atan2(q[3], q[2]) * 180 / Math.PI : 0;
+      var k = w * (pm !== 'reveal' && it.f ? 0.45 + 1.1 * pr : 1), clip = '';
+      if (pm !== 'size') { var lv = Math.max(1, Math.min(LV, Math.round((0.15 + 0.85 * (it.f ? pr : 1)) * LV))); clips[lv] = 1; clip = ' clip-path="url(#' + tid + '-c' + lv + ')"'; }
+      uses += '<use href="#' + tid + '"' + clip + ' transform="translate(' + q[0].toFixed(1) + ' ' + q[1].toFixed(1) + ')' + (ang ? ' rotate(' + ang.toFixed(1) + ')' : '') + ' scale(' + (k / 100).toFixed(4) + ')"/>';
       if (A.len === 0) break;
     }
-    return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '><defs><g id="' + tid + '">' + defItems(d, colorOf(it.c)) + '</g></defs>' + uses + '</g>';
+    var cdefs = Object.keys(clips).map(function (lv) { return '<clipPath id="' + tid + '-c' + lv + '"><circle r="' + (50 * lv / LV).toFixed(1) + '"/></clipPath>'; }).join('');
+    return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '><defs><g id="' + tid + '">' + defItems(d, colorOf(it.c)) + '</g>' + cdefs + '</defs>' + uses + '</g>';
   }
   function lineSvg(it, d) { // one repeat of the style, bent along the line, again and again
     var w = widthOf(it), rep = 4 * w, A = along(it.p), o = (it.o == null ? 1 : it.o) * (it.co || 1), col = colorOf(it.c), out = '';
@@ -491,6 +495,109 @@
     return out;
   }
 
+  // ---------- Hold the pen still at the end of a stroke: it becomes a clean shape (like QuickShape) ----------
+  function dense(poly, step) {
+    var out = [];
+    for (var i = 0; i < poly.length - 1; i++) {
+      var a = poly[i], b = poly[i + 1], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+      for (var j = 0; j < n; j++) out.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]);
+    }
+    out.push(poly[poly.length - 1].slice(0, 2));
+    return out;
+  }
+  function recognize(raw) {
+    var pts = raw.map(function (q) { return [q[0], q[1]]; });
+    if (pts.length < 4) return null;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, L = 0;
+    pts.forEach(function (q, i) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); if (i) L += Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1]); });
+    var D = Math.hypot(x1 - x0, y1 - y0); if (D < 8) return null;
+    var A = pts[0], Bp = pts[pts.length - 1], ab = Math.hypot(Bp[0] - A[0], Bp[1] - A[1]), step = Math.max(1, D / 80);
+    // A line: nothing strays far from the straight line between the ends.
+    if (ab > 0.75 * L) {
+      var far = 0; pts.forEach(function (q) { far = Math.max(far, segDist(q[0], q[1], A[0], A[1], Bp[0], Bp[1])); });
+      if (far < Math.max(3, 0.06 * ab)) return { name: 'line', pts: dense([A, Bp], step), closed: false };
+    }
+    var closed = ab < Math.max(0.22 * D, 0.12 * L);
+    var c = [0, 0]; pts.forEach(function (q) { c[0] += q[0]; c[1] += q[1]; }); c[0] /= pts.length; c[1] /= pts.length;
+    if (closed) {
+      // An ellipse (or circle): from the spread of the points, then checked against them.
+      var sxx = 0, syy = 0, sxy = 0;
+      pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1]; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; });
+      sxx /= pts.length; syy /= pts.length; sxy /= pts.length;
+      var th = 0.5 * Math.atan2(2 * sxy, sxx - syy), qt = Math.round(th / (Math.PI / 2)) * Math.PI / 2;
+      if (Math.abs(th - qt) < 0.12) th = qt;
+      var ct = Math.cos(th), st2 = Math.sin(th);
+      var ra = 0, rb = 0;
+      pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1]; ra = Math.max(ra, Math.abs(dx * ct + dy * st2)); rb = Math.max(rb, Math.abs(-dx * st2 + dy * ct)); });
+      ra *= 0.97; rb *= 0.97;
+      var err = 0;
+      pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1], u = (dx * ct + dy * st2) / ra, v = (-dx * st2 + dy * ct) / rb; err += Math.abs(Math.sqrt(u * u + v * v) - 1); });
+      err /= pts.length;
+      var corners = simplify(pts.concat([pts[0]]), 0.09 * D); corners.pop();
+      var k = corners.length;
+      if (err < 0.085 && k > 4) {
+        if (Math.min(ra, rb) / Math.max(ra, rb) > 0.86) { var rr = (ra + rb) / 2; ra = rb = rr; }
+        var n = Math.max(24, Math.round(Math.PI * (ra + rb) / step)), ell = [];
+        for (var i = 0; i <= n; i++) { var t = i / n * Math.PI * 2, ex = ra * Math.cos(t), ey = rb * Math.sin(t); ell.push([c[0] + ex * ct - ey * st2, c[1] + ex * st2 + ey * ct]); }
+        return { name: ra === rb ? 'circle' : 'ellipse', pts: ell, closed: true, c: c };
+      }
+      if (k === 3) return { name: 'triangle', pts: dense(corners.concat([corners[0]]), step), closed: true, c: c };
+      if (k === 4) { // a rectangle (a square if nearly so), turned like the first side drawn
+        var a = Math.atan2(corners[1][1] - corners[0][1], corners[1][0] - corners[0][0]);
+        var qa = Math.round(a / (Math.PI / 2)) * Math.PI / 2; if (Math.abs(a - qa) < 0.12) a = qa; // nearly level: level
+        var ca = Math.cos(-a), sa = Math.sin(-a);
+        var rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+        pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1], u = dx * ca - dy * sa, v = dx * sa + dy * ca; rx0 = Math.min(rx0, u); rx1 = Math.max(rx1, u); ry0 = Math.min(ry0, v); ry1 = Math.max(ry1, v); });
+        var w = rx1 - rx0, h = ry1 - ry0;
+        if (Math.min(w, h) / Math.max(w, h) > 0.88) { var m = (w + h) / 2, mx = (rx0 + rx1) / 2, my = (ry0 + ry1) / 2; rx0 = mx - m / 2; rx1 = mx + m / 2; ry0 = my - m / 2; ry1 = my + m / 2; }
+        var back = function (u, v) { var cb = Math.cos(a), sb = Math.sin(a); return [c[0] + u * cb - v * sb, c[1] + u * sb + v * cb]; };
+        var rect = [back(rx0, ry0), back(rx1, ry0), back(rx1, ry1), back(rx0, ry1), back(rx0, ry0)];
+        return { name: 'rectangle', pts: dense(rect, step), closed: true, c: c };
+      }
+      // A star (points going out and in by turns), or a polygon with sides about the same: made regular.
+      var radii = corners.map(function (q) { return Math.hypot(q[0] - c[0], q[1] - c[1]); });
+      if (k >= 8 && k % 2 === 0) {
+        var odd = radii.filter(function (_, i) { return i % 2; }), even = radii.filter(function (_, i) { return !(i % 2); });
+        var mo = odd.reduce(function (s, x) { return s + x; }, 0) / odd.length, me = even.reduce(function (s, x) { return s + x; }, 0) / even.length;
+        if (Math.max(mo, me) / Math.min(mo, me) > 1.4) {
+          var outerFirst = me > mo, R1 = Math.max(mo, me), R0 = Math.min(mo, me), q0 = corners[outerFirst ? 0 : 1];
+          var a0 = Math.atan2(q0[1] - c[1], q0[0] - c[0]), star = [];
+          for (var j = 0; j <= k; j++) { var aj = a0 + j * Math.PI * 2 / k, rj = j % 2 ? R0 : R1; star.push([c[0] + rj * Math.cos(aj), c[1] + rj * Math.sin(aj)]); }
+          return { name: 'star', pts: dense(star, step), closed: true, c: c };
+        }
+      }
+      if (k >= 5 && k <= 8) {
+        var mr = radii.reduce(function (s, x) { return s + x; }, 0) / k, dev = 0; radii.forEach(function (x) { dev = Math.max(dev, Math.abs(x - mr) / mr); });
+        var poly = corners;
+        if (dev < 0.2) { var b0 = Math.atan2(corners[0][1] - c[1], corners[0][0] - c[0]); poly = []; for (var m2 = 0; m2 < k; m2++) poly.push([c[0] + mr * Math.cos(b0 + m2 * Math.PI * 2 / k), c[1] + mr * Math.sin(b0 + m2 * Math.PI * 2 / k)]); }
+        return { name: 'polygon', pts: dense(poly.concat([poly[0]]), step), closed: true, c: c };
+      }
+      return null;
+    }
+    // Open: a few straight sides (a corner, a zigzag) become exact straight lines.
+    var bends = simplify(pts, 0.07 * D);
+    if (bends.length >= 3 && bends.length <= 6) return { name: 'lines', pts: dense(bends, step), closed: false, c: c };
+    return null;
+  }
+
+  // ---------- Distort: the map that takes one four-cornered shape onto another (perspective, skew, shear) ----------
+  function homography(src, dst) {
+    var A = [], B = [];
+    for (var i = 0; i < 4; i++) {
+      var x = src[i][0], y = src[i][1], u = dst[i][0], v = dst[i][1];
+      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u);
+      A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v);
+    }
+    for (var c = 0; c < 8; c++) { // Gaussian elimination
+      var piv = c; for (var r2 = c + 1; r2 < 8; r2++) if (Math.abs(A[r2][c]) > Math.abs(A[piv][c])) piv = r2;
+      var t = A[c]; A[c] = A[piv]; A[piv] = t; var tb = B[c]; B[c] = B[piv]; B[piv] = tb;
+      if (Math.abs(A[c][c]) < 1e-12) return null;
+      for (var r3 = 0; r3 < 8; r3++) if (r3 !== c) { var f = A[r3][c] / A[c][c]; for (var k = c; k < 8; k++) A[r3][k] -= f * A[c][k]; B[r3] -= f * B[c]; }
+    }
+    var h = B.map(function (b, i) { return b / A[i][i]; });
+    return function (q) { var w = h[6] * q[0] + h[7] * q[1] + 1; return [(h[0] * q[0] + h[1] * q[1] + h[2]) / w, (h[3] * q[0] + h[4] * q[1] + h[5]) / w]; };
+  }
+
   // ---------- Text art → the outline of each letter, as pen lines (traced from the letters drawn big) ----------
   function textOutlines(it) {
     var S = Math.max(1, 160 / it.fs), pad = 6, sz = textSize(it);
@@ -622,13 +729,23 @@
       d.color = inkColor(d.stroke.c);
       d.alpha = (d.stroke.o == null ? 1 : d.stroke.o) * (d.layer.op == null ? 1 : d.layer.op) * (B.grain ? 0.88 : 1);
       live.style.mixBlendMode = B.blend || d.layer.blend !== 'normal' && d.layer.blend || '';
+      // A home-made tip or line style, pencil grain, a blend, or ink that fades with pressure/tilt: drawn as it will
+      // look, straight into its layer, while drawing (a plain line that changes on lifting the pen looked wrong).
+      d.svgLive = !!(d.stroke.cs && DEFS[d.stroke.cs]) || !!B.grain || !!B.blend || !!(opt.pen.po || opt.pen.to);
       clearLive();
     }
+    function dropLiveSvg(d) { if (d && d.liveEl) { d.liveEl.remove(); d.liveEl = null; } }
     function clearLive() { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); live.style.display = 'none'; }
     function drawLive() {
       liveRaf = 0;
       var d = drag; if (!d || !d.stroke) return;
       var it = d.stroke, pts = d.pred && d.pred.length ? it.p.concat(d.pred) : it.p;
+      if (d.svgLive) {
+        var g = groupOf(d.layer); if (!g) return;
+        if (!d.liveEl) { d.liveEl = document.createElementNS('http://www.w3.org/2000/svg', 'g'); d.liveEl.setAttribute('class', 'ink-livesvg'); g.appendChild(d.liveEl); }
+        d.liveEl.innerHTML = itemSvg(Object.assign({}, it, { id: 'live' + it.id, p: pts.length > 1 ? pts : pts.concat([[pts[0][0] + 0.4, pts[0][1] + 0.4].concat(pts[0].slice(2))]) }));
+        return;
+      }
       var out = outline(it, pts, false);
       clearLive();
       if (!out.length) return;
@@ -652,7 +769,12 @@
         else h += '<path d="' + lp + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
       }
       if (cursor) h += '<circle cx="' + (cursor[0] + M) + '" cy="' + (cursor[1] + M) + '" r="' + cursor[2] + '" fill="none" stroke="var(--muted)" stroke-width="' + k + '" stroke-dasharray="' + 3 * k + ' ' + 3 * k + '"/>';
-      if (sel && sel.box) {
+      if (sel && sel.warp && sel.quad) { // Distort: four corners (perspective) and four sides (skew / shear)
+        var Q = sel.quad.map(function (q) { return [q[0] + M, q[1] + M]; });
+        h += '<path d="M' + Q.map(function (q) { return q[0] + ' ' + q[1]; }).join('L') + 'Z" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 6 * k + ' ' + 4 * k + '"/>';
+        Q.forEach(function (q) { h += '<rect x="' + (q[0] - 8 * k) + '" y="' + (q[1] - 8 * k) + '" width="' + 16 * k + '" height="' + 16 * k + '" rx="' + 3 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>'; });
+        Q.forEach(function (q, i) { var n = Q[(i + 1) % 4], mx = (q[0] + n[0]) / 2, my = (q[1] + n[1]) / 2; h += '<circle cx="' + mx + '" cy="' + my + '" r="' + 6 * k + '" fill="var(--accent)"/>'; });
+      } else if (sel && sel.box) {
         var b = sel.box, pd = 6 * k, x = b.x + M - pd, y = b.y + M - pd, w = b.w + 2 * pd, hh = b.h + 2 * pd;
         h += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 6 * k + ' ' + 4 * k + '" rx="' + 6 * k + '"/>' +
           '<line x1="' + (x + w / 2) + '" y1="' + y + '" x2="' + (x + w / 2) + '" y2="' + (y - 22 * k) + '" stroke="var(--accent)" stroke-width="' + 1.5 * k + '"/>' +
@@ -689,6 +811,12 @@
       }
       sel = { items: items, boxes: bids, box: selBox(items, bids) };
       renderBar(); drawUi();
+    }
+    function startWarp() {
+      var b = sel.box, k = 1 / Z(), pd = 6 * k;
+      sel.warp = true; sel.quad = [[b.x - pd, b.y - pd], [b.x + b.w + pd, b.y - pd], [b.x + b.w + pd, b.y + b.h + pd], [b.x - pd, b.y + b.h + pd]];
+      if (sel.items.some(boxy) || sel.boxes.length) o.notice('Text art, images and text boxes move along but do not bend. Turn Text art into outlines to bend it.');
+      drawUi();
     }
     function refreshBox() { if (sel) sel.box = selBox(sel.items, sel.boxes); }
     var SW = ['ink', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#ffffff'];
@@ -740,6 +868,7 @@
           (count > 1 || inkSel ? '<button type="button" data-act="arrange">Arrange</button>' : '') +
           (sel.items.length > 1 || isShape ? '<button type="button" data-act="bool" title="Join, cut out, overlap or exclude: the parts stay as they are">' + (isShape ? 'Shape' : 'Combine shapes') + '</button>' : '') +
           (sel.boxes.length && BX.hasImages(sel.boxes) ? '<button type="button" data-act="imgout" title="Each image becomes its own object on the page">Take images out</button>' : '') +
+          (sel.items.length ? '<button type="button" data-act="warp" title="Drag the corners for perspective, the sides to skew">' + (sel.warp ? 'Done distorting' : 'Distort') + '</button>' : '') +
           (o.toNewNote ? '<button type="button" data-act="newnote" title="Copy or move this into a note of its own">To new note</button>' : '') +
           (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
           (hasArt ? '<button type="button" data-act="outline" title="Each letter becomes pen lines you can erase, nudge, fill or redraw">To outlines</button>' : '') +
@@ -815,6 +944,7 @@
         renderBar(); return;
       }
       if (b.dataset.bop) { makeShape(b.dataset.bop); return; }
+      if (act === 'warp') { if (sel.warp) { sel.warp = false; sel.quad = null; refreshBox(); drawUi(); } else startWarp(); renderBar(); return; }
       if (act === 'release') { releaseShape(); return; }
       if (b.dataset.arr) { arrange(b.dataset.arr); return; }
       if (act === 'toart') { // text boxes become Text art, in their layers, looking the same
@@ -994,6 +1124,12 @@
 
     // ---- Transforming the selection: drag inside to move, the corner to scale, the knob to rotate ----
     function handleAt(p) {
+      if (sel && sel.warp && sel.quad) {
+        var kq = 1 / Z(), Qd = sel.quad;
+        for (var i = 0; i < 4; i++) if (Math.hypot(p[0] - Qd[i][0], p[1] - Qd[i][1]) < 22 * kq) return 'warp' + i;
+        for (var e = 0; e < 4; e++) { var n = Qd[(e + 1) % 4]; if (Math.hypot(p[0] - (Qd[e][0] + n[0]) / 2, p[1] - (Qd[e][1] + n[1]) / 2) < 20 * kq) return 'warp' + (4 + e); }
+        return inPoly(p[0], p[1], Qd) ? 'move' : null;
+      }
       if (!sel || !sel.box) return null;
       var k = 1 / Z(), b = sel.box, x = b.x - 6 * k, y = b.y - 6 * k, w = b.w + 12 * k, h = b.h + 12 * k;
       if (Math.hypot(p[0] - (x + w / 2), p[1] - (y - 28 * k)) < 20 * k) return 'rotate';
@@ -1005,7 +1141,7 @@
       sel.items.slice().forEach(own);
       var b = sel.box;
       drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }),
-        borig: sel.boxes.map(function (id) { return BX.rect(id); }) };
+        borig: sel.boxes.map(function (id) { return BX.rect(id); }), q0: sel.quad ? sel.quad.map(function (q) { return q.slice(); }) : null };
     }
     function applyTransform(p) {
       var d = drag, ang = 0, s = 1;
@@ -1015,7 +1151,15 @@
         s = Math.max(0.05, a0 > 1 ? a1 / a0 : 1);
       }
       var cos = Math.cos(ang), sin = Math.sin(ang), dx = p[0] - d.start[0], dy = p[1] - d.start[1];
-      var map = function (q) {
+      var H = null;
+      if (d.kind.indexOf('warp') === 0) {
+        var wi = +d.kind.slice(4), q1 = d.q0.map(function (q) { return q.slice(); });
+        if (wi < 4) { q1[wi][0] += dx; q1[wi][1] += dy; }
+        else { var e1 = wi - 4, e2 = (e1 + 1) % 4; q1[e1][0] += dx; q1[e1][1] += dy; q1[e2][0] += dx; q1[e2][1] += dy; }
+        H = homography(d.q0, q1); if (!H) return;
+        d.q1 = q1; sel.quad = q1;
+      } else if (d.q0) sel.quad = d.q0.map(function (q) { return [q[0] + dx, q[1] + dy]; }); // moving keeps the frame with it
+      var map = H || function (q) {
         if (d.kind === 'move') return [q[0] + dx, q[1] + dy];
         if (d.kind === 'scale') return [d.tl[0] + (q[0] - d.tl[0]) * s, d.tl[1] + (q[1] - d.tl[1]) * s];
         var x = q[0] - d.c[0], y = q[1] - d.c[1];
@@ -1024,6 +1168,10 @@
       var xf = function (it, src) {
         if (it.t === 'b') it.k.forEach(function (p, j) { xf(p, src.k[j]); });
         else if (it.t === 'f') it.d = src.d.map(function (ring) { return ring.map(map); });
+        else if (boxy(it) && H) { // text art and images go where their middle goes (they do not bend)
+          var cs0 = textCorners(src), cx0 = (cs0[0][0] + cs0[2][0]) / 2, cy0 = (cs0[0][1] + cs0[2][1]) / 2, mc = H([cx0, cy0]);
+          it.x = src.x + mc[0] - cx0; it.y = src.y + mc[1] - cy0;
+        }
         else if (boxy(it)) {
           var a0 = map([src.x, src.y]); it.x = a0[0]; it.y = a0[1];
           if (d.kind === 'rotate') it.r = (src.r || 0) + ang;
@@ -1036,10 +1184,10 @@
       // Text boxes move with it: their corner follows (turning moves them round the middle); scaling changes their width.
       sel.boxes.forEach(function (id, i) {
         var r0 = d.borig[i]; if (!r0) return;
-        if (d.kind === 'rotate') { var c0 = map([r0.x + r0.w / 2, r0.y + r0.h / 2]); BX.place(id, c0[0] - r0.w / 2, c0[1] - r0.h / 2); }
+        if (d.kind === 'rotate' || H) { var c0 = map([r0.x + r0.w / 2, r0.y + r0.h / 2]); BX.place(id, c0[0] - r0.w / 2, c0[1] - r0.h / 2); }
         else { var q = map([r0.x, r0.y]); BX.place(id, q[0], q[1], d.kind === 'scale' ? Math.max(60, r0.w * s) : null); }
       });
-      refreshBox(); patch(sel.items);
+      refreshBox(); patch(sel.items); if (H) drawUi();
     }
 
     // A pen point as it is kept: its width from pressure (through the pressure curve) and tilt, and, when pressure
@@ -1090,8 +1238,26 @@
       }
       if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) drag.far = true; if (drag.far) applyTransform(p); return; }
       if (drag.pick) return;
+      if (drag.stroke && drag.snap) { // a clean shape: the pen now sizes and turns it (a line: moves its end)
+        var S0 = drag.snap, it0 = drag.stroke;
+        if (S0.name === 'line') { var e0 = S0.base[0]; it0.p = dense([e0, p], Math.max(1, 2 / Z())).map(function (q) { return [q[0], q[1], S0.pr].concat(S0.q3 != null ? [S0.q3] : []); }); }
+        else {
+          var v0 = [S0.at[0] - S0.c[0], S0.at[1] - S0.c[1]], v1 = [p[0] - S0.c[0], p[1] - S0.c[1]];
+          var sc = Math.max(0.05, Math.hypot(v1[0], v1[1]) / Math.max(1e-6, Math.hypot(v0[0], v0[1]))), an = Math.atan2(v1[1], v1[0]) - Math.atan2(v0[1], v0[0]);
+          var ca2 = Math.cos(an) * sc, sa2 = Math.sin(an) * sc;
+          it0.p = S0.base.map(function (q) { var dx = q[0] - S0.c[0], dy = q[1] - S0.c[1]; return [S0.c[0] + dx * ca2 - dy * sa2, S0.c[1] + dx * sa2 + dy * ca2, S0.pr].concat(S0.q3 != null ? [S0.q3] : []); });
+        }
+        drag.pred = null; liveSoon(); return;
+      }
       if (drag.stroke) {
         var sp = drag.stroke.p, isPen = !!drag.stroke.f;
+        if (opt.pen.snap !== false) { // still for a moment (and the line long enough)? then it becomes a shape
+          var hs = drag.hold, cur = sp[sp.length - 1] || p;
+          if (!hs || Math.hypot(p[0] - hs.x, p[1] - hs.y) > 5 / Z()) {
+            clearTimeout(hs && hs.t);
+            drag.hold = { x: p[0], y: p[1], t: setTimeout(function () { snapShape(); }, 550) };
+          }
+        }
         (pts || [p]).map(function (q) { return shapePt(q, isPen); }).forEach(function (q) {
           var last = sp[sp.length - 1];
           if (last && Math.abs(q[0] - last[0]) + Math.abs(q[1] - last[1]) < 0.15 / Z()) { last[2] = Math.max(last[2], q[2]); return; } // no movement
@@ -1119,9 +1285,27 @@
         drag.last = p; drawUi(); return;
       }
     };
+    function snapShape() {
+      var d = drag; if (!d || !d.stroke || d.snap) return;
+      var it = d.stroke, len = 0;
+      for (var i = 1; i < it.p.length; i++) len += Math.hypot(it.p[i][0] - it.p[i - 1][0], it.p[i][1] - it.p[i - 1][1]);
+      if (len < 30 / Z()) return;
+      var sh = recognize(it.p); if (!sh) return;
+      var pr = 0, q3 = null, n = 0;
+      it.p.forEach(function (q) { pr += q[2] == null ? 0.5 : q[2]; if (q[3] != null) { q3 = (q3 || 0) + q[3]; n++; } });
+      pr /= it.p.length; if (n) q3 /= n;
+      var last = it.p[it.p.length - 1];
+      d.snap = { name: sh.name, base: sh.pts, c: sh.c || sh.pts[0], at: [last[0], last[1]], pr: pr, q3: q3 };
+      it.p = sh.pts.map(function (q) { return [q[0], q[1], pr].concat(q3 != null ? [q3] : []); });
+      it.st = 0; // keep the corners sharp
+      if (navigator.vibrate) navigator.vibrate(15);
+      if (o.notice && !self._shapeHinted) { self._shapeHinted = true; o.notice(sh.name.charAt(0).toUpperCase() + sh.name.slice(1) + ': keep holding and move to size or turn it'); }
+      liveSoon();
+    }
     self.up = function (p) {
       var d = drag; drag = null;
       if (!d) return;
+      if (d.hold) clearTimeout(d.hold.t);
       if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { toggleAt(d.start); return; } // a tap on the selection: in or out
       if (d.kind) { if (!d.far) return; refreshBox(); flushPatch(); commit(); return; }
       if (d.pick) { toggleAt(d.pick); return; }
@@ -1129,7 +1313,7 @@
         cancelAnimationFrame(liveRaf); liveRaf = 0;
         if (d.stroke.p.length === 1) { var p0 = d.stroke.p[0]; d.stroke.p.push([p0[0] + 0.4, p0[1] + 0.4].concat(p0.slice(2))); }
         d.layer.items.push(d.stroke); invalidate(d.stroke);
-        addEl(d.layer, d.stroke);
+        addEl(d.layer, d.stroke); dropLiveSvg(d);
         // Take the live stroke away once the saved one is on screen (two frames), unless a new stroke has begun.
         requestAnimationFrame(function () { requestAnimationFrame(function () { if (!drag || !drag.stroke) clearLive(); }); });
         commit(); return;
@@ -1167,7 +1351,7 @@
       }
     };
     self.cancel = function () {
-      if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); }
+      if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); dropLiveSvg(drag); }
       if (drag && (drag.kind || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
       drag = null; cursor = null; drawUi();
     };
