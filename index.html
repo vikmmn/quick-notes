@@ -111,6 +111,10 @@
   .pickbar span { color: var(--muted); font-size: 14px; margin-right: 4px; }
   .pickbar button { border-radius: 999px; }
   .pickbar button[disabled] { opacity: .45; }
+  .pickbar .pk-ic { width: 42px; height: 42px; min-height: 0; padding: 0; display: inline-grid; place-items: center; border: 0; background: transparent; font-size: 17px; }
+  .pickbar .pk-ic[aria-pressed="true"] { color: var(--accent); }
+  .card-ghost { position: fixed; z-index: 80; pointer-events: none; box-shadow: var(--shadow), 0 12px 32px rgba(0,0,0,.25); transform: rotate(-2deg) scale(1.03); opacity: .95; }
+  .card-hole { opacity: .25; }
   .card h3 { margin: 0 0 4px; font: 500 16px/1.35 var(--font); padding-right: 18px; }
   .card .pin { position: absolute; top: 10px; right: 10px; color: var(--accent); }
   .card .pin svg.i { width: 16px; height: 16px; }
@@ -515,7 +519,13 @@
     </div>
   </main>
   <div id="pickBar" class="pickbar hidden" role="toolbar" aria-label="Picked notes"><span id="pickCount"></span>
-    <button type="button" data-pk="dup">Duplicate</button><button type="button" data-pk="combine">Combine</button><button type="button" data-pk="cancel">Cancel</button></div>
+    <button type="button" class="pk-ic" data-pk="pin" title="Pin" aria-label="Pin"><svg class="i"><use href="#i-pin"/></svg></button>
+    <button type="button" class="pk-ic" data-pk="labels" title="Labels" aria-label="Labels"><svg class="i"><use href="#i-label"/></svg></button>
+    <button type="button" class="pk-ic" data-pk="move" title="Move to folder" aria-label="Move to folder"><svg class="i"><use href="#i-folder"/></svg></button>
+    <button type="button" class="pk-ic" data-pk="dup" title="Make a copy" aria-label="Make a copy"><svg class="i"><use href="#i-copy"/></svg></button>
+    <button type="button" data-pk="combine">Combine</button>
+    <button type="button" class="pk-ic danger" data-pk="delete" title="Delete" aria-label="Delete"><svg class="i"><use href="#i-trash"/></svg></button>
+    <button type="button" class="pk-ic" data-pk="cancel" title="Cancel" aria-label="Cancel">✕</button></div>
   <button id="newFab" class="fab primary" type="button" aria-label="New note"><svg class="i"><use href="#i-plus"/></svg></button>
 </section>
 

@@ -27,7 +27,7 @@
   //   {"groups":[{"id":"g1","x":10,"y":200,"strokes":[{"c":"#222","s":3,"p":[[0,0,0.5],…]}]}]}
   //   -->
   // Obsidian and other Markdown apps hide the markers and show the text in reading order.
-  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1 };
+  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1, order: 1 };
   var BOX = /^<!-- qn:box (\{.*\}) -->[ \t]*$/;
 
   function parseLabels(v) {
@@ -116,6 +116,7 @@
       boxes: c.boxes, ink: c.ink, body: '',
       labels: parseLabels(fm.labels),
       pinned: /^\s*true\s*$/i.test(fm.pinned || ''),
+      order: fm.order != null && fm.order !== '' && !isNaN(+fm.order) ? +fm.order : null, // its place in the list, once dragged there
       created: (fm.created || '').trim() || (file && file.createdTime) || new Date().toISOString(),
       updated: (fm.updated || '').trim() || fileTime || new Date().toISOString(),
       source: (fm.source || '').trim() || 'notes',
@@ -142,6 +143,7 @@
   function serialize(n) {
     var out = ['---', 'id: ' + n.id, 'created: ' + n.created, 'updated: ' + n.updated,
       'labels: ' + JSON.stringify(n.labels || []), 'pinned: ' + (n.pinned ? 'true' : 'false'), 'source: ' + (n.source || 'notes')]
+      .concat(n.order != null ? ['order: ' + n.order] : [])
       .concat(n.extra || [], ['---', '']);
     if (n.title) out.push('# ' + n.title.replace(/\n/g, ' '), '');
     out.push(canvasText(n));
@@ -250,7 +252,7 @@
   // ---------------- Syncing with Google Drive ----------------
   // Push: every changed note is written to its own file (new notes go to their folder, or Notes › Inbox).
   // Pull: every Markdown file under Notes, in any folder depth, is listed; only changed files are downloaded.
-  var FIELDS_COPY = ['title', 'boxes', 'ink', 'body', 'labels', 'pinned', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId'];
+  var FIELDS_COPY = ['title', 'boxes', 'ink', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId'];
   function Sync(store, notes, hooks) {
     var state = { phase: 'idle', error: null, lastSynced: null };
     var running = false, again = false, againPull = false, timer = null, folders = null, tree = {};

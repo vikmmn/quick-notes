@@ -314,7 +314,7 @@
     }
     var shown = S.folder && !labelView ? pool.filter(function (n) { return folderOf(n) === S.folder; }) : pool;
     var whereOf = function (n) { return labelView ? pathOf(folderOf(n)).map(function (f) { return f.name; }).join(' / ') : ''; };
-    shown.sort(function (a, b) { return String(b.updated).localeCompare(String(a.updated)); });
+    shown.sort(function (a, b) { return listKey(b) - listKey(a); });
     var pinned = shown.filter(function (n) { return n.pinned; }), others = shown.filter(function (n) { return !n.pinned; });
     var subs = rootId() ? childrenOf(S.folder || rootId()) : [];
     $('subfolders').innerHTML = S.label ? '' : subs.map(function (f) {
@@ -435,7 +435,12 @@
     if (S.q.trim()) window.QNSearch.remember(S.q);
     openNote(n);
   }
-  // ---------- Several notes at once: hold a note to pick it, then tap others; Duplicate or Combine them ----------
+  // A note's place in the list: where it was dragged to, or else when it was last changed (newest first).
+  function listKey(n) { return n.order != null ? n.order : (Date.parse(n.updated) || 0); }
+  // A change to a note that is not open (pin, place, labels…): kept and sent to Drive, without changing its date.
+  function touchQuiet(n) { n.dirty = true; n.v = (n.v || 0) + 1; n.body = N.bodyOf(n); store.put(n); sync.schedule(6000); renderStatus(); }
+
+  // ---------- Several notes at once (like Keep): hold a note to pick it, tap others; hold and drag to move it ----------
   function togglePick(c) {
     var id = c.dataset.id, P = S.pick || (S.pick = { ids: {}, order: [] });
     if (P.ids[id]) { delete P.ids[id]; P.order = P.order.filter(function (x) { return x !== id; }); }
@@ -451,26 +456,101 @@
     if (!S.pick) { Array.prototype.forEach.call(document.querySelectorAll('.card.picked'), function (c) { c.classList.remove('picked'); }); return; }
     $('pickCount').textContent = n + (n === 1 ? ' note' : ' notes');
     $('pickBar').querySelector('[data-pk=combine]').disabled = n < 2;
+    $('pickBar').querySelector('[data-pk=labels]').disabled = n !== 1;
+    var allPinned = S.pick.order.every(function (id) { return notes[id] && notes[id].pinned; });
+    $('pickBar').querySelector('[data-pk=pin]').title = allPinned ? 'Unpin' : 'Pin';
+    $('pickBar').querySelector('[data-pk=pin]').setAttribute('aria-pressed', allPinned);
   }
   function endPick() { S.pick = null; showPickBar(); }
   (function () {
-    var hold = null;
+    var hold = null, drag = null;
     ['pinned', 'others', 'results'].forEach(function (id) {
       $(id).addEventListener('pointerdown', function (e) {
         var c = e.target.closest('.card'); if (!c || e.button > 0 || e.target.closest('input, a')) return;
-        hold = { c: c, x: e.clientX, y: e.clientY, t: setTimeout(function () {
-          if (!hold) return; S.heldAt = Date.now(); togglePick(hold.c); if (navigator.vibrate) navigator.vibrate(12); hold = null;
+        hold = { c: c, x: e.clientX, y: e.clientY, held: false, t: setTimeout(function () {
+          if (!hold) return;
+          hold.held = true; S.heldAt = Date.now();
+          if (!(S.pick && S.pick.ids[hold.c.dataset.id])) togglePick(hold.c);
+          if (navigator.vibrate) navigator.vibrate(12);
         }, 480) };
       });
       $(id).addEventListener('contextmenu', function (e) { if (e.target.closest('.card')) e.preventDefault(); });
     });
-    var stop = function (e) { if (hold && (!e.clientX || Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10 || e.type !== 'pointermove')) { clearTimeout(hold.t); hold = null; } };
-    document.addEventListener('pointermove', stop); document.addEventListener('pointerup', stop); document.addEventListener('pointercancel', stop);
+    // After the hold, moving drags the note to a new place (in the list it is in: pinned, or the others).
+    function startDrag(e) {
+      var c = hold.c, r = c.getBoundingClientRect(), list = c.parentNode;
+      if (list.id === 'results') return false; // search results keep their own order
+      var ghost = c.cloneNode(true);
+      ghost.classList.add('card-ghost');
+      ghost.style.width = r.width + 'px'; ghost.style.left = r.left + 'px'; ghost.style.top = r.top + 'px';
+      document.body.appendChild(ghost);
+      c.classList.add('card-hole');
+      drag = { c: c, ghost: ghost, list: list, dx: e.clientX - r.left, dy: e.clientY - r.top };
+      return true;
+    }
+    function moveDrag(e) {
+      var d = drag;
+      d.ghost.style.left = (e.clientX - d.dx) + 'px'; d.ghost.style.top = (e.clientY - d.dy) + 'px';
+      var under = document.elementFromPoint(e.clientX, e.clientY), t = under && under.closest('.card');
+      if (t && t !== d.c && t.parentNode === d.list) {
+        var tr = t.getBoundingClientRect(), after = e.clientY > tr.top + tr.height / 2;
+        if (after) { if (t.nextSibling !== d.c) d.list.insertBefore(d.c, t.nextSibling); }
+        else if (t.previousSibling !== d.c) d.list.insertBefore(d.c, t);
+      }
+      // near the top or bottom of the screen: scroll the list
+      var sc = $('listView').querySelector('main') || document.scrollingElement, H = window.innerHeight;
+      if (e.clientY < 90) sc.scrollTop -= 12; else if (e.clientY > H - 90) sc.scrollTop += 12;
+    }
+    function endDrag() {
+      var d = drag; drag = null;
+      d.ghost.remove(); d.c.classList.remove('card-hole');
+      var n = notes[d.c.dataset.id]; if (!n) return;
+      var prev = d.c.previousElementSibling, next = d.c.nextElementSibling;
+      var kp = prev && prev.classList.contains('card') && notes[prev.dataset.id] ? listKey(notes[prev.dataset.id]) : null;
+      var kn = next && next.classList.contains('card') && notes[next.dataset.id] ? listKey(notes[next.dataset.id]) : null;
+      var k = kp != null && kn != null ? (kp + kn) / 2 : kp != null ? kp - 60000 : kn != null ? kn + 60000 : listKey(n);
+      if (k !== listKey(n)) { n.order = Math.round(k * 1000) / 1000; touchQuiet(n); }
+      S.heldAt = Date.now(); endPick(); renderList();
+    }
+    document.addEventListener('pointermove', function (e) {
+      if (drag) { e.preventDefault(); moveDrag(e); return; }
+      if (!hold) return;
+      var far = Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10;
+      if (!far) return;
+      if (hold.held && startDrag(e)) { clearTimeout(hold.t); hold = null; moveDrag(e); return; }
+      clearTimeout(hold.t); hold = null; // it was a scroll
+    }, { passive: false });
+    // Once a note is held, a finger moving it must not scroll the page.
+    document.addEventListener('touchmove', function (e) { if (drag || (hold && hold.held)) e.preventDefault(); }, { passive: false });
+    var up = function () { if (drag) endDrag(); if (hold) { clearTimeout(hold.t); hold = null; } };
+    document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
   })();
   $('pickBar').addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;
     var picked = S.pick ? S.pick.order.map(function (id) { return notes[id]; }).filter(Boolean) : [];
     if (b.dataset.pk === 'cancel') return endPick();
+    if (b.dataset.pk === 'pin') {
+      var pinAll = !picked.every(function (n) { return n.pinned; });
+      picked.forEach(function (n) { if (!!n.pinned !== pinAll) { n.pinned = pinAll; touchQuiet(n); } });
+      endPick(); renderList(); toast(pinAll ? (picked.length === 1 ? 'Pinned' : picked.length + ' notes pinned') : 'Unpinned'); return;
+    }
+    if (b.dataset.pk === 'labels') { endPick(); if (picked[0]) { labelsSheet(picked[0]); } return; }
+    if (b.dataset.pk === 'move') {
+      endPick();
+      return pickFolder(picked.length === 1 ? 'Move note to…' : 'Move ' + picked.length + ' notes to…', folderOf(picked[0]), function (target) {
+        picked.forEach(function (n) {
+          if (target === folderOf(n)) return;
+          if (n.fileId && !n.moveFrom) n.moveFrom = n.folderId;
+          n.folderId = target; touchQuiet(n);
+        });
+        closeSheet(); renderList(); toast('Moved to ' + folderName(target));
+      }, null, true);
+    }
+    if (b.dataset.pk === 'delete') {
+      endPick(); picked.forEach(trashNote); renderList();
+      toast(picked.length === 1 ? 'Note deleted' : picked.length + ' notes deleted', 'Undo', function () { picked.forEach(function (n) { untrash(n); }); renderList(); }, 7000);
+      return;
+    }
     if (b.dataset.pk === 'dup') { picked.forEach(function (n) { saveNew(copyOf(n, (n.title || 'Note') + ' (copy)')); }); endPick(); renderList(); toast(picked.length === 1 ? 'Copy made' : picked.length + ' copies made'); return; }
     if (b.dataset.pk === 'combine' && picked.length > 1) { endPick(); combineNotes(picked); }
   });
@@ -1924,6 +2004,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Hold a note, like in Keep', d: 'In the notes list, hold a note: it is picked, and a bar offers Pin, Labels, Move to folder, Make a copy, Combine and Delete. Tap other notes to pick them too. Hold a note and, without lifting, drag it to put it somewhere else in the list; it stays there on every device.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="36" y="28" width="70" height="40" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="36" y="76" width="70" height="36" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="114" y="28" width="70" height="40" rx="6" fill="none" stroke="' + RULE + '" stroke-dasharray="4 3"/>' +
+        '<g transform="rotate(-4 160 90)"><rect x="124" y="66" width="74" height="44" rx="6" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/></g><circle cx="190" cy="68" r="7" fill="' + A + '"/>') },
     { t: 'Now called Serendipity', d: 'The delight of finding connections you were not looking for, as quick notes spread out, link up and become ideas. New icon too. Your notes stay exactly where they are; you can rename the Drive folder in Settings › Folders.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M80 82l30-28 32 15-17 36z M110 54l15 51" fill="none" stroke="' + A + '" stroke-width="3" stroke-linejoin="round"/>' +
         '<circle cx="80" cy="82" r="7" fill="' + A + '"/><circle cx="110" cy="54" r="7" fill="' + A + '"/><circle cx="125" cy="105" r="7" fill="' + A + '"/><circle cx="142" cy="69" r="10" fill="' + Y + '"/>' +
