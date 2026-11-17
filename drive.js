@@ -1,4 +1,4 @@
-// Google Drive access for Offshoot (the same approach as 2nd Brain Notes).
+// Google Drive access for Serendip (the same approach as 2nd Brain Notes).
 // Real mode talks to the Drive API with the user's own Google sign-in.
 // Demo mode (no CLIENT_ID, #demo in the address, or any address other than APP_ORIGIN) uses a pretend Drive in memory.
 (function () {
@@ -286,7 +286,7 @@
         }
         var r = await api(API + '/files?fields=' + FIELDS, {
           method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-          body: JSON.stringify({ name: CFG.ROOT_FOLDER_NAME || 'Offshoot', mimeType: FOLDER, appProperties: { qnRoot: '1' } })
+          body: JSON.stringify({ name: CFG.ROOT_FOLDER_NAME || 'Serendip', mimeType: FOLDER, appProperties: { qnRoot: '1' } })
         });
         return r.json();
       },
