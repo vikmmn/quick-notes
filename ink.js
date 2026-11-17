@@ -3,7 +3,8 @@
 // A note's drawing is a list of layers, bottom first:
 //   { id, name, vis, lock, op (opacity 0–1), blend ('normal', 'multiply'…), clip (masked by the layer below), items: [...] }
 // Items, bottom first, in note coordinates:
-//   stroke { id, t: 's', b: brush, c: colour, s: size, o: opacity, f: 1 if drawn with a pen (real pressure), st: smoothing 0–1 (optional), g: group id, p: [[x, y, pressure], …] }
+//   stroke { id, t: 's', b: brush, c: colour, s: size, o: opacity, f: 1 if drawn with a pen (real pressure), st: smoothing 0–1 (optional),
+//            th: how much pressure thins the line 0–1 (optional), g: group id, p: [[x, y, pressure], …] }
 //   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …] }   (one or more closed outlines)
 // Saved inside the note's Markdown file as <!-- qn:ink {"v":2,"layers":[…]} -->.
 // Older notes (groups of strokes, positions relative to the group) are converted when they are opened.
@@ -65,7 +66,10 @@
           x.b = it.b; x.s = r1(it.s);
           if (it.f) x.f = 1;
           if (it.st != null) x.st = Math.round(it.st * 100) / 100;
-          x.p = it.p.map(function (q) { return [r1(q[0]), r1(q[1]), Math.round((q[2] == null ? 0.5 : q[2]) * 100) / 100]; });
+          if (it.th != null) x.th = Math.round(it.th * 100) / 100;
+          // Each point: x, y, width (pressure, after the pen's pressure and tilt settings), and, when the pen's pressure or
+          // tilt changes how strong the ink is, a fourth number: the ink's strength there (0–1).
+          x.p = it.p.map(function (q) { var o = [r1(q[0]), r1(q[1]), Math.round((q[2] == null ? 0.5 : q[2]) * 100) / 100]; if (q[3] != null) o.push(Math.round(q[3] * 100) / 100); return o; });
         }
         return x;
       }) };
@@ -86,7 +90,7 @@
   function outline(it, pts, last) {
     var B = BRUSH[it.b] || BRUSH.pen;
     return pts.length ? LIB().getStroke(pts, {
-      size: widthOf(it), thinning: it.f ? Math.min(0.7, B.thin + 0.1) : B.thin, smoothing: B.smooth, streamline: it.st != null ? it.st : B.stream,
+      size: widthOf(it), thinning: it.f ? (it.th != null ? it.th : Math.min(0.7, B.thin + 0.1)) : B.thin, smoothing: B.smooth, streamline: it.st != null ? it.st : B.stream,
       simulatePressure: !it.f && B.thin > 0, last: last,
       start: B.taper ? { taper: widthOf(it) * 3 } : undefined, end: B.taper ? { taper: widthOf(it) * 4 } : undefined
     }) : [];
@@ -110,12 +114,28 @@
     cache.set(it, d);
     return d;
   }
+  function hasFade(it) { return it.t !== 'f' && it.p && it.p.some(function (q) { return q[3] != null && q[3] < 0.99; }); }
+  // A stroke whose ink gets lighter and stronger along the way (pressure or tilt on opacity): the whole line, seen
+  // through a mask made of short pieces, each as strong as the ink there. The pieces overlap; "lighten" keeps the
+  // overlaps from showing as darker seams.
+  function fadeMask(it) {
+    var pts = it.p, n = pts.length, step = Math.max(2, Math.round(n / 90)), parts = '';
+    for (var i = 0; i < n - 1; i += step) {
+      var seg = pts.slice(i, Math.min(n, i + step + 2)), a = 0;
+      seg.forEach(function (q) { a += q[3] == null ? 1 : q[3]; }); a /= seg.length;
+      var out = outline(it, seg, true); if (!out.length) continue;
+      var v = Math.round(255 * Math.max(0, Math.min(1, a)));
+      parts += '<path d="M' + out.map(function (q) { return q[0].toFixed(1) + ' ' + q[1].toFixed(1); }).join('L') + 'Z" fill="rgb(' + v + ',' + v + ',' + v + ')"/>';
+    }
+    return '<mask id="pm-' + it.id + '" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000"><g style="mix-blend-mode:lighten;isolation:isolate">' + parts + '</g></mask>';
+  }
   function itemSvg(it, plain) {
     var B = plain ? {} : BRUSH[it.b] || {};
-    var o = it.o == null ? 1 : it.o;
-    return '<path data-i="' + it.id + '" d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
-      (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') +
+    var o = it.o == null ? 1 : it.o, fade = !plain && hasFade(it);
+    var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
+      (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') + (fade ? ' mask="url(#pm-' + it.id + ')"' : '') +
       (B.grain ? ' filter="url(#qn-grain)"' : '') + (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
+    return fade ? '<g data-i="' + it.id + '">' + fadeMask(it) + path + '</g>' : path;
   }
   function layerSvg(l, below, prefix, plain) {
     var st = 'opacity:' + l.op + ';' + (l.blend && l.blend !== 'normal' ? 'mix-blend-mode:' + l.blend + ';' : '') + 'isolation:isolate';
@@ -368,7 +388,11 @@
     function flushPatch() {
       cancelAnimationFrame(patchRaf); patchRaf = 0;
       var list = pending; pending = [];
-      list.forEach(function (it) { var e = elOf(it); if (e) e.setAttribute('d', itemD(it)); });
+      list.forEach(function (it) {
+        var e = elOf(it); if (!e) return;
+        if (e.tagName.toLowerCase() === 'g') { e.insertAdjacentHTML('afterend', itemSvg(it)); e.remove(); } // a fading stroke: its mask moves too
+        else e.setAttribute('d', itemD(it));
+      });
       drawUi();
     }
     function addEl(l, it) { var g = groupOf(l); if (g) g.insertAdjacentHTML('beforeend', itemSvg(it)); else soon(); }
@@ -440,20 +464,33 @@
     self.size = function (W, H) { ui.setAttribute('width', W); ui.setAttribute('height', H); };
 
     // ---- Selection (Lasso tool) ----
-    function setSel(items) {
-      if (!items || !items.length) { sel = null; bar.classList.add('hidden'); drawUi(); return; }
+    // Text boxes can be in the selection too (o.boxes is the page's way to find, move and change them).
+    var BX = o.boxes || null;
+    function selBox(items, bids) {
+      var b = items.length ? unionBox(items) : null;
+      (bids || []).forEach(function (id) {
+        var r = BX.rect(id); if (!r) return;
+        if (!b) { b = { x: r.x, y: r.y, w: r.w, h: r.h }; return; }
+        var x0 = Math.min(b.x, r.x), y0 = Math.min(b.y, r.y);
+        b = { x: x0, y: y0, w: Math.max(b.x + b.w, r.x + r.w) - x0, h: Math.max(b.y + b.h, r.y + r.h) - y0 };
+      });
+      return b;
+    }
+    function setSel(items, bids) {
+      items = items || []; bids = BX ? (bids || []) : [];
+      if (!items.length && !bids.length) { sel = null; bar.classList.add('hidden'); drawUi(); return; }
       // Grouped items come along with each other.
       var gs = {}; items.forEach(function (it) { if (it.g) gs[it.g] = 1; });
       layers.forEach(function (l) { if (editable(l)) l.items.forEach(function (it) { if (it.g && gs[it.g] && items.indexOf(it) < 0) items.push(it); }); });
-      sel = { items: items, box: unionBox(items) };
+      sel = { items: items, boxes: bids, box: selBox(items, bids) };
       renderBar(); drawUi();
     }
-    function refreshBox() { if (sel) sel.box = unionBox(sel.items); }
+    function refreshBox() { if (sel) sel.box = selBox(sel.items, sel.boxes); }
     var SW = ['ink', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#ffffff'];
     function renderBar(mode) {
       if (!sel) return;
       var grouped = sel.items.length > 1 && sel.items.every(function (it) { return it.g && it.g === sel.items[0].g; });
-      var h;
+      var inkSel = sel.items.length > 0, h;
       if (mode === 'color') {
         h = SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('') +
           '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label><button type="button" data-act="back">Done</button>';
@@ -461,8 +498,8 @@
         h = layers.slice().reverse().map(function (l) { return '<button type="button" data-tol="' + l.id + '">' + esc(l.name) + '</button>'; }).join('') + '<button type="button" data-act="back">Cancel</button>';
       } else {
         h = '<button type="button" data-act="dup">Duplicate</button><button type="button" data-act="del">Delete</button>' +
-          '<button type="button" data-act="' + (grouped ? 'ungroup' : 'group') + '"' + (sel.items.length < 2 ? ' disabled' : '') + '>' + (grouped ? 'Ungroup' : 'Group') + '</button>' +
-          '<button type="button" data-act="color">Colour</button>' + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
+          (inkSel ? '<button type="button" data-act="' + (grouped ? 'ungroup' : 'group') + '"' + (sel.items.length < 2 ? ' disabled' : '') + '>' + (grouped ? 'Ungroup' : 'Group') + '</button>' +
+            '<button type="button" data-act="color">Colour</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
           (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '');
       }
       bar.innerHTML = h; bar.classList.remove('hidden'); placeBar();
@@ -495,12 +532,13 @@
       if (b.dataset.tol) {
         var to = layers.filter(function (l) { return l.id === b.dataset.tol; })[0];
         sel.items.forEach(function (it) { var l = layerOf(it); if (l && l !== to) { l.items.splice(l.items.indexOf(it), 1); to.items.push(it); } });
+        if (sel.boxes.length) BX.setLayer(sel.boxes, to.id);
         done(); renderBar(); return;
       }
       if (act === 'back') return renderBar();
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
       if (act === 'color' || act === 'layer') return renderBar(act);
-      if (act === 'del') { sel.items.forEach(function (it) { var l = layerOf(it); if (l) l.items.splice(l.items.indexOf(it), 1); }); setSel(null); done(); return; }
+      if (act === 'del') { sel.items.forEach(function (it) { var l = layerOf(it); if (l) l.items.splice(l.items.indexOf(it), 1); }); if (sel.boxes.length) BX.remove(sel.boxes); setSel(null); done(); return; }
       if (act === 'dup') {
         var map = {}, copies = sel.items.map(function (it) {
           var c = JSON.parse(JSON.stringify(it)); c.id = uid(it.t);
@@ -508,7 +546,8 @@
           eachPoint(c, function (q) { q[0] += 20; q[1] += 20; });
           (layerOf(it) || active()).items.push(c); return c;
         });
-        done(); setSel(copies); return;
+        var boxCopies = sel.boxes.length ? BX.dup(sel.boxes, 20, 20) : [];
+        done(); setSel(copies, boxCopies); return;
       }
       if (act === 'group') { var g = uid('g'); sel.items.slice().forEach(function (it) { own(it).g = g; }); commit(); renderBar(); return; }
       if (act === 'ungroup') { sel.items.slice().forEach(function (it) { delete own(it).g; }); commit(); renderBar(); return; }
@@ -526,7 +565,8 @@
     function startTransform(kind, p) {
       sel.items.slice().forEach(own);
       var b = sel.box;
-      drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }) };
+      drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }),
+        borig: sel.boxes.map(function (id) { return BX.rect(id); }) };
     }
     function applyTransform(p) {
       var d = drag, ang = 0, s = 1;
@@ -545,10 +585,28 @@
       sel.items.forEach(function (it, i) {
         var src = d.orig[i];
         if (it.t === 'f') it.d = src.d.map(function (ring) { return ring.map(map); });
-        else { it.p = src.p.map(function (q) { var m = map(q); return [m[0], m[1], q[2]]; }); if (d.kind === 'scale') it.s = src.s * s; }
+        else { it.p = src.p.map(function (q) { var m = map(q); var o2 = [m[0], m[1], q[2]]; if (q[3] != null) o2.push(q[3]); return o2; }); if (d.kind === 'scale') it.s = src.s * s; }
         invalidate(it);
       });
+      // Text boxes move with it: their corner follows (turning moves them round the middle); scaling changes their width.
+      sel.boxes.forEach(function (id, i) {
+        var r0 = d.borig[i]; if (!r0) return;
+        if (d.kind === 'rotate') { var c0 = map([r0.x + r0.w / 2, r0.y + r0.h / 2]); BX.place(id, c0[0] - r0.w / 2, c0[1] - r0.h / 2); }
+        else { var q = map([r0.x, r0.y]); BX.place(id, q[0], q[1], d.kind === 'scale' ? Math.max(60, r0.w * s) : null); }
+      });
       refreshBox(); patch(sel.items);
+    }
+
+    // A pen point as it is kept: its width from pressure (through the pressure curve) and tilt, and, when pressure
+    // or tilt is set to change the ink's strength, that strength. Input: [x, y, pressure, tilt 0 (upright)–1 (flat)].
+    function shapePt(q, isPen) {
+      if (!isPen) return [q[0], q[1], q[2]];
+      var pen = opt.pen, t = q[3] || 0;
+      var g = pen.pc === 'soft' ? 0.55 : pen.pc === 'firm' ? 1.8 : 1;
+      var pc = Math.pow(Math.max(0.01, Math.min(1, q[2] == null ? 0.5 : q[2])), g);
+      var out = [q[0], q[1], Math.max(0.03, Math.min(1, pc + (pen.tw || 0) * t * 0.7))];
+      if (pen.po || pen.to) out.push(Math.max(0.06, Math.min(1, 1 - (pen.po || 0) * (1 - pc) - (pen.to || 0) * t * 0.85)));
+      return out;
     }
 
     // ---- Pointer input (positions are note coordinates) ----
@@ -561,9 +619,10 @@
       if (tool === 'pen') {
         var L = active();
         if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
-        var pen = opt.pen, it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [p] };
+        var pen = opt.pen, isPen = ev.pointerType === 'pen';
+        var it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [shapePt(p, isPen)] };
         if (pen.st != null) it.st = pen.st;
-        if (ev.pointerType === 'pen') it.f = 1;
+        if (isPen) { it.f = 1; if (pen.th != null) it.th = pen.th; }
         drag = { stroke: it, layer: L };
         startLive(drag); liveSoon();
         return true;
@@ -584,13 +643,13 @@
       }
       if (drag.kind) { applyTransform(p); return; }
       if (drag.stroke) {
-        var sp = drag.stroke.p;
-        (pts || [p]).forEach(function (q) {
+        var sp = drag.stroke.p, isPen = !!drag.stroke.f;
+        (pts || [p]).map(function (q) { return shapePt(q, isPen); }).forEach(function (q) {
           var last = sp[sp.length - 1];
           if (last && Math.abs(q[0] - last[0]) + Math.abs(q[1] - last[1]) < 0.15 / Z()) { last[2] = Math.max(last[2], q[2]); return; } // no movement
           sp.push(q);
         });
-        drag.pred = pred && pred.length ? pred.slice(-2) : null;
+        drag.pred = pred && pred.length ? pred.slice(-2).map(function (q) { return shapePt(q, isPen); }) : null;
         liveSoon();
         return;
       }
@@ -617,7 +676,7 @@
       if (d.kind) { refreshBox(); flushPatch(); commit(); return; }
       if (d.stroke) {
         cancelAnimationFrame(liveRaf); liveRaf = 0;
-        if (d.stroke.p.length === 1) d.stroke.p.push([p[0] + 0.4, p[1] + 0.4, p[2]]);
+        if (d.stroke.p.length === 1) { var p0 = d.stroke.p[0]; d.stroke.p.push([p0[0] + 0.4, p0[1] + 0.4].concat(p0.slice(2))); }
         d.layer.items.push(d.stroke); invalidate(d.stroke);
         addEl(d.layer, d.stroke);
         // Take the live stroke away once the saved one is on screen (two frames), unless a new stroke has begun.
@@ -644,6 +703,7 @@
             if (!editable(layers[li])) continue;
             for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8 / Z())) { hit = layers[li].items[j]; break; }
           }
+          if (!hit && BX) { var bh = BX.at(p[0], p[1]); if (bh) { setSel([], [bh]); return; } }
           setSel(hit ? [hit] : null); return;
         }
         var picked = [];
@@ -655,7 +715,7 @@
             if (n && inside / n >= 0.5) picked.push(it);
           });
         });
-        setSel(picked.length ? picked : null);
+        setSel(picked, BX ? BX.pick(poly, inPoly) : []);
       }
     };
     self.cancel = function () {
