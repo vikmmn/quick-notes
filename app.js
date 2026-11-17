@@ -804,7 +804,12 @@
       html = G(chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap')) +
         G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
     } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
+    var NAMES = { type: 'Type', pen: 'Pen', erase: 'Erase', lasso: 'Lasso', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
+    if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
+      '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
+    var pd = $('tools').querySelector('.pdot'); if (pd) pd.style.background = INKOPT.pen.c === 'ink' ? 'var(--ink)' : INKOPT.pen.c;
+    placeOpts();
     updatePenQuick();
   }
   // The pen size control on the page: shown while the pen tool is on, or in Type mode once a pen has been used
@@ -830,16 +835,37 @@
     $('tools').classList.toggle('hidden', !on);
     $('toolsBtn').setAttribute('aria-pressed', on ? 'true' : 'false');
     if (!on && PREF.tool !== 'type') setTool('type');
-    if (!on) $('layersPanel').classList.add('hidden');
+    if (!on) { $('layersPanel').classList.add('hidden'); layersBtn(); showOpts(false); }
     if (S.canvas) requestAnimationFrame(S.canvas.relayout);
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
   setTimeout(function () { showTools(PREF.showTools); }, 0);
+  // The settings card opens beside the tool, when the chosen tool is tapped again.
+  function placeOpts() {
+    var on = $('tools').querySelector('.tool[aria-pressed="true"]'), card = $('penOpts');
+    card.style.top = on ? Math.max(0, on.offsetTop - $('tools').querySelector('.tool-row').scrollTop - 8) + 'px' : '0px';
+  }
+  function showOpts(on) {
+    $('tools').classList.toggle('opts', !!on);
+    if (on) { placeOpts(); if (!$('layersPanel').classList.contains('hidden')) { $('layersPanel').classList.add('hidden'); layersBtn(); } }
+  }
+  function setSide(left) { PREF.toolsLeft = !!left; savePref(); $('tools').classList.toggle('left', !!left); if (!$('layersPanel').classList.contains('hidden')) renderLayers(); }
+  setSide(PREF.toolsLeft);
+  document.addEventListener('pointerdown', function (e) {
+    if ($('tools').classList.contains('opts') && !e.target.closest('#tools')) showOpts(false);
+  }, true);
   $('tools').addEventListener('click', function (e) {
     var b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.tool) return setTool(b.dataset.tool);
+    if (b.dataset.act === 'closeopts') return showOpts(false);
+    if (b.dataset.act === 'side') return setSide(!PREF.toolsLeft);
+    if (b.dataset.tool) {
+      if (b.dataset.tool === PREF.tool) return showOpts(!$('tools').classList.contains('opts'));
+      setTool(b.dataset.tool); showOpts(false);
+      if (!PREF.optsHint && $('penOpts').innerHTML) { PREF.optsHint = true; savePref(); toast('Tap the tool again for its settings.', null, null, 3000); }
+      return;
+    }
     if (b.dataset.finger) {
       PREF.finger = b.dataset.finger === 'auto' ? '' : b.dataset.finger; savePref();
       toast(b.dataset.finger === 'draw' ? 'Your finger draws. Two fingers still move and zoom the page.' : b.dataset.finger === 'scroll' ? 'Your finger moves the page; only the pen draws.' : 'Your finger draws until you use a pen.', null, null, 3000);
@@ -883,7 +909,8 @@
   }, true);
 
   // ---------- Layers panel ----------
-  function toggleLayers() { var p = $('layersPanel'); p.classList.toggle('hidden'); if (!p.classList.contains('hidden')) renderLayers(); }
+  function layersBtn() { var b = $('tools').querySelector('[data-act="layers"]'); if (b) b.setAttribute('aria-pressed', !$('layersPanel').classList.contains('hidden')); }
+  function toggleLayers() { var p = $('layersPanel'); p.classList.toggle('hidden'); if (!p.classList.contains('hidden')) renderLayers(); layersBtn(); }
   var LIC = {
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.2 4.1M6.6 6.6A17 17 0 002 12s3.6 7 10 7a9.8 9.8 0 005.4-1.6M9.9 9.9a3 3 0 004.2 4.2"/>',
@@ -899,7 +926,11 @@
   function renderLayers() {
     var p = $('layersPanel');
     if (!S.canvas || p.classList.contains('hidden')) return;
-    p.style.top = Math.round($('tools').getBoundingClientRect().bottom + 6) + 'px';
+    var rail = $('tools').querySelector('.tool-row').getBoundingClientRect();
+    p.style.top = Math.round(rail.top) + 'px';
+    if (PREF.toolsLeft) { p.style.left = Math.round(rail.right + 8) + 'px'; p.style.right = 'auto'; }
+    else { p.style.right = Math.round(innerWidth - rail.left + 8) + 'px'; p.style.left = 'auto'; }
+    showOpts(false);
     var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(64, 44);
     p.innerHTML = '<div class="lhead"><b>Layers</b>' + lic('plus', 'data-lo="add"', 'Add a layer', 'ladd') + lic('close', 'data-lo="close"', 'Close') + '</div>' +
       list.map(function (l, i) {
@@ -922,7 +953,7 @@
   $('layersPanel').addEventListener('click', function (e) {
     var b = e.target.closest('[data-lo]'); if (!b || !S.canvas) return;
     var op = b.dataset.lo, row = b.closest('[data-id]'), id = row && row.dataset.id, eng = S.canvas.ink();
-    if (op === 'close') { $('layersPanel').classList.add('hidden'); return; }
+    if (op === 'close') { $('layersPanel').classList.add('hidden'); layersBtn(); return; }
     if (op === 'add') { eng.layerOp('add', eng.layers().filter(function (l) { return l.active; })[0].id); return renderLayers(); }
     if (op === 'rename') {
       var cur = eng.layers().filter(function (l) { return l.id === id; })[0];
@@ -1352,6 +1383,10 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Tools at the side', d: 'The drawing tools are now a slim floating column at the side of the page. Tap a tool to use it; tap it again for its settings, in a small card beside it. ⇄ in the card moves the tools to the other side.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="184" y="24" width="24" height="92" rx="12" fill="' + SOFT + '" stroke="' + RULE + '"/>' +
+        '<circle cx="196" cy="40" r="7" fill="' + A + '"/><circle cx="196" cy="60" r="4" fill="' + MUT + '"/><circle cx="196" cy="78" r="4" fill="' + MUT + '"/><circle cx="196" cy="96" r="4" fill="' + MUT + '"/>' +
+        '<rect x="104" y="28" width="72" height="50" rx="10" fill="' + SURF + '" stroke="' + A + '"/><path d="M114 44h40M114 56h52M114 68h30" stroke="' + MUT + '" stroke-width="4" stroke-linecap="round"/>') },
     { t: 'Drawing keeps up with your pen', d: 'Strokes now appear as fast as you write, and erasing no longer stalls on big drawings. A new Smoothing slider under Pen steadies shaky lines.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M44 92c18-40 34-46 50-20s30 22 46-6 32-30 56 0" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>' +
         '<path d="M190 60l12-12 6 6-12 12z" fill="' + A + '"/><path d="M48 108h60" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/><circle cx="84" cy="108" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/>') },

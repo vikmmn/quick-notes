@@ -151,20 +151,35 @@
   #editorView { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--paper);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
   #editorView .bar { position: static; }
-  /* Drawing tools: the tools in one row, the chosen tool's settings in a second row under it */
-  .tools { display: flex; flex-direction: column; border-bottom: 1px solid var(--rule); flex: none; }
-  .tool-row { display: flex; gap: 2px; padding: 0 4px 2px; }
-  .tools .tool { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; min-height: 48px;
-    border-color: transparent; background: transparent; font-size: 11.5px; color: var(--ink); border-radius: 12px; white-space: nowrap; }
+  /* Drawing tools: a slim floating rail of icons at the side (like Concepts); the chosen tool's settings open
+     in a small card beside it when the tool is tapped again */
+  .tools { position: fixed; z-index: 30; right: calc(10px + env(safe-area-inset-right)); top: calc(66px + env(safe-area-inset-top)); display: block; }
+  .tools.left { right: auto; left: calc(10px + env(safe-area-inset-left)); }
+  .tool-row { display: flex; flex-direction: column; gap: 2px; padding: 5px; width: 50px; box-sizing: border-box; max-height: calc(100vh - 230px); overflow-y: auto; scrollbar-width: none;
+    background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--rule); border-radius: 25px; box-shadow: 0 6px 22px rgba(0,0,0,.28); }
+  .tools .tool { position: relative; width: 40px; height: 40px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; background: transparent; color: var(--ink); border-radius: 50%; flex: none; }
+  .tools .tool[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .tools .tool[data-act="layers"][aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); }
   .tools .tool svg.i { width: 21px; height: 21px; }
-  .tool-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; padding: 6px 10px 8px; border-top: 1px solid var(--rule); background: var(--field); }
-  .tool-opts:empty { display: none; }
+  .tools .tool .tl { display: none; }
+  .tools .tool .pdot { position: absolute; right: 4px; bottom: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--ink); border: 1.5px solid var(--surface); }
+  .tool-opts { position: absolute; top: 0; right: calc(100% + 8px); width: min(330px, calc(100vw - 86px)); box-sizing: border-box; max-height: calc(100vh - 100px); overflow-y: auto;
+    display: none; flex-wrap: wrap; align-items: center; gap: 8px 4px; padding: 8px 12px 12px; background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.3); animation: optsIn .14s ease-out; }
+  .tools.left .tool-opts { right: auto; left: calc(100% + 8px); }
+  @keyframes optsIn { from { opacity: 0; transform: translateX(6px) scale(.98); } to { opacity: 1; transform: none; } }
+  .tools.opts .tool-opts { display: flex; }
+  .tool-opts:empty { display: none !important; }
+  .tool-opts .ohead { display: flex; align-items: center; width: 100%; gap: 6px; margin-bottom: 2px; }
+  .tool-opts .ohead b { flex: 1; font: 600 12px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .tool-opts .ohead button { width: 30px; height: 30px; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 18px; border-radius: 50%; }
   .tool-opts .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 100%; }
-  .tool-opts .grp.half { width: auto; flex: 1 1 160px; }
+  .tool-opts .grp.half { width: 100%; }
   .tool-opts .swatch { width: 26px; height: 26px; margin: 0; }
-  .tool-opts .ochip { background: var(--surface) !important; }
+  .tool-opts .ochip { background: var(--field) !important; }
   .tool-opts .ochip[aria-pressed="true"] { background: var(--accent-soft) !important; }
-  .tool-opts .oslider { flex: 1 1 140px; padding: 0 2px; }
+  .tool-opts .oslider { flex: 1 1 100%; padding: 0 2px; display: flex; }
   .tool-opts .oslider input[type=range] { flex: 1; width: auto; min-width: 70px; }
   .tool-opts .where { white-space: normal !important; padding: 0 2px !important; }
   .tools .sep { display: none; }
@@ -464,14 +479,14 @@
   </header>
   <div class="tools hidden" id="tools">
     <div class="tool-row">
-    <button class="tool" type="button" data-tool="type" aria-pressed="true"><svg class="i"><use href="#i-type"/></svg>Type</button>
-    <button class="tool" type="button" data-tool="pen" aria-pressed="false"><svg class="i"><use href="#i-pen"/></svg>Pen</button>
-    <button class="tool" type="button" data-tool="erase" aria-pressed="false"><svg class="i"><use href="#i-eraser"/></svg>Erase</button>
-    <button class="tool" type="button" data-tool="lasso" aria-pressed="false"><svg class="i"><use href="#i-lasso"/></svg>Lasso</button>
-    <button class="tool" type="button" data-tool="nudge" aria-pressed="false"><svg class="i"><use href="#i-nudge"/></svg>Nudge / Smooth</button>
-    <button class="tool" type="button" data-tool="fill" aria-pressed="false"><svg class="i"><use href="#i-fill"/></svg>Fill</button>
-    <button class="tool" type="button" data-act="layers"><svg class="i"><use href="#i-layers"/></svg>Layers</button>
-    <button class="tool" type="button" data-tool="select" aria-pressed="false"><svg class="i"><use href="#i-move"/></svg>Move</button>
+    <button class="tool" type="button" data-tool="type" aria-pressed="true" title="Type" aria-label="Type"><svg class="i"><use href="#i-type"/></svg><span class="tl">Type</span></button>
+    <button class="tool" type="button" data-tool="pen" aria-pressed="false" title="Pen" aria-label="Pen"><svg class="i"><use href="#i-pen"/></svg><span class="tl">Pen</span><i class="pdot"></i></button>
+    <button class="tool" type="button" data-tool="erase" aria-pressed="false" title="Erase" aria-label="Erase"><svg class="i"><use href="#i-eraser"/></svg><span class="tl">Erase</span></button>
+    <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Lasso" aria-label="Lasso"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Lasso</span></button>
+    <button class="tool" type="button" data-tool="nudge" aria-pressed="false" title="Nudge / Smooth" aria-label="Nudge / Smooth"><svg class="i"><use href="#i-nudge"/></svg><span class="tl">Nudge / Smooth</span></button>
+    <button class="tool" type="button" data-tool="fill" aria-pressed="false" title="Fill" aria-label="Fill"><svg class="i"><use href="#i-fill"/></svg><span class="tl">Fill</span></button>
+    <button class="tool" type="button" data-act="layers" title="Layers" aria-label="Layers"><svg class="i"><use href="#i-layers"/></svg><span class="tl">Layers</span></button>
+    <button class="tool" type="button" data-tool="select" aria-pressed="false" title="Move" aria-label="Move"><svg class="i"><use href="#i-move"/></svg><span class="tl">Move</span></button>
     </div>
     <div id="penOpts" class="tool-opts"></div>
   </div>
