@@ -1,4 +1,4 @@
-// Quick Notes: search across every note on this device. Free, instant and offline.
+// Offshoot: search across every note on this device. Free, instant and offline.
 // Matches word forms (plan, plans, planning), small typos (recieve -> receive), "exact phrases",
 // and ranks titles and labels above body text and recent notes above old ones.
 (function () {

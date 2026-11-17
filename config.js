@@ -1,4 +1,4 @@
-// Settings for Quick Notes.
+// Settings for Offshoot.
 window.APP_CONFIG = {
   // The Google sign-in key, shared with 2nd Brain Notes. It is approved for https://vikmmn.github.io only.
   CLIENT_ID: '171371799928-o231cvpnqtpln2gqekntfqgse9t2g8s5.apps.googleusercontent.com',
@@ -6,9 +6,9 @@ window.APP_CONFIG = {
   // The address the real app runs at. Anywhere else (for example inside Claude) it opens in demo mode.
   APP_ORIGIN: 'https://vikmmn.github.io',
 
-  // Everyone's notes go to a "Quick Notes" folder in their own Drive, made on first sign-in (marked so the app finds it
+  // Everyone's notes go to a "Offshoot" folder in their own Drive, made on first sign-in (marked so the app finds it
   // again on any device). New notes go to its Inbox.
-  ROOT_FOLDER_NAME: 'Quick Notes',
+  ROOT_FOLDER_NAME: 'Offshoot',
   SUBFOLDERS: ['Inbox'],
   // Notes made before that went to Notes inside this "03. Readables" folder; if that folder is there, it stays the home.
   READABLES_FOLDER_ID: '1L3bcLlOXz8fth-ID5VWIvAOX1kXm4cSh',
@@ -18,5 +18,5 @@ window.APP_CONFIG = {
   TOKEN_SERVER: 'https://quick-notes-signin.vikrammaan-s-trehan.workers.dev',
 
   // Bump together with VERSION in sw.js for every approved release.
-  VERSION: '3.10.0'
+  VERSION: '3.11.0'
 };

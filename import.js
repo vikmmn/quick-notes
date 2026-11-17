@@ -1,4 +1,4 @@
-// Quick Notes: import everything from a Google Keep export (Google Takeout) into Quick Notes › Keep.
+// Offshoot: import everything from a Google Keep export (Google Takeout) into Offshoot › Keep.
 // The export is read straight from Drive a piece at a time (or from zips chosen on this device), so a
 // 1 GB+ export never has to be downloaded whole. Safe to run again: notes and files already there are skipped.
 (function () {
@@ -123,12 +123,12 @@
       '<li>' + c.att + ' notes with attachments: <b>' + att + ' files, ' + mb(S.index.bytes) + '</b> (images, drawings, voice recordings)</li>' +
       '<li>' + c.links + ' notes with saved links</li>' +
       '<li>' + Object.keys(labels).length + ' labels' + (Object.keys(labels).length ? ': ' + Object.keys(labels).sort().map(function (l) { return esc(l) + ' (' + labels[l] + ')'; }).join(', ') : '') + '</li></ul>' +
-      '<p class="muted">Everything goes to Quick Notes › Keep. Archived notes go to Keep › Archive, notes from Keep\'s Trash to Keep › Trash, and files to Keep › Attachments, linked from their note.</p>';
+      '<p class="muted">Everything goes to Offshoot › Keep. Archived notes go to Keep › Archive, notes from Keep\'s Trash to Keep › Trash, and files to Keep › Attachments, linked from their note.</p>';
     $('step3').classList.remove('hidden');
     say('');
   }
 
-  // ---------- Turning a Keep note into a Quick Notes Markdown file ----------
+  // ---------- Turning a Keep note into a Offshoot Markdown file ----------
   function firstWords(title, text) {
     var s = (title || '').trim() || String(text || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean)[0] || '';
     s = s.split(/\s+/).slice(0, 8).join(' ').replace(/[\\/:*?"<>|#\[\]^]/g, '-').replace(/\s+/g, ' ').trim();
@@ -279,9 +279,9 @@
       await Promise.all(Array.from({ length: opts.files ? 8 : 16 }, worker));
       show(S.stop ? 'Stopped. Run it again any time to carry on where it stopped.' : 'Done.');
       $('result').innerHTML = (S.stop ? '<p><b>Stopped.</b> Run the import again to carry on; what is already there is skipped.</p>' :
-        '<p><b>Import finished.</b> Open Quick Notes and the notes appear in Keep as it syncs. Check a few before you clear out Google Keep.</p>') +
+        '<p><b>Import finished.</b> Open Offshoot and the notes appear in Keep as it syncs. Check a few before you clear out Google Keep.</p>') +
         (log.length ? '<details open><summary>' + log.length + ' problem' + (log.length > 1 ? 's' : '') + '</summary><ul>' + log.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul></details>' : '') +
-        '<p><a class="button" href="./">Open Quick Notes</a></p>';
+        '<p><a class="button" href="./">Open Offshoot</a></p>';
     } catch (e) { say(e.message || String(e), true); }
     await holdScreen(false);
     $('importBtn').disabled = false; $('scanBtn').disabled = false;
