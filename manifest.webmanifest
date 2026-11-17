@@ -1,6 +1,6 @@
 {
-  "name": "Serendip",
-  "short_name": "Serendip",
+  "name": "Serendipity",
+  "short_name": "Serendipity",
   "description": "An endless sheet for quick notes, drawings and ideas that find each other. Saved as Markdown files in your Google Drive.",
   "id": "./",
   "start_url": "./",
