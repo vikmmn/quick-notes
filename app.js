@@ -923,6 +923,9 @@
     rename: '<path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/>', del: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
   };
   function lic(name, attrs, label, cls) { return '<button type="button" class="lic' + (cls ? ' ' + cls : '') + '" ' + attrs + ' aria-label="' + label + '" title="' + label + '"><svg viewBox="0 0 24 24">' + LIC[name] + '</svg></button>'; }
+  // Layers, like Affinity: tap a layer to draw on it, tap it again for its controls; tap and hold to pick several
+  // (then group, hide, merge or delete them); hold and drag to move a layer, into a group or out of one.
+  S.lsel = null; S.lopen = null; S.gclosed = {};
   function renderLayers() {
     var p = $('layersPanel');
     if (!S.canvas || p.classList.contains('hidden')) return;
@@ -931,39 +934,161 @@
     if (PREF.toolsLeft) { p.style.left = Math.round(rail.right + 8) + 'px'; p.style.right = 'auto'; }
     else { p.style.right = Math.round(innerWidth - rail.left + 8) + 'px'; p.style.left = 'auto'; }
     showOpts(false);
-    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(64, 44);
-    p.innerHTML = '<div class="lhead"><b>Layers</b>' + lic('plus', 'data-lo="add"', 'Add a layer', 'ladd') + lic('close', 'data-lo="close"', 'Close') + '</div>' +
-      list.map(function (l, i) {
-        var info = l.n + (l.n === 1 ? ' item' : ' items') + (l.op < 1 ? ' · ' + Math.round(l.op * 100) + '%' : '') + (l.blend !== 'normal' ? ' · ' + l.blend : '') + (l.clip ? ' · masked' : '');
-        var card = '<div class="lcard' + (l.active ? ' on' : '') + (l.vis ? '' : ' hid') + '" data-id="' + l.id + '" data-lo="active">' +
-          '<div class="lthumb">' + (th[l.id] || '') + '</div>' +
-          '<div class="lmeta"><b>' + esc(l.name) + '</b><small>' + info + '</small></div>' +
-          lic(l.vis ? 'eye' : 'eyeOff', 'data-lo="vis"', l.vis ? 'Hide' : 'Show', l.vis ? '' : 'off') +
-          lic(l.lock ? 'lock' : 'unlock', 'data-lo="lock"', l.lock ? 'Unlock' : 'Lock', l.lock ? '' : 'off') + '</div>';
-        if (l.active) card += '<div class="ltools" data-id="' + l.id + '">' +
-          '<label class="lop">Opacity<input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop><output>' + Math.round(l.op * 100) + '%</output></label>' +
-          '<div class="lrow2"><select data-lblend aria-label="Blend">' + blends.map(function (b) { return '<option value="' + b + '"' + (b === l.blend ? ' selected' : '') + '>' + b.replace('-', ' ') + '</option>'; }).join('') + '</select>' +
-          '<button type="button" class="lmask" data-lo="clip" aria-pressed="' + !!l.clip + '"' + (i === list.length - 1 ? ' disabled' : '') + ' title="Only show this layer where the layer below has paint">Mask</button></div>' +
-          '<div class="lacts">' + lic('up', 'data-lo="up"' + (i === 0 ? ' disabled' : ''), 'Move up') + lic('down', 'data-lo="down"' + (i === list.length - 1 ? ' disabled' : ''), 'Move down') +
-          lic('dup', 'data-lo="dup"', 'Duplicate') + lic('merge', 'data-lo="merge"' + (i === list.length - 1 ? ' disabled' : ''), 'Merge down') +
-          lic('rename', 'data-lo="rename"', 'Rename') + lic('del', 'data-lo="delete"', 'Delete', 'danger') + '</div></div>';
-        return card;
-      }).join('');
+    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(64, 44), tc = S.canvas.textCounts ? S.canvas.textCounts() : {};
+    var sel = S.lsel, html = '';
+    if (sel) {
+      var ids = Object.keys(sel), anyG = list.some(function (l) { return sel[l.id] && l.gid; });
+      html += '<div class="lhead lselbar"><b>' + ids.length + ' selected</b>' + lic('close', 'data-lo="selcancel"', 'Done') + '</div>' +
+        '<div class="lselacts">' +
+        '<button type="button" data-lo="sgroup">Group</button>' +
+        (anyG ? '<button type="button" data-lo="sungroup">Ungroup</button>' : '') +
+        '<button type="button" data-lo="svis">Show/hide</button>' +
+        '<button type="button" data-lo="smerge"' + (ids.length < 2 ? ' disabled' : '') + '>Merge</button>' +
+        '<button type="button" data-lo="sdelete" class="danger">Delete</button></div>';
+    } else html += '<div class="lhead"><b>Layers</b>' + lic('plus', 'data-lo="add"', 'Add a layer', 'ladd') + lic('close', 'data-lo="close"', 'Close') + '</div>';
+    function card(l, i, inGroup) {
+      var parts = [];
+      if (l.n) parts.push(l.n + (l.n === 1 ? ' drawing' : ' drawings'));
+      if (tc[l.id]) parts.push(tc[l.id] + ' text');
+      if (!parts.length) parts.push('empty');
+      if (l.op < 1) parts.push(Math.round(l.op * 100) + '%');
+      if (l.blend !== 'normal') parts.push(l.blend);
+      if (l.clip) parts.push('masked');
+      var s = '<div class="lcard' + (l.active ? ' on' : '') + (l.vis ? '' : ' hid') + (inGroup ? ' ing' : '') + (sel && sel[l.id] ? ' picked' : '') + '" data-id="' + l.id + '" data-gid="' + (l.gid || '') + '">' +
+        (sel ? '<span class="lpick">' + (sel[l.id] ? '✓' : '') + '</span>' : '') +
+        '<div class="lthumb">' + (th[l.id] || '') + '</div>' +
+        '<div class="lmeta"><b>' + esc(l.name) + '</b><small>' + parts.join(' · ') + '</small></div>' +
+        (sel ? '' : lic(l.vis ? 'eye' : 'eyeOff', 'data-lo="vis"', l.vis ? 'Hide' : 'Show', l.vis ? '' : 'off') +
+          lic(l.lock ? 'lock' : 'unlock', 'data-lo="lock"', l.lock ? 'Unlock' : 'Lock', l.lock ? '' : 'off')) + '</div>';
+      if (!sel && l.active && S.lopen === l.id) s += '<div class="ltools" data-id="' + l.id + '">' +
+        '<label class="lop">Opacity<input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop><output>' + Math.round(l.op * 100) + '%</output></label>' +
+        '<div class="lrow2"><select data-lblend aria-label="Blend">' + blends.map(function (b) { return '<option value="' + b + '"' + (b === l.blend ? ' selected' : '') + '>' + b.replace('-', ' ') + '</option>'; }).join('') + '</select>' +
+        '<button type="button" class="lmask" data-lo="clip" aria-pressed="' + !!l.clip + '"' + (i === list.length - 1 ? ' disabled' : '') + ' title="Only show this layer where the layer below has paint">Mask</button></div>' +
+        '<div class="lacts">' + lic('up', 'data-lo="up"' + (i === 0 ? ' disabled' : ''), 'Move up') + lic('down', 'data-lo="down"' + (i === list.length - 1 ? ' disabled' : ''), 'Move down') +
+        lic('dup', 'data-lo="dup"', 'Duplicate') + lic('merge', 'data-lo="merge"' + (i === list.length - 1 ? ' disabled' : ''), 'Merge down') +
+        lic('rename', 'data-lo="rename"', 'Rename') + lic('del', 'data-lo="delete"', 'Delete', 'danger') + '</div></div>';
+      return s;
+    }
+    html += '<div class="llist">';
+    for (var i = 0; i < list.length; i++) {
+      var l = list[i];
+      if (l.gid) {
+        var gid = l.gid, members = [], j = i;
+        while (j < list.length && list[j].gid === gid) { members.push(j); j++; }
+        var allHid = members.every(function (k) { return !list[k].vis; }), allLock = members.every(function (k) { return list[k].lock; }), closed = !!S.gclosed[gid];
+        html += '<div class="lgroup" data-gid="' + gid + '"><button type="button" class="lgtw" data-lo="gtoggle" aria-label="' + (closed ? 'Open group' : 'Close group') + '">' + (closed ? '▸' : '▾') + '</button>' +
+          '<b data-lo="grename" title="Rename group">' + esc(l.gname || 'Group') + '</b><small>' + members.length + '</small>' +
+          (sel ? '' : lic(allHid ? 'eyeOff' : 'eye', 'data-lo="gvis"', allHid ? 'Show group' : 'Hide group', allHid ? 'off' : '') + lic(allLock ? 'lock' : 'unlock', 'data-lo="glock"', allLock ? 'Unlock group' : 'Lock group', allLock ? '' : 'off')) + '</div>';
+        if (!closed) members.forEach(function (k) { html += card(list[k], k, true); });
+        i = j - 1;
+      } else html += card(l, i, false);
+    }
+    html += '</div>' + (sel ? '' : '<p class="lhint">Tap a layer again for its settings. Hold to pick several; hold and drag to move it.</p>');
+    p.innerHTML = html;
   }
   $('layersPanel').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-lo]'); if (!b || !S.canvas) return;
-    var op = b.dataset.lo, row = b.closest('[data-id]'), id = row && row.dataset.id, eng = S.canvas.ink();
+    if (Date.now() - (S.lheldAt || 0) < 400) return; // the end of a hold, not a tap
+    var b = e.target.closest('[data-lo]'), eng = S.canvas && S.canvas.ink(); if (!eng) return;
+    var cardEl = e.target.closest('.lcard');
+    if (!b && cardEl) { // a tap on a layer
+      var cid = cardEl.dataset.id;
+      if (S.lsel) { if (S.lsel[cid]) delete S.lsel[cid]; else S.lsel[cid] = true; if (!Object.keys(S.lsel).length) S.lsel = null; return renderLayers(); }
+      var isActive = eng.layers().some(function (l) { return l.id === cid && l.active; });
+      if (isActive) S.lopen = S.lopen === cid ? null : cid; else { eng.layerOp('active', cid); S.lopen = null; }
+      return renderLayers();
+    }
+    if (!b) return;
+    var op = b.dataset.lo, row = b.closest('[data-id]'), id = row && row.dataset.id, grp = b.closest('[data-gid]'), gid = grp && grp.dataset.gid;
+    var members = function () { return eng.layers().filter(function (l) { return l.gid === gid; }).map(function (l) { return l.id; }); };
     if (op === 'close') { $('layersPanel').classList.add('hidden'); layersBtn(); return; }
     if (op === 'add') { eng.layerOp('add', eng.layers().filter(function (l) { return l.active; })[0].id); return renderLayers(); }
+    if (op === 'selcancel') { S.lsel = null; return renderLayers(); }
+    if (op === 'gtoggle') { S.gclosed[gid] = !S.gclosed[gid]; return renderLayers(); }
+    if (op === 'gvis') { eng.layersOp('vis', members()); return renderLayers(); }
+    if (op === 'glock') { eng.layersOp('lock', members()); return renderLayers(); }
+    if (op === 'grename' || op === 'sgroup') {
+      var ids = op === 'sgroup' ? Object.keys(S.lsel || {}) : members();
+      var ngroups = {}; eng.layers().forEach(function (l) { if (l.gid) ngroups[l.gid] = 1; });
+      var cur = op === 'sgroup' ? 'Group ' + (Object.keys(ngroups).length + 1) : (eng.layers().filter(function (l) { return l.gid === gid; })[0] || {}).gname;
+      openSheet('<form><h2>' + (op === 'sgroup' ? 'Group these layers' : 'Rename group') + '</h2><input type="text" name="nm" value="' + esc(cur || 'Group') + '" maxlength="40" required><div class="row"><button class="primary" type="submit">' + (op === 'sgroup' ? 'Group' : 'Rename') + '</button><button type="button" data-act="close">Cancel</button></div></form>',
+        null, function (ev) { eng.layersOp(op === 'sgroup' ? 'group' : 'gname', ids, ev.target.nm.value); if (op === 'sgroup') S.lsel = null; closeSheet(); renderLayers(); });
+      return;
+    }
+    if (op === 'sungroup') { eng.layersOp('ungroup', Object.keys(S.lsel)); S.lsel = null; return renderLayers(); }
+    if (op === 'svis') { eng.layersOp('vis', Object.keys(S.lsel)); return renderLayers(); }
+    if (op === 'smerge') { eng.layersOp('merge', Object.keys(S.lsel)); S.lsel = null; return renderLayers(); }
+    if (op === 'sdelete') {
+      var del = Object.keys(S.lsel);
+      openSheet('<h2>Delete ' + del.length + (del.length === 1 ? ' layer' : ' layers') + '?</h2><p>Everything drawn on them goes too; their text moves to the bottom layer. Undo brings it back.</p><div class="row"><button class="primary danger" type="button" data-act="del">Delete</button><button type="button" data-act="close">Cancel</button></div>',
+        function (act) { if (act === 'del') { eng.layersOp('delete', del); S.lsel = null; closeSheet(); renderLayers(); } });
+      return;
+    }
     if (op === 'rename') {
-      var cur = eng.layers().filter(function (l) { return l.id === id; })[0];
-      openSheet('<form><h2>Rename layer</h2><input type="text" name="nm" value="' + esc(cur.name) + '" maxlength="40" required><div class="row"><button class="primary" type="submit">Rename</button><button type="button" data-act="close">Cancel</button></div></form>',
+      var curL = eng.layers().filter(function (l) { return l.id === id; })[0];
+      openSheet('<form><h2>Rename layer</h2><input type="text" name="nm" value="' + esc(curL.name) + '" maxlength="40" required><div class="row"><button class="primary" type="submit">Rename</button><button type="button" data-act="close">Cancel</button></div></form>',
         null, function (ev) { eng.layerOp('name', id, ev.target.nm.value); closeSheet(); renderLayers(); });
       return;
     }
     if (op === 'delete' && eng.layers().filter(function (l) { return l.id === id; })[0].n && !confirmLayerDelete(id)) return;
     eng.layerOp(op, id); renderLayers();
   });
+  // Hold a layer: pick it (and then others with a tap); hold and drag: move it, into or out of a group.
+  (function () {
+    var hold = null, P = $('layersPanel');
+    P.addEventListener('pointerdown', function (e) {
+      var c = e.target.closest('.lcard'); if (!c || e.target.closest('[data-lo]') || S.lsel) return;
+      hold = { id: c.dataset.id, el: c, x: e.clientX, y: e.clientY, pid: e.pointerId, on: false, drag: false };
+      hold.timer = setTimeout(function () {
+        if (!hold) return;
+        hold.on = true; c.classList.add('held');
+        try { P.setPointerCapture(hold.pid); } catch (x) {}
+        if (navigator.vibrate) try { navigator.vibrate(12); } catch (x) {}
+      }, 420);
+    });
+    P.addEventListener('pointermove', function (e) {
+      if (!hold || e.pointerId !== hold.pid) return;
+      var dx = e.clientX - hold.x, dy = e.clientY - hold.y;
+      if (!hold.on) { if (Math.abs(dx) + Math.abs(dy) > 10) { clearTimeout(hold.timer); hold = null; } return; } // a scroll, not a hold
+      e.preventDefault();
+      if (!hold.drag && Math.abs(dy) > 6) { hold.drag = true; dragEl = hold.el; hold.el.classList.add('dragging'); }
+      if (hold.drag) { hold.el.style.transform = 'translateY(' + dy + 'px)'; markDrop(e.clientY); }
+    });
+    var dragEl = null;
+    function rows() { return Array.prototype.slice.call(P.querySelectorAll('.llist > .lcard, .llist > .lgroup')).filter(function (r) { return r !== dragEl; }); }
+    function target(y) { // where it would land: before which row, and in which group
+      var rs = rows(), before = null;
+      for (var i = 0; i < rs.length; i++) { var r = rs[i].getBoundingClientRect(); if (y < r.top + r.height / 2) { before = rs[i]; break; } }
+      var gid = before && before.classList.contains('lcard') ? before.dataset.gid : '';
+      return { before: before, gid: gid };
+    }
+    function markDrop(y) {
+      P.querySelectorAll('.dropline').forEach(function (d) { d.classList.remove('dropline', 'after'); });
+      var t = target(y);
+      if (t.before) t.before.classList.add('dropline'); else { var rs = rows(); if (rs.length) rs[rs.length - 1].classList.add('dropline', 'after'); }
+    }
+    function end(e) {
+      if (!hold || e.pointerId !== hold.pid) return;
+      clearTimeout(hold.timer);
+      var h = hold; hold = null;
+      if (!h.on) return;
+      S.lheldAt = Date.now();
+      h.el.classList.remove('held', 'dragging'); h.el.style.transform = '';
+      var eng = S.canvas && S.canvas.ink(); if (!eng) return;
+      if (!h.drag) { S.lsel = {}; S.lsel[h.id] = true; S.lopen = null; return renderLayers(); } // picking
+      var t = target(e.clientY); dragEl = null;
+      var list = eng.layers(), order = list.map(function (l) { return l.id; }).filter(function (x) { return x !== h.id; });
+      // Visual order is top first: count the layers above the drop point, then turn it into a place counted from the bottom.
+      var above;
+      if (!t.before) above = order.length;
+      else if (t.before.classList.contains('lgroup')) { var fm = list.filter(function (l) { return l.gid === t.before.dataset.gid && l.id !== h.id; })[0]; above = fm ? order.indexOf(fm.id) : order.length; }
+      else above = order.indexOf(t.before.dataset.id);
+      var gname = t.gid ? (list.filter(function (l) { return l.gid === t.gid; })[0] || {}).gname : null;
+      eng.moveLayer(h.id, order.length - above, t.gid || null, gname);
+      renderLayers();
+    }
+    P.addEventListener('pointerup', end);
+    P.addEventListener('pointercancel', end);
+  })();
   function confirmLayerDelete(id) {
     var eng = S.canvas.ink();
     openSheet('<h2>Delete this layer?</h2><p>Everything drawn on it goes too. Undo brings it back.</p><div class="row"><button class="primary danger" type="button" data-act="del">Delete layer</button><button type="button" data-act="close">Cancel</button></div>',
@@ -1390,7 +1515,7 @@
     { t: 'Drawing keeps up with your pen', d: 'Strokes now appear as fast as you write, and erasing no longer stalls on big drawings. A new Smoothing slider under Pen steadies shaky lines.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M44 92c18-40 34-46 50-20s30 22 46-6 32-30 56 0" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>' +
         '<path d="M190 60l12-12 6 6-12 12z" fill="' + A + '"/><path d="M48 108h60" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/><circle cx="84" cy="108" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/>') },
-    { t: 'Layers, made simpler', d: 'Each layer now shows a little picture of what is on it. Tap a layer to draw on it; its opacity, blend, mask and tools open right under it.',
+    { t: 'Layers, like Affinity', d: 'Tap a layer to draw on it; tap it again for its settings. Hold a layer to pick several, then group, hide, merge or delete them. Hold and drag to move a layer, into a group or out of one. Text belongs to a layer too: it hides, locks and fades with it.',
       a: art('<rect x="60" y="14" width="120" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="72" y="28" width="96" height="30" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="72" y="66" width="96" height="30" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/>' +
         '<rect x="78" y="33" width="30" height="20" rx="4" fill="' + SURF + '"/><path d="M82 48c6-8 10 2 16-6" stroke="' + INKC + '" stroke-width="2" fill="none"/><rect x="78" y="71" width="30" height="20" rx="4" fill="' + SOFT + '"/>') },
     { t: 'Double-tap to write, pen size at hand', d: 'Double-tap anywhere on the page with a finger to start typing there; the pen just writes. The pen size slider now sits on the page while you write. Under Pen › Finger, choose whether your finger draws or moves the page.',

@@ -113,12 +113,12 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { return { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; return o; })), ink: copyLayers(ink) }; }
     function sameAs(a, b) {
       if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
         var x = a.ink[i], y = b.ink[i];
-        if (x.id !== y.id || x.name !== y.name || x.vis !== y.vis || x.lock !== y.lock || x.op !== y.op || x.blend !== y.blend || x.clip !== y.clip || x.items.length !== y.items.length) return false;
+        if (x.id !== y.id || x.name !== y.name || x.gid !== y.gid || x.gname !== y.gname || x.vis !== y.vis || x.lock !== y.lock || x.op !== y.op || x.blend !== y.blend || x.clip !== y.clip || x.items.length !== y.items.length) return false;
         for (var j = 0; j < x.items.length; j++) if (x.items[j] !== y.items[j]) return false;
       }
       return true;
@@ -133,7 +133,31 @@
       future = [];
       hooks.history(hist.length > 1, false);
     }
+    // Text boxes belong to a drawing layer (the bottom one unless placed on another): hidden, locked and faded
+    // with it. (Text always shows above drawings.)
+    function layerOfBox(b) {
+      for (var i = 0; i < ink.length; i++) if (ink[i].id === b.l) return ink[i];
+      // Text without a layer (or whose layer was deleted) goes on the bottom one, and stays there once there are
+      // several layers (so moving layers around doesn't move the text to another one).
+      if (ink.length > 1) b.l = ink[0].id; else delete b.l;
+      return ink[0];
+    }
+    function applyBoxLayers() {
+      boxes.forEach(function (b) {
+        var e = editors[b.id], L = layerOfBox(b); if (!e || !L) return;
+        e.el.style.display = L.vis === false ? 'none' : '';
+        e.el.style.opacity = L.op == null || L.op === 1 ? '' : L.op;
+        e.el.classList.toggle('locked', !!L.lock);
+        if (e.ed.setEditable && e.lockState !== !!L.lock) { e.lockState = !!L.lock; e.ed.setEditable(!L.lock); }
+      });
+    }
+    self.textCounts = function () {
+      var out = {};
+      boxes.forEach(function (b) { if (!String(b.md || '').trim()) return; var L = layerOfBox(b); if (L) out[L.id] = (out[L.id] || 0) + 1; });
+      return out;
+    };
     function changed(kind) {
+      applyBoxLayers();
       hooks.change(kind);
       if (kind === 'text') { clearTimeout(textTimer); textTimer = setTimeout(record, 700); }
       else record();
@@ -222,6 +246,8 @@
     function addBox(x, y) {
       var w = Math.max(160, Math.min(320, autoWidth() - x));
       var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, x), y: Math.max(0, y), w: w, md: '' };
+      var al = eng && eng.activeLayer ? eng.activeLayer() : null;
+      if (al && al !== ink[0].id) b.l = al; // new text goes on the layer being worked on
       boxes.push(b);
       var e = mountBox(b);
       layout();
@@ -233,6 +259,7 @@
       editors = {};
       boxes.forEach(mountBox);
       eng.render();
+      applyBoxLayers();
       layout();
     }
 
