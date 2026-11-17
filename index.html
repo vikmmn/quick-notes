@@ -393,7 +393,12 @@
   /* Pen size, on the page: always at hand while writing, without opening the tools */
   #penQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); width: 40px; padding: 10px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 8px;
     background: var(--surface); border: 1px solid var(--rule); border-radius: 20px; box-shadow: var(--shadow); }
-  #penQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  #penQuick.lift, #toolQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  #penQuick .pq-dot.aa { width: 30px; height: 30px; border-radius: 50%; font-size: 15px; color: var(--ink); cursor: pointer; border: 1px solid var(--rule); }
+  #toolQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 5px; display: flex; flex-direction: column; gap: 4px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 22px; box-shadow: var(--shadow); }
+  #toolQuick button { min-width: 64px; padding: 8px 10px; border-radius: 16px; font: 500 12px/1 var(--font); color: var(--muted); background: none; border: 0; }
+  #toolQuick button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
   #penQuick .pq-dot { width: 24px; height: 24px; display: grid; place-items: center; }
   #penQuick .pq-dot i { display: block; border-radius: 50%; background: var(--ink); }
   #penQuick input { writing-mode: vertical-lr; direction: rtl; width: 24px; height: 120px; margin: 0; accent-color: var(--accent); }
@@ -535,7 +540,6 @@
     <button class="tool" type="button" data-tool="fill" aria-pressed="false" title="Fill" aria-label="Fill"><svg class="i"><use href="#i-fill"/></svg><span class="tl">Fill</span></button>
     <button class="tool" type="button" data-act="image" title="Image" aria-label="Add an image on the page"><svg class="i"><use href="#i-image"/></svg><span class="tl">Image</span></button>
     <button class="tool" type="button" data-act="layers" title="Layers" aria-label="Layers"><svg class="i"><use href="#i-layers"/></svg><span class="tl">Layers</span></button>
-    <button class="tool" type="button" data-tool="select" aria-pressed="false" title="Move" aria-label="Move"><svg class="i"><use href="#i-move"/></svg><span class="tl">Move</span></button>
     </div>
     <div id="penOpts" class="tool-opts"></div>
   </div>
@@ -557,7 +561,8 @@
     <div id="canvasHost"></div>
   </div>
   <button id="menuFab" class="fab" type="button" aria-label="Note options" aria-expanded="false"><svg class="i"><use href="#i-more"/></svg></button>
-  <div id="penQuick" class="hidden" title="Pen size"><span class="pq-dot"></span><input type="range" min="1" max="24" step="0.5" aria-label="Pen size"></div>
+  <div id="toolQuick" class="hidden" role="group" aria-label="Quick choice for this tool"></div>
+  <div id="penQuick" class="hidden" title="Pen size" data-keeps-text><span class="pq-dot"></span><input type="range" min="1" max="24" step="0.5" aria-label="Pen size"></div>
   <div id="viewCtl">
     <button id="compass" type="button" class="hidden" aria-label="Straighten the page" title="Straighten"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l3.5 9h-7z" fill="var(--bad)" stroke="none"/><path d="M12 21l-3.5-9h7z" fill="var(--muted)" stroke="none"/></svg></button>
     <button id="zoomBtn" type="button" aria-label="Zoom and view" aria-expanded="false">100%</button>
