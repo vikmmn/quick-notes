@@ -7,6 +7,8 @@
 //            th: how much pressure thins the line 0–1 (optional), g: group id,
 //   text   { id, t: 'x', txt, x, y (top-left corner), r: angle (radians), fs: font size, font: CSS font family, c, o, g }
 //            (artistic text: a drawing object in its layer, in front of or behind other layers, masked, lassoed…)
+//   shapes { id, t: 'b', op: 'union'|'subtract'|'intersect'|'exclude', k: [items, bottom one first], c, o, g }
+//            (a non-destructive boolean: the parts stay whole and can be released; each part remembers its layer in L)
 //   image  { id, t: 'i', src (a link, or Attachments/<name> in Drive), x, y (top-left corner), w, h, r: angle, o, g } p: [[x, y, pressure], …] }
 //   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …] }   (one or more closed outlines)
 // Saved inside the note's Markdown file as <!-- qn:ink {"v":2,"layers":[…]} -->.
@@ -38,7 +40,7 @@
     if (raw[0] && raw[0].items) {
       return raw.map(function (l, i) {
         return { id: l.id || uid('L'), name: l.name || 'Layer ' + (i + 1), vis: l.vis !== false, lock: !!l.lock, op: l.op == null ? 1 : +l.op,
-          blend: l.blend || 'normal', clip: !!l.clip, gid: l.gid || undefined, gname: l.gname || undefined, items: (l.items || []).filter(function (it) { return it && (it.t === 'f' ? it.d && it.d.length : it.t === 'x' ? !!it.txt : it.t === 'i' ? !!it.src && it.w > 0 : it.p && it.p.length); }) };
+          blend: l.blend || 'normal', clip: !!l.clip, gid: l.gid || undefined, gname: l.gname || undefined, items: (l.items || []).filter(validItem) };
       });
     }
     // Version 1: groups of strokes, each placed at the group's position.
@@ -56,16 +58,23 @@
     });
     return [L];
   }
+  function validItem(it) {
+    if (!it) return false;
+    if (it.t === 'b') { it.k = (it.k || []).filter(validItem); return it.k.length > 1; }
+    return it.t === 'f' ? it.d && it.d.length : it.t === 'x' ? !!it.txt : it.t === 'i' ? !!it.src && it.w > 0 : it.p && it.p.length;
+  }
   function hasInk(layers) { return Array.isArray(layers) && layers.some(function (l) { return l.items && l.items.length; }); }
   function r1(v) { return Math.round(v * 10) / 10; }
   function toJSON(layers) {
     return { v: 2, layers: layers.map(function (l) {
-      var o = { id: l.id, name: l.name, items: l.items.map(function (it) {
+      var o = { id: l.id, name: l.name, items: l.items.map(function ser(it) {
         var x = { id: it.id, t: it.t, c: it.c };
+        if (it.L) x.L = it.L;
         if (it.o != null && it.o !== 1) x.o = Math.round(it.o * 100) / 100;
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
         if (it.t === 'f') x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); });
+        else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
         else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
         else {
@@ -124,7 +133,7 @@
       lines.map(function (l, i) { return '<tspan x="0" y="' + (it.fs * (0.93 + 1.25 * i)).toFixed(1) + '">' + (xmlEsc(l) || ' ') + '</tspan>'; }).join('') + '</text>';
   }
   function itemD(it) {
-    if (boxy(it)) return '';
+    if (boxy(it) || it.t === 'b') return '';
     var d = cache.get(it);
     if (d != null) return d;
     if (it.t === 'f') {
@@ -178,12 +187,38 @@
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
     if (it.t === 'i') return imageSvg(it);
+    if (it.t === 'b') return boolSvg(it);
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
     var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
       (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') + (fade ? ' mask="url(#pm-' + it.id + ')"' : '') +
       (B.grain ? ' filter="url(#qn-grain)"' : '') + (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
     return fade ? '<g data-i="' + it.id + '">' + fadeMask(it) + path + '</g>' : path;
+  }
+  // ---- Shapes (booleans), drawn live with masks, so the parts stay as they are ----
+  var HUGE = ' maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000"';
+  function bare(s) { return s.replace(/ data-i="[^"]*"/g, ''); }
+  function boolSvg(it) {
+    var k = it.k, base = k[0], others = k.slice(1), id = 'bm-' + it.id, defs = '', body;
+    var shape = function (p, black) { return '<g style="filter:brightness(0)' + (black ? '' : ' invert(1)') + '">' + bare(itemSvg(p, true)) + '</g>'; };
+    if (it.op === 'subtract') { // the bottom part, with the others cut out of it
+      defs = '<mask id="' + id + '"' + HUGE + '><rect x="-100000" y="-100000" width="200000" height="200000" fill="#fff"/>' + others.map(function (p) { return shape(p, true); }).join('') + '</mask>';
+      body = '<g mask="url(#' + id + ')">' + bare(itemSvg(base)) + '</g>';
+    } else if (it.op === 'intersect') { // only where every part is
+      body = bare(itemSvg(base));
+      others.forEach(function (p, i) { defs += '<mask id="' + id + '-' + i + '"' + HUGE + '>' + shape(p) + '</mask>'; body = '<g mask="url(#' + id + '-' + i + ')">' + body + '</g>'; });
+    } else { // union, or exclude (where an odd number of parts overlap): one shape, in the bottom part's colour
+      var lead = k.filter(function (p) { return p.t !== 'i' && p.t !== 'b'; })[0];
+      if (!lead && it.op === 'union') return '<g data-i="' + it.id + '">' + k.map(function (p) { return bare(itemSvg(p)); }).join('') + '</g>';
+      var bb = unionBox(k), col = it.c && it.c !== 'ink' ? it.c : lead ? lead.c : it.c;
+      var xo = it.op === 'exclude';
+      defs = '<mask id="' + id + '"' + HUGE + '>' + (xo ? '<g style="isolation:isolate">' : '') +
+        k.map(function (p) { var s = shape(p); return xo ? s.replace('<g style="', '<g style="mix-blend-mode:difference;') : s; }).join('') + (xo ? '</g>' : '') + '</mask>';
+      var lo = lead && lead.o != null ? lead.o : 1;
+      body = '<rect x="' + bb.x.toFixed(1) + '" y="' + bb.y.toFixed(1) + '" width="' + bb.w.toFixed(1) + '" height="' + bb.h.toFixed(1) + '" fill="' + colorOf(col) + '"' + (lo !== 1 ? ' fill-opacity="' + lo + '"' : '') + ' mask="url(#' + id + ')"/>';
+    }
+    var o = (it.o == null ? 1 : it.o) * (it.co || 1);
+    return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + defs + body + '</g>';
   }
   function layerSvg(l, below, prefix, plain) {
     var st = 'opacity:' + l.op + ';' + (l.blend && l.blend !== 'normal' ? 'mix-blend-mode:' + l.blend + ';' : '') + 'isolation:isolate';
@@ -209,7 +244,8 @@
   function itemBox(it) {
     var cached = boxCache.get(it);
     if (cached) return cached;
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, pad = it.t === 'f' || boxy(it) ? 0 : widthOf(it) / 2;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, pad = it.t === 'f' || boxy(it) || it.t === 'b' ? 0 : widthOf(it) / 2;
+    if (it.t === 'b') { var ub = unionBox(it.k); boxCache.set(it, ub); return ub; }
     var each = function (q) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; };
     if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(each); }); else if (boxy(it)) textCorners(it).forEach(each); else it.p.forEach(each);
     var r = x0 === Infinity ? { x: 0, y: 0, w: 0, h: 0 } : { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
@@ -242,6 +278,7 @@
     var bb = itemBox(it);
     if (x < bb.x - r || y < bb.y - r || x > bb.x + bb.w + r || y > bb.y + bb.h + r) return false;
     if (it.t === 'f') return it.d.some(function (ring) { return inPoly(x, y, ring); });
+    if (it.t === 'b') return it.k.some(function (p) { return hits(p, x, y, r); });
     if (boxy(it)) return inPoly(x, y, textCorners(it)) || textCorners(it).some(function (q, i, a) { var n = a[(i + 1) % 4]; return segDist(x, y, q[0], q[1], n[0], n[1]) <= r; });
     var w = widthOf(it) / 2 + r, p = it.p;
     if (p.length === 1) return Math.hypot(p[0][0] - x, p[0][1] - y) <= w;
@@ -276,8 +313,8 @@
     });
   }
   // (For text, its corners: looking at them is fine, but moving text is done with x and y.)
-  function eachPoint(it, fn) { if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (boxy(it)) textCorners(it).forEach(fn); else it.p.forEach(fn); }
-  function shiftItem(it, dx, dy) { if (boxy(it)) { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
+  function eachPoint(it, fn) { if (it.t === 'b') it.k.forEach(function (p) { eachPoint(p, fn); }); else if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (boxy(it)) textCorners(it).forEach(fn); else it.p.forEach(fn); }
+  function shiftItem(it, dx, dy) { if (it.t === 'b') { it.k.forEach(function (p) { shiftItem(p, dx, dy); invalidate(p); }); return; } if (boxy(it)) { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
   function nudge(it, x, y, dx, dy, R, k) {
     if (it.t !== 'f') it.p = densify(it.p, x, y, R, Math.max(2, R / 10));
     var moved = false;
@@ -328,7 +365,7 @@
     ctx.fillStyle = '#000'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2 / scale; ctx.lineJoin = 'round';
     layers.forEach(function (l) {
       if (!l.vis) return;
-      l.items.forEach(function (it) { if (it.t !== 'f' && !boxy(it)) { var path = new Path2D(itemD(it)); ctx.fill(path); ctx.stroke(path); } });
+      l.items.forEach(function (it) { if (it.t !== 'f' && it.t !== 'b' && !boxy(it)) { var path = new Path2D(itemD(it)); ctx.fill(path); ctx.stroke(path); } });
     });
     var data = ctx.getImageData(0, 0, W, H).data;
     var sx = Math.round((x - view.x) * scale), sy = Math.round((y - view.y) * scale);
@@ -554,6 +591,7 @@
       var count = sel.items.length + sel.boxes.length;
       var inkSel = sel.items.length > 0, h;
       var hasArt = sel.items.some(function (it) { return it.t === 'x'; });
+      var isShape = sel.items.length === 1 && sel.items[0].t === 'b';
       if (mode === 'color') {
         var onlyImg = sel.items.every(function (it) { return it.t === 'i'; });
         h = (onlyImg ? '' : SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('')) +
@@ -561,6 +599,21 @@
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
         h = '<label class="op">Collective opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
+      } else if (mode === 'newnote') {
+        h = '<button type="button" data-act="nn-copy" title="This note stays as it is">Copy to new note</button>' +
+          '<button type="button" data-act="nn-move" title="It leaves this note">Extract to new note</button><button type="button" data-act="back">Cancel</button>';
+      } else if (mode === 'bool') {
+        var cur = isShape ? sel.items[0].op : '';
+        var BI = function (op, label, d) {
+          return '<button type="button" class="bop" data-bop="' + op + '"' + (cur === op ? ' aria-pressed="true"' : '') + '><svg viewBox="0 0 24 24" width="22" height="22">' + d + '</svg>' + label + '</button>';
+        };
+        var A1 = 'M3 6h11v11H3z', A2 = 'M9 9h12v12H9z', S = 'fill="currentColor"', E = 'fill="none" stroke="currentColor" stroke-width="1.5"';
+        h = BI('union', 'Join', '<path d="' + A1 + 'M9 9h12v12H9z" ' + S + '/>') +
+          BI('subtract', 'Cut out', '<path d="M3 6h11v3H9v8H3z" ' + S + '/><path d="' + A2 + '" ' + E + ' stroke-dasharray="2 2"/>') +
+          BI('intersect', 'Overlap', '<path d="' + A1 + '" ' + E + '/><path d="' + A2 + '" ' + E + '/><path d="M9 9h5v8H9z" ' + S + '/>') +
+          BI('exclude', 'Exclude', '<path d="M3 6h11v3H9v8H3z" ' + S + '/><path d="M14 9h7v12H9v-4h5z" ' + S + '/>') +
+          (isShape ? '<button type="button" data-act="release" title="Back to separate parts, each in its own layer">Release</button>' : '') +
+          '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'arrange') {
         var I = function (act, label, d) { return '<button type="button" class="ic" data-arr="' + act + '" title="' + label + '" aria-label="' + label + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg></button>'; };
         h = I('l', 'Align left', '<path d="M4 3v18M8 7h10M8 15h6"/>') + I('cx', 'Align centres', '<path d="M12 3v18M6 7h12M8 15h8"/>') + I('r', 'Align right', '<path d="M20 3v18M6 7h10M10 15h6"/>') +
@@ -577,7 +630,9 @@
             : count > 1 ? '<button type="button" data-act="group" title="Move, turn and fade these together, whatever layer each is on">Collective</button>' : '') +
           (inkSel ? '<button type="button" data-act="color">' + (sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour') + '</button>' : '') +
           (count > 1 || inkSel ? '<button type="button" data-act="arrange">Arrange</button>' : '') +
+          (sel.items.length > 1 || isShape ? '<button type="button" data-act="bool" title="Join, cut out, overlap or exclude: the parts stay as they are">' + (isShape ? 'Shape' : 'Combine shapes') + '</button>' : '') +
           (sel.boxes.length && BX.hasImages(sel.boxes) ? '<button type="button" data-act="imgout" title="Each image becomes its own object on the page">Take images out</button>' : '') +
+          (o.toNewNote ? '<button type="button" data-act="newnote" title="Copy or move this into a note of its own">To new note</button>' : '') +
           (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
           (hasArt ? '<button type="button" data-act="tobox" title="Make this normal, editable text">To text box</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
           (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '') +
@@ -616,7 +671,10 @@
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
-      if (b.dataset.c) { sel.items.slice().forEach(function (it) { own(it).c = b.dataset.c; }); done(); renderBar('color'); return; }
+      if (b.dataset.c) {
+        var paint = function (it) { it.c = b.dataset.c; if (it.t === 'b') it.k.forEach(function (p) { if (p.t !== 'i') paint(p); }); };
+        sel.items.slice().forEach(function (it) { paint(own(it)); }); done(); renderBar('color'); return;
+      }
       if (b.dataset.tol) {
         var to = layers.filter(function (l) { return l.id === b.dataset.tol; })[0];
         sel.items.forEach(function (it) { var l = layerOf(it); if (l && l !== to) { l.items.splice(l.items.indexOf(it), 1); to.items.push(it); } });
@@ -630,7 +688,25 @@
         refreshBox(); render(); commit(); renderBar(); return;
       }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
-      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange') return renderBar(act);
+      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'bool' || act === 'newnote') return renderBar(act);
+      if (act === 'nn-copy' || act === 'nn-move') {
+        // What is picked, with the layers it is on (their look kept), its text boxes, and where it all sits.
+        var out = [], bb = selBox(sel.items, sel.boxes);
+        layers.forEach(function (l) {
+          var its = l.items.filter(function (it) { return sel.items.indexOf(it) > -1; });
+          if (!its.length) return;
+          var c = JSON.parse(JSON.stringify(l)); c.items = JSON.parse(JSON.stringify(its)); out.push(c);
+        });
+        var ok = o.toNewNote({ ink: out, boxes: BX.exportBoxes(sel.boxes), box: bb }, act === 'nn-move');
+        if (ok !== false && act === 'nn-move') {
+          sel.items.forEach(function (it) { var l = layerOf(it); if (l) l.items.splice(l.items.indexOf(it), 1); });
+          if (sel.boxes.length) BX.remove(sel.boxes);
+          setSel(null); done(); return;
+        }
+        renderBar(); return;
+      }
+      if (b.dataset.bop) { makeShape(b.dataset.bop); return; }
+      if (act === 'release') { releaseShape(); return; }
       if (b.dataset.arr) { arrange(b.dataset.arr); return; }
       if (act === 'toart') { // text boxes become Text art, in their layers, looking the same
         var specs = BX.toArt(sel.boxes), made = [];
@@ -676,6 +752,41 @@
       if (act === 'group') { var g = uid('g'); sel.items.slice().forEach(function (it) { var t = own(it); t.g = g; delete t.co; }); if (sel.boxes.length) BX.setGroup(sel.boxes, g, 1); render(); commit(); renderBar(); return; }
       if (act === 'ungroup') { sel.items.slice().forEach(function (it) { var t = own(it); delete t.g; delete t.co; }); if (sel.boxes.length) BX.setGroup(sel.boxes, null); render(); commit(); renderBar(); return; }
     });
+
+    // ---- Shapes: several items become one non-destructive boolean; the bottom one decides its layer and place ----
+    function makeShape(op) {
+      if (!sel) return;
+      if (sel.items.length === 1 && sel.items[0].t === 'b') { // change what an existing shape does
+        var t = own(sel.items[0]); t.op = op; invalidate(t); render(); commit(); renderBar('bool'); return;
+      }
+      var parts = [];
+      layers.forEach(function (l, li) { l.items.forEach(function (it, ii) { if (sel.items.indexOf(it) > -1) parts.push({ it: it, l: l, li: li, ii: ii }); }); });
+      if (parts.length < 2) { o.notice('Pick two or more drawings, Text art or images.'); return; }
+      if (sel.boxes.length) o.notice('Text boxes stay as they are: turn them into Text art to use them in shapes.');
+      var home = parts[0].l, at = parts[0].ii;
+      var g0 = parts[0].it.g, sameG = parts.every(function (p) { return p.it.g === g0; });
+      var shape = { id: uid('b'), t: 'b', op: op, c: 'ink', o: 1, k: parts.map(function (p) {
+        var c = JSON.parse(JSON.stringify(p.it)); if (p.l !== home) c.L = p.l.id; delete c.g; delete c.co; return c;
+      }) };
+      if (sameG && g0) shape.g = g0;
+      parts.slice().reverse().forEach(function (p) { p.l.items.splice(p.l.items.indexOf(p.it), 1); });
+      home.items.splice(Math.min(at, home.items.length), 0, shape);
+      render(); commit(); setSel([shape], sel.boxes.slice()); renderBar('bool');
+    }
+    function releaseShape() {
+      if (!sel || sel.items.length !== 1 || sel.items[0].t !== 'b') return;
+      var sh = sel.items[0], home = layerOf(sh); if (!home) return;
+      var at = home.items.indexOf(sh), back = [];
+      home.items.splice(at, 1);
+      sh.k.forEach(function (p) {
+        var c = JSON.parse(JSON.stringify(p)), to = home;
+        if (c.L) { var l = layers.filter(function (x) { return x.id === c.L; })[0]; if (l && editable(l)) to = l; delete c.L; }
+        if (sh.g) c.g = sh.g;
+        if (to === home) home.items.splice(at++, 0, c); else to.items.push(c);
+        back.push(c);
+      });
+      render(); commit(); setSel(back, []);
+    }
 
     // ---- Align and arrange: each collective counts as one piece, each other item and text box as one ----
     function arrange(a) {
@@ -780,9 +891,9 @@
         var x = q[0] - d.c[0], y = q[1] - d.c[1];
         return [d.c[0] + x * cos - y * sin, d.c[1] + x * sin + y * cos];
       };
-      sel.items.forEach(function (it, i) {
-        var src = d.orig[i];
-        if (it.t === 'f') it.d = src.d.map(function (ring) { return ring.map(map); });
+      var xf = function (it, src) {
+        if (it.t === 'b') it.k.forEach(function (p, j) { xf(p, src.k[j]); });
+        else if (it.t === 'f') it.d = src.d.map(function (ring) { return ring.map(map); });
         else if (boxy(it)) {
           var a0 = map([src.x, src.y]); it.x = a0[0]; it.y = a0[1];
           if (d.kind === 'rotate') it.r = (src.r || 0) + ang;
@@ -790,7 +901,8 @@
         }
         else { it.p = src.p.map(function (q) { var m = map(q); var o2 = [m[0], m[1], q[2]]; if (q[3] != null) o2.push(q[3]); return o2; }); if (d.kind === 'scale') it.s = src.s * s; }
         invalidate(it);
-      });
+      };
+      sel.items.forEach(function (it, i) { xf(it, d.orig[i]); });
       // Text boxes move with it: their corner follows (turning moves them round the middle); scaling changes their width.
       sel.boxes.forEach(function (id, i) {
         var r0 = d.borig[i]; if (!r0) return;
@@ -866,7 +978,7 @@
         layers.forEach(function (l) {
           if (!editable(l)) return;
           l.items.forEach(function (it) {
-            if (boxy(it)) return; // nudging bends lines; text and images are moved with Select
+            if (boxy(it) || it.t === 'b') return; // nudging bends lines; text, images and shapes are moved with Select
             var b = itemBox(it);
             if (p[0] < b.x - R || p[0] > b.x + b.w + R || p[1] < b.y - R || p[1] > b.y + b.h + R) return;
             var t = own(it);
@@ -937,7 +1049,7 @@
         if (!editable(l)) return;
         for (var i = l.items.length - 1; i >= 0; i--) {
           var it = l.items[i];
-          if (it.t === 'i' || !hits(it, p[0], p[1], r)) continue; // images are removed with Select › Delete, never rubbed out by accident
+          if (it.t === 'i' || it.t === 'b' || !hits(it, p[0], p[1], r)) continue; // images and shapes are removed with Select › Delete, never rubbed out by accident
           var e = elOf(it);
           if (opt.erase.m === 'slice' && it.t !== 'f' && it.t !== 'x') {
             var parts = slice(it, p[0], p[1], r);
@@ -1157,6 +1269,20 @@
     render();
   }
 
-  window.QNInk = { Engine: Engine, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  // For moving drawings between notes: shift them, and give items, collectives and layers new ids.
+  function shiftAll(layers, dx, dy) { layers.forEach(function (l) { l.items.forEach(function (it) { shiftItem(it, dx, dy); invalidate(it); }); }); }
+  function freshIds(layers) {
+    var lmap = {}, gmap = {};
+    var re = function (it) { it.id = uid(it.t || 's'); if (it.g) it.g = gmap[it.g] || (gmap[it.g] = uid('g')); if (it.t === 'b') it.k.forEach(re); };
+    layers.forEach(function (l) {
+      var nid = uid('L'); lmap[l.id] = nid; l.id = nid;
+      if (l.gid) l.gid = gmap['L' + l.gid] || (gmap['L' + l.gid] = uid('G'));
+      l.items.forEach(re);
+    });
+    layers.forEach(function (l) { l.items.forEach(function fixL(it) { if (it.t === 'b') it.k.forEach(function (p) { if (p.L) p.L = lmap[p.L] || undefined; fixL(p); }); }); });
+    return { layers: lmap, groups: gmap };
+  }
+  function boundsOf(layers) { var all = []; layers.forEach(function (l) { all = all.concat(l.items); }); return unionBox(all); }
+  window.QNInk = { Engine: Engine, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();
