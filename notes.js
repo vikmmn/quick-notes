@@ -447,7 +447,8 @@
       try {
         if (!(await takeBack())) { running = false; state.phase = 'idle'; emit(); api.schedule(4000); return; }
         await ensureFolders();
-        if (!folders.rootName) { try { folders.rootName = (await Drive.get(folders.notes)).name; saveFolders(); } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; } }
+        // The main folder's name, fresh each full check (it may have been renamed in Drive).
+        try { var nm = (await Drive.get(folders.notes)).name; if (nm && nm !== folders.rootName) { folders.rootName = nm; saveFolders(); hooks.folders(); } } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
         await push();
         if (opts.pull || !state.lastSynced) { await pull(); await push(); }
         state.phase = 'idle'; state.lastSynced = Date.now();
