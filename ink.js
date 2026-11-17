@@ -423,6 +423,46 @@
     return out;
   }
 
+  // ---------- Text art → the outline of each letter, as pen lines (traced from the letters drawn big) ----------
+  function textOutlines(it) {
+    var S = Math.max(1, 160 / it.fs), pad = 6, sz = textSize(it);
+    var W = Math.ceil(sz.w * S + pad * 2 + it.fs * S * 0.3), H = Math.ceil(sz.h * S + pad * 2);
+    var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var ctx = cv.getContext('2d');
+    ctx.font = (it.fs * S) + 'px ' + (it.font || 'sans-serif'); ctx.fillStyle = '#000'; ctx.textBaseline = 'alphabetic';
+    String(it.txt).split('\n').forEach(function (l, i) { ctx.fillText(l, pad, pad + it.fs * S * (0.93 + 1.25 * i)); });
+    var px = ctx.getImageData(0, 0, W, H).data, N = W * H, ink = new Uint8Array(N), lab = new Int32Array(N), rings = [];
+    for (var i = 0; i < N; i++) ink[i] = px[i * 4 + 3] > 110 ? 1 : 0;
+    // Each separate patch of ink (a letter, or the dot of an i), and each closed gap inside one (the hole of an o).
+    var comp = 0, stack = new Int32Array(N);
+    function region(seed, want) {
+      comp++; var n = 0, top = 0, edge = false; stack[top++] = seed; lab[seed] = comp;
+      while (top) {
+        var c = stack[--top], x = c % W, y = (c - x) / W; n++;
+        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge = true;
+        var nb = [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, y > 0 ? c - W : -1, y < H - 1 ? c + W : -1];
+        for (var k = 0; k < 4; k++) { var q = nb[k]; if (q >= 0 && !lab[q] && ink[q] === want) { lab[q] = comp; stack[top++] = q; } }
+      }
+      return { id: comp, n: n, edge: edge };
+    }
+    var regs = [];
+    for (var j = 0; j < N; j++) if (!lab[j]) { var g = region(j, ink[j]); g.ink = ink[j]; g.seed = j; regs.push(g); }
+    regs.forEach(function (g) {
+      if (g.n < 5 || (!g.ink && g.edge)) return; // specks, and the space around the letters
+      var m = new Uint8Array(N);
+      for (var i2 = g.seed; i2 < N; i2++) if (lab[i2] === g.id) m[i2] = 1;
+      var ring = trace(m, W, H);
+      if (!ring || ring.length < 3) return;
+      ring = simplify(ring, 0.45);
+      var c = Math.cos(it.r || 0), sn = Math.sin(it.r || 0);
+      rings.push(ring.map(function (q) {
+        var lx = (q[0] + 0.5 - pad) / S, ly = (q[1] + 0.5 - pad) / S;
+        return [it.x + lx * c - ly * sn, it.y + lx * sn + ly * c];
+      }));
+    });
+    return rings;
+  }
+
   // ---------- Preview pictures (notes grid, version history) ----------
   var thumbN = 0;
   function thumb(raw, maxW, maxH) {
@@ -634,6 +674,7 @@
           (sel.boxes.length && BX.hasImages(sel.boxes) ? '<button type="button" data-act="imgout" title="Each image becomes its own object on the page">Take images out</button>' : '') +
           (o.toNewNote ? '<button type="button" data-act="newnote" title="Copy or move this into a note of its own">To new note</button>' : '') +
           (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
+          (hasArt ? '<button type="button" data-act="outline" title="Each letter becomes pen lines you can erase, nudge, fill or redraw">To outlines</button>' : '') +
           (hasArt ? '<button type="button" data-act="tobox" title="Make this normal, editable text">To text box</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
           (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '') +
           ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? '<button type="button" data-act="straight">Straighten</button>' : '');
@@ -727,6 +768,27 @@
           L.items.push(it); got.push(it);
         });
         render(); commit(); setSel(got, []); return;
+      }
+      if (act === 'outline') { // Text art → pen lines round each letter, kept together as a collective
+        var arts2 = sel.items.filter(function (it) { return it.t === 'x'; }), made2 = [];
+        var fontsReady = document.fonts && document.fonts.load ? Promise.all(arts2.map(function (it) { return document.fonts.load(it.fs + 'px ' + it.font, it.txt).catch(function () {}); })) : Promise.resolve();
+        fontsReady.then(function () {
+          arts2.forEach(function (it) {
+            var l = layerOf(it); if (!l) return;
+            var g = it.g || uid('g'), w = Math.max(0.8, it.fs * 0.035), at = l.items.indexOf(it);
+            var lines = textOutlines(it).map(function (ring) {
+              var p = ring.concat([ring[0]]).map(function (q) { return [q[0], q[1], 0.5]; });
+              var s = { id: uid('s'), t: 's', b: 'marker', c: it.c, s: Math.round(w / BRUSH.marker.size * 100) / 100, o: it.o == null ? 1 : it.o, g: g, p: p };
+              if (it.co) s.co = it.co;
+              return s;
+            });
+            if (!lines.length) return;
+            l.items.splice.apply(l.items, [at, 1].concat(lines));
+            made2 = made2.concat(lines);
+          });
+          render(); commit(); setSel(sel ? sel.items.filter(function (it) { return arts2.indexOf(it) < 0; }).concat(made2) : made2, sel ? sel.boxes : []);
+        });
+        return;
       }
       if (act === 'tobox') { // Text art becomes normal text boxes
         var arts = sel.items.filter(function (it) { return it.t === 'x'; }), nb = [];

@@ -976,19 +976,62 @@
   // (the pen writes there too).
   // The feedback button has a fixed place in the top bar of the list and of a note.
   function dockFeedback() { if (window.QNBug && QNBug.dock) QNBug.dock($(S.view === 'note' ? 'fbSlotNote' : 'fbSlotList')); }
+  // ---- The quick corner (bottom left): the one or two things each tool changes most; the rest is in its card ----
+  var TFONTS = ['"Google Sans", Roboto, system-ui, sans-serif', 'Lora, serif', '"JetBrains Mono", monospace', 'Caveat, cursive', '"Permanent Marker", cursive', '"Playfair Display", serif'];
+  var QUICK = { // tool: [option group, field, [value, label]…]
+    erase: ['erase', 'm', [['stroke', 'Whole'], ['slice', 'Slice']]],
+    lasso: ['lasso', 'how', [['loop', 'Lasso'], ['tap', 'Tap']]],
+    nudge: ['nudge', 'm', [['nudge', 'Nudge'], ['smooth', 'Smooth']]],
+    fill: ['fill', 'm', [['lasso', 'Shape'], ['tap', 'Tap area']]]
+  };
   function updatePenQuick() {
-    var q = $('penQuick'), show = S.view === 'note' && !!S.cur && (PREF.tool === 'pen' || PREF.tool === 'type' && !!PREF.penSeen);
-    q.classList.toggle('hidden', !show);
-    if (!show) return;
-    var pen = INKOPT.pen, inp = q.querySelector('input'), wpx = Math.max(2, Math.min(22, pen.s * ((window.QNInk.BRUSH[pen.b] || {}).size || 1.6)));
+    var on = S.view === 'note' && !!S.cur && !!PREF.showTools, t = PREF.tool;
+    var q = $('penQuick'), sized = on && (t === 'pen' || t === 'text');
+    q.classList.toggle('hidden', !sized);
+    var tq = $('toolQuick'), Q = on && QUICK[t];
+    tq.classList.toggle('hidden', !Q);
+    if (Q) {
+      var cur = INKOPT[Q[0]][Q[1]];
+      tq.innerHTML = Q[2].map(function (v) { return '<button type="button" data-q="' + v[0] + '" aria-pressed="' + (cur === v[0]) + '">' + v[1] + '</button>'; }).join('');
+    }
+    if (!sized) return;
+    var inp = q.querySelector('input'), dot = q.querySelector('.pq-dot');
+    q.dataset.mode = t;
+    if (t === 'text') { // Text art: its size, and the font (tap to go to the next)
+      var tx = INKOPT.text;
+      inp.min = 10; inp.max = 200; inp.step = 1; inp.setAttribute('aria-label', 'Text size'); q.title = 'Text size; tap Aa for the next font';
+      if (document.activeElement !== inp) inp.value = tx.fs;
+      dot.className = 'pq-dot aa'; dot.innerHTML = '<span style="font-family:' + esc(tx.font) + '">Aa</span>';
+      return;
+    }
+    var pen = INKOPT.pen, wpx = Math.max(2, Math.min(22, pen.s * ((window.QNInk.BRUSH[pen.b] || {}).size || 1.6)));
+    inp.min = 1; inp.max = 24; inp.step = 0.5; inp.setAttribute('aria-label', 'Pen size'); q.title = 'Pen size';
     if (document.activeElement !== inp) inp.value = pen.s;
-    q.querySelector('.pq-dot').innerHTML = '<i style="width:' + wpx + 'px;height:' + wpx + 'px;background:' + (pen.c === 'ink' ? 'var(--ink)' : pen.c) + '"></i>';
+    dot.className = 'pq-dot';
+    dot.innerHTML = '<i style="width:' + wpx + 'px;height:' + wpx + 'px;background:' + (pen.c === 'ink' ? 'var(--ink)' : pen.c) + '"></i>';
   }
   $('penQuick').addEventListener('input', function (e) {
+    if ($('penQuick').dataset.mode === 'text') {
+      INKOPT.text.fs = +e.target.value; applyInk(); savePref();
+      var ts = $('penOpts').querySelector('[data-k=text][data-f=fs]'); if (ts) ts.value = INKOPT.text.fs;
+      return;
+    }
     INKOPT.pen.s = +e.target.value; applyInk(); savePref(); updatePenQuick();
     var s = $('penOpts').querySelector('[data-k=pen][data-f=s]'); if (s) s.value = Math.round(INKOPT.pen.s);
   });
-  $('penQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+  $('penQuick').addEventListener('click', function (e) {
+    if ($('penQuick').dataset.mode !== 'text' || !e.target.closest('.pq-dot')) return;
+    var i = TFONTS.indexOf(INKOPT.text.font);
+    INKOPT.text.font = TFONTS[(i + 1) % TFONTS.length]; applyInk(); savePref(); updatePenQuick();
+    if (!$('penOpts').classList.contains('hidden')) setTool('text');
+  });
+  $('toolQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); if (e.target.closest('button')) e.preventDefault(); });
+  $('toolQuick').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-q]'), Q = QUICK[PREF.tool]; if (!b || !Q) return;
+    INKOPT[Q[0]][Q[1]] = b.dataset.q; applyInk(); savePref();
+    if (!$('penOpts').classList.contains('hidden')) setTool(PREF.tool); else updatePenQuick();
+  });
+  $('penQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); if (e.target.closest('.pq-dot')) e.preventDefault(); });
   // The drawing tools live behind one button, so a note opens as a plain page, like Keep.
   function showTools(on) {
     PREF.showTools = !!on; savePref();
@@ -996,6 +1039,7 @@
     $('toolsBtn').setAttribute('aria-pressed', on ? 'true' : 'false');
     if (!on && PREF.tool !== 'type') setTool('type');
     if (!on) { $('layersPanel').classList.add('hidden'); layersBtn(); showOpts(false); }
+    updatePenQuick();
     if (S.canvas) requestAnimationFrame(S.canvas.relayout);
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
@@ -1297,7 +1341,7 @@
   // ---------- Formatting bar ----------
   function showFmt(on) {
     $('fmtBar').classList.toggle('hidden', !on);
-    $('menuFab').classList.toggle('lift', on); $('noteMenu').classList.toggle('lift', on); $('penQuick').classList.toggle('lift', on);
+    $('menuFab').classList.toggle('lift', on); $('noteMenu').classList.toggle('lift', on); $('penQuick').classList.toggle('lift', on); $('toolQuick').classList.toggle('lift', on);
     $('viewCtl').classList.toggle('lift', on); $('viewMenu').classList.toggle('lift', on);
     if (!on) $('pop').classList.add('hidden');
     placeFmt();
@@ -1709,6 +1753,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Quick choices, and text you can draw on', d: 'Each tool now keeps its most-used choice in the bottom-left corner: pen size, Text art size and font (tap Aa), Whole or Slice for the eraser, Lasso or Tap for Select, Nudge or Smooth, Shape or Tap area for Fill. Tap a tool again for everything else. Select Text art and tap To outlines: each letter becomes pen lines you can erase, nudge, fill or redraw. Move is gone: Select and the Hand do it.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="30" y="56" width="28" height="60" rx="14" fill="' + SOFT + '" stroke="' + RULE + '"/><circle cx="44" cy="70" r="6" fill="' + INKC + '"/>' +
+        '<text x="80" y="90" font-family="Lora, serif" font-size="44" fill="none" stroke="' + A + '" stroke-width="1.6">Abc</text>') },
     { t: 'Shapes, and notes that join and split', d: 'Select two or more things and tap Combine shapes: Join, Cut out, Overlap or Exclude. The parts stay whole: switch between them any time, or Release to get the parts back. In the notes list, hold a note to pick it, tap others, then Duplicate or Combine them into one note (side by side; Undo is there). In a note, select something and tap To new note to copy it, or extract it, into a note of its own.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="80" cy="70" r="34" fill="' + A + '"/><circle cx="114" cy="70" r="34" fill="' + SURF + '"/>' +
         '<rect x="150" y="34" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="160" y="74" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/>') },
