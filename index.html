@@ -418,6 +418,19 @@
     padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
   @media (min-width: 700px) { .sheet-back { align-items: center; } .sheet { border-radius: 18px; } }
   .sheet h2 { margin: 0 0 6px; font: 400 22px/1.3 var(--font); }
+  .de-wrap { display: flex; gap: 12px; align-items: center; justify-content: center; margin: 4px 0 10px; flex-wrap: wrap; }
+  .de-box { touch-action: none; background: var(--field); border-radius: 16px; cursor: crosshair; }
+  .de-tip { width: min(300px, 80vw); height: min(300px, 80vw); border-radius: 50%; }
+  .de-line { width: min(520px, 90vw); height: min(130px, 22.5vw); }
+  .de-pat { width: min(260px, 60vw); height: min(260px, 60vw); }
+  .de-prev { width: 120px; height: 120px; }
+  .de-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; align-items: center; }
+  .de-tools .sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--rule); }
+  .de-tools .sw[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .de-sl { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: var(--muted); font-size: 14px; }
+  .de-sl input[type=range] { flex: 1; accent-color: var(--accent); }
+  .de-sl input[type=text] { flex: 1; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--rule); background: var(--field); color: var(--ink); font: inherit; }
+  .ochip svg { vertical-align: middle; }
   .sheet p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
   .sheet ul { margin: 0 0 14px; padding-left: 18px; font-size: 15px; }
   .sheet .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
