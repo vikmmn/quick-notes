@@ -642,7 +642,8 @@
     penKnown: function () { return !!PREF.penSeen; },
     finger: function () { return PREF.finger || 'auto'; },
     head: function () { return $('noteHead'); },
-    autoTool: function (t) { setTool(t); }
+    autoTool: function (t) { setTool(t); },
+    textLook: function (t) { Object.assign(INKOPT.text, t); savePref(); if (PREF.tool === 'text') setTool('text'); } // tapped text: the card shows its look
   };
   function openNote(n, isNew) {
     if (S.cur) closeNote();
@@ -752,6 +753,7 @@
   $('redoBtn').onclick = function () { S.canvas.redo(); };
   document.addEventListener('keydown', function (e) {
     if (S.view !== 'note' || !(e.ctrlKey || e.metaKey) || document.activeElement === $('noteTitle')) return;
+    if (document.activeElement && document.activeElement.classList.contains('ink-textedit')) return; // its own undo while writing
     var k = e.key.toLowerCase();
     if (k === 'z' && !e.shiftKey) { e.preventDefault(); S.canvas.undo(); }
     else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); S.canvas.redo(); }
@@ -759,7 +761,8 @@
 
   // ---------- Tools: type, pen (five brushes), erase, lasso, nudge, fill, move text; layers ----------
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
-  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 } };
+  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
+    lasso: { m: 'most' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
   (function migrate() { // settings saved by earlier versions
     if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
     else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
@@ -805,15 +808,26 @@
       html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
         slider('Size', 'erase', 's', 3, 60, o.erase.s));
     } else if (t === 'lasso') {
-      html = G(HINT('Circle strokes to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
+      var lm = (o.lasso && o.lasso.m) || 'most';
+      html = G(HINT('Picks what is') + chip('Partly in', 'data-k="lasso" data-m="part" title="Anything the loop touches"', lm === 'part') +
+          chip('Mostly in', 'data-k="lasso" data-m="most" title="At least half inside the loop"', lm === 'most') +
+          chip('Fully in', 'data-k="lasso" data-m="full" title="Only what is completely inside"', lm === 'full')) +
+        G(HINT('Circle to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
     } else if (t === 'nudge') {
       html = G(chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth')) +
         G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
     } else if (t === 'fill') {
       html = G(chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap')) +
         G(swatches(o.fill.c, 'fill')) + G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
+    } else if (t === 'text') {
+      // Artistic text: part of the drawing, in the current layer. (Double-tap still makes a normal text box.)
+      var TF = [['"Google Sans", Roboto, system-ui, sans-serif', 'Sans'], ['Lora, serif', 'Serif'], ['"JetBrains Mono", monospace', 'Mono'],
+        ['Caveat, cursive', 'Handwriting'], ['"Permanent Marker", cursive', 'Marker'], ['"Playfair Display", serif', 'Display']];
+      html = G(TF.map(function (f) { return chip('<span style="font-family:' + esc(f[0]) + '">' + f[1] + '</span>', 'data-tfont="' + esc(f[0]) + '"', o.text.font === f[0]); }).join('')) +
+        G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
+        G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
     } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
-    var NAMES = { type: 'Type', pen: 'Pen', erase: 'Erase', lasso: 'Lasso', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
+    var NAMES = { type: 'Type', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Lasso', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
     if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
       '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
@@ -903,7 +917,12 @@
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
-    if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; return setTool(PREF.tool); }
+    if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
+    if (b.dataset.tfont != null) { INKOPT.text.font = b.dataset.tfont; applyInk(); savePref(); return setTool('text'); }
+  });
+  // While artistic text is being written, tapping the Text card's buttons keeps the keyboard and the writing going.
+  $('tools').addEventListener('pointerdown', function (e) {
+    if (S.canvas && S.canvas.ink().editingText() && e.target.closest('button') && !e.target.closest('[data-act=closeopts]')) e.preventDefault();
   });
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
@@ -1548,6 +1567,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Text art, and text that stays straight', d: 'The new Text art tool (A in the tools) writes text that is part of your drawing: in a layer, in front of or behind drawings, with fonts, size, colour and opacity, and you can lasso it to move, turn or recolour. On a turned page, new text starts straight to you, then turns with the page. Lasso it and tap Straighten to line it up with the page again. The Lasso now picks what is partly, mostly or fully inside its loop.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M36 92c30-30 60 10 90-6s50-20 80 0" fill="none" stroke="' + A + '" stroke-width="10" stroke-linecap="round" stroke-opacity=".45"/>' +
+        '<text x="48" y="84" font-family="Permanent Marker, cursive" font-size="34" fill="#c0392b" transform="rotate(-6 120 70)">Art!</text><text x="140" y="56" font-family="Lora, serif" font-size="20" fill="' + INKC + '">Aa</text>') },
     { t: 'Fonts, pressure and a smarter lasso', d: 'Text now comes in six fonts (the F button while typing). The Lasso picks up text along with drawings. Under Pen: how pressure and tilt change thickness and opacity, a pressure curve, and Check my pen to see what your pen reports.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><text x="40" y="58" font-family="Caveat, cursive" font-size="30" fill="' + INKC + '">Aa</text><text x="96" y="58" font-family="Lora, serif" font-size="26" fill="' + INKC + '">Aa</text><text x="150" y="58" font-family="Permanent Marker, cursive" font-size="24" fill="' + INKC + '">Aa</text>' +
         '<path d="M40 96c30-14 60 14 90 0s40-10 60 0" fill="none" stroke="' + A + '" stroke-width="6" stroke-linecap="round" stroke-opacity=".55"/>') },

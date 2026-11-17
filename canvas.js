@@ -99,6 +99,7 @@
       layers: ink, svg: svg, stage: stage, margin: M, boxes: boxApi(),
       changed: function () { changed('ink'); },
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
+      textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
       view: function () { // the part of the page on screen, as a box in page coordinates
         var W = host.clientWidth, H = host.clientHeight, pts = [toWorld(0, 0), toWorld(W, 0), toWorld(0, H), toWorld(W, H)];
         var xs = pts.map(function (q) { return q[0]; }), ys = pts.map(function (q) { return q[1]; });
@@ -113,7 +114,7 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; return o; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; return o; })), ink: copyLayers(ink) }; }
     function sameAs(a, b) {
       if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
@@ -180,6 +181,7 @@
         var e = editors[b.id];
         if (!e) return;
         e.el.style.left = (b.x + M) + 'px'; e.el.style.top = (b.y + M) + 'px';
+        e.el.style.transform = b.r ? 'rotate(' + b.r + 'rad)' : ''; // text written on a turned page stays straight to how it was written
         e.el.style.width = (b.w || Math.max(160, autoWidth() - b.x)) + 'px';
       });
       var c = contentRight();
@@ -233,7 +235,7 @@
       var md = getMd(e.ed);
       if (md !== b.md) { b.md = md; hooks.change('text'); }
     }
-    function flushAll() { clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
+    function flushAll() { if (eng && eng.finishText) eng.finishText(); clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
     // What the Lasso needs from the text boxes: find them, move them, copy, delete, change layer.
     function boxApi() {
       function byId(id) { return boxes.filter(function (x) { return x.id === id; })[0]; }
@@ -248,10 +250,13 @@
           for (var i = boxes.length - 1; i >= 0; i--) { var b = boxes[i]; if (!usable(b)) continue; var r = rect(b); if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return b.id; }
           return null;
         },
-        pick: function (poly, inPoly) {
-          // Circling the start of the text, or its middle, is enough (a text box is often much wider than its text).
+        pick: function (poly, inPoly, m) {
+          // Circling the start of the text, or its middle, is enough (a text box is often much wider than its text);
+          // Fully needs the whole box, Partly any corner of it.
           return boxes.filter(usable).filter(function (b) {
-            var r = rect(b);
+            var r = rect(b), cs = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
+            if (m === 'full') return cs.every(function (q) { return inPoly(q[0], q[1], poly); });
+            if (m === 'part' && cs.some(function (q) { return inPoly(q[0], q[1], poly); })) return true;
             return inPoly(r.x + 12, r.y + Math.min(r.h / 2, 20), poly) || inPoly(r.x + r.w / 2, r.y + r.h / 2, poly);
           }).map(function (b) { return b.id; });
         },
@@ -274,10 +279,13 @@
             var b = byId(id); if (!b) return null;
             var c = { id: 'b' + window.Notes.shortId(), x: b.x + dx, y: b.y + dy, w: b.w, md: b.md };
             if (b.l) c.l = b.l;
+            if (b.r) c.r = b.r;
             boxes.push(c); mountBox(c); return c.id;
           }).filter(Boolean);
         },
-        setLayer: function (ids, lid) { ids.forEach(function (id) { var b = byId(id); if (b) b.l = lid; }); }
+        setLayer: function (ids, lid) { ids.forEach(function (id) { var b = byId(id); if (b) b.l = lid; }); },
+        turned: function (ids) { return ids.some(function (id) { var b = byId(id); return b && b.r; }); },
+        straighten: function (ids) { ids.forEach(function (id) { var b = byId(id); if (b && b.r) { delete b.r; if (editors[id]) editors[id].el.style.transform = ''; } }); }
       };
     }
     function removeBox(id) {
@@ -294,6 +302,9 @@
       var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, x), y: Math.max(0, y), w: w, md: '' };
       var al = eng && eng.activeLayer ? eng.activeLayer() : null;
       if (al && al !== ink[0].id) b.l = al; // new text goes on the layer being worked on
+      // On a turned page, new text starts straight to the screen; after that it belongs to the page and turns with it.
+      var tr = -(view.r || 0); tr = Math.atan2(Math.sin(tr), Math.cos(tr));
+      if (Math.abs(tr) > 0.01) b.r = Math.round(tr * 1000) / 1000;
       boxes.push(b);
       var e = mountBox(b);
       layout();
@@ -374,6 +385,11 @@
         }
       }
       if (tool === 'select') { select(null); startPan(ev); return; }
+      if (tool === 'text') { // artistic text: a tap writes there (or edits the text tapped), a drag scrolls
+        if (ev.pointerType === 'mouse') { ev.preventDefault(); eng.textAt(p, -(view.r || 0)); return; }
+        startPan(ev); if (drag) drag.textTap = p;
+        return;
+      }
       // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
       var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
       if (inkTool && !(isFinger && !fingerDraws())) {
@@ -472,7 +488,9 @@
         if (Object.keys(drag.fingers).length) return;
         var vx = drag.vx || 0, vy = drag.vy || 0;
         if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; }
+        var tapAt = !drag.moved && drag.textTap;
         drag = null;
+        if (tapAt && tool === 'text') { eng.textAt(tapAt, -(view.r || 0)); return; }
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };
           var step = function () {
@@ -737,8 +755,9 @@
       tool = t;
       stage.dataset.tool = t;
       if (t !== 'select') select(null);
-      if (INK[t]) eng.setTool(t); else eng.clearSelection();
-      if (t !== 'type' && document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
+      if (INK[t] || t === 'text') eng.setTool(t); else { eng.finishText(); eng.clearSelection(); }
+      var ae = document.activeElement;
+      if (t !== 'type' && ae && stage.contains(ae) && !(t === 'text' && ae.classList.contains('ink-textedit'))) ae.blur();
     };
     self.ink = function () { return eng; };
     self.tool = function () { return tool; };

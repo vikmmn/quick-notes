@@ -257,7 +257,10 @@
   .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
   .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: none; }
   .box.focused { box-shadow: 0 0 0 1px var(--rule); }
-  .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box { pointer-events: none; }
+  .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box, .stage[data-tool=text] .box { pointer-events: none; }
+  .stage[data-tool=text] { cursor: text; }
+  .ink-textedit { position: absolute; transform-origin: 0 0; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--accent); outline-offset: 3px;
+    background: transparent; resize: none; overflow: hidden; white-space: pre; z-index: 5; min-width: 12px; caret-color: var(--accent); }
   .ink-ui { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 3; }
   .inkbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
   .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
@@ -430,6 +433,7 @@
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 6l5 5-5 5"/><path d="M20 11H10a5 5 0 000 10h3"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></symbol>
   <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></symbol>
+  <symbol id="i-textart" viewBox="0 0 24 24"><path d="M4 19L10 5h1l6 14M6.5 14h8M17 4l3 3-2 2"/></symbol>
   <symbol id="i-pen" viewBox="0 0 24 24"><path d="M15.5 4.5l4 4L8 20H4v-4L15.5 4.5z"/></symbol>
   <symbol id="i-hl" viewBox="0 0 24 24"><path d="M14 4l6 6-8 8H6v-6l8-8zM4 21h16"/></symbol>
   <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M8 20h12M5.5 15.5l9-9 5 5-8.5 8.5H9z"/></symbol>
@@ -504,9 +508,10 @@
     <button id="redoBtn" class="icon" type="button" aria-label="Redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
     <button id="pinBtn" class="icon" type="button" aria-label="Pin note" aria-pressed="false"><svg class="i"><use href="#i-pin"/></svg></button>
   </header>
-  <div class="tools hidden" id="tools">
+  <div class="tools hidden" id="tools" data-keeps-text>
     <div class="tool-row">
     <button class="tool" type="button" data-tool="type" aria-pressed="true" title="Type" aria-label="Type"><svg class="i"><use href="#i-type"/></svg><span class="tl">Type</span></button>
+    <button class="tool" type="button" data-tool="text" aria-pressed="false" title="Text art" aria-label="Text art"><svg class="i"><use href="#i-textart"/></svg><span class="tl">Text art</span></button>
     <button class="tool" type="button" data-tool="pen" aria-pressed="false" title="Pen" aria-label="Pen"><svg class="i"><use href="#i-pen"/></svg><span class="tl">Pen</span><i class="pdot"></i></button>
     <button class="tool" type="button" data-tool="erase" aria-pressed="false" title="Erase" aria-label="Erase"><svg class="i"><use href="#i-eraser"/></svg><span class="tl">Erase</span></button>
     <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Lasso" aria-label="Lasso"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Lasso</span></button>
