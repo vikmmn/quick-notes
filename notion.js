@@ -1,4 +1,4 @@
-// Offshoot: a one-time copy of a Notion "Markdown & CSV" export into Offshoot › Notion.
+// Serendip: a one-time copy of a Notion "Markdown & CSV" export into Serendip › Notion.
 // Each page becomes a note; sub-pages go in a folder named after their parent page (the export's own layout);
 // images and files go to Notion › Attachments with their links rewritten. Safe to run again: what is there is skipped.
 (function () {
@@ -131,13 +131,13 @@
       '<li><b>' + x.pages.length + ' pages</b>' + (Object.keys(folders).length ? ', ' + Object.keys(folders).length + ' of them with sub-pages (these become folders)' : '') + '</li>' +
       '<li>' + nf + ' images and files used in pages (' + mb(x.bytes) + ' in the export)</li>' +
       (x.csv ? '<li>' + x.csv + ' database table' + (x.csv > 1 ? 's' : '') + ': each row\'s page comes in as a note; the table view itself is not copied</li>' : '') +
-      '</ul><p class="muted">Everything goes to Offshoot › Notion. Each page\'s Tags become labels.</p>';
+      '</ul><p class="muted">Everything goes to Serendip › Notion. Each page\'s Tags become labels.</p>';
     if (!x.pages.length) $('summary').innerHTML += '<p class="bad">No pages found. Make sure the export format was Markdown &amp; CSV.</p>';
     $('step3').classList.remove('hidden');
     say('');
   }
 
-  // ---------- One Notion page → one Offshoot Markdown file ----------
+  // ---------- One Notion page → one Serendip Markdown file ----------
   var PROP = /^([A-Za-z][\w ()/-]{0,38}):\s*(.*)$/;
   function convert(p, opts) {
     var text = String(p.text || '').replace(/\r\n?/g, '\n').replace(/^﻿/, '');
@@ -302,9 +302,9 @@
       await Promise.all(Array.from({ length: 6 }, worker));
       show(S.stop ? 'Stopped. Run it again any time to carry on where it stopped.' : 'Done.');
       $('result').innerHTML = (S.stop ? '<p><b>Stopped.</b> Run the copy again to carry on; what is already there is skipped.</p>' :
-        '<p><b>Copy finished.</b> Open Offshoot and the pages appear under Notion as it syncs.</p>') +
+        '<p><b>Copy finished.</b> Open Serendip and the pages appear under Notion as it syncs.</p>') +
         (log.length ? '<details open><summary>' + log.length + ' problem' + (log.length > 1 ? 's' : '') + '</summary><ul>' + log.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul></details>' : '') +
-        '<p><a class="button" href="./">Open Offshoot</a></p>';
+        '<p><a class="button" href="./">Open Serendip</a></p>';
     } catch (e) { say(e.message || String(e), true); }
     await holdScreen(false);
     $('importBtn').disabled = false; $('scanBtn').disabled = false;

@@ -1,4 +1,4 @@
-// Offshoot: the note canvas. Text boxes (rich text, saved as Markdown) and ink, placed anywhere.
+// Serendip: the note canvas. Text boxes (rich text, saved as Markdown) and ink, placed anywhere.
 // The page starts like Keep: one text box at the top left. Double-tap empty space for another text box,
 // draw with the pen (an S Pen draws without switching tools), and move things with the Move tool.
 (function () {

@@ -1,4 +1,4 @@
-// Offshoot: opens on the notes grid; a note is a canvas of text boxes and ink; folders are Drive folders.
+// Serendip: opens on the notes grid; a note is a canvas of text boxes and ink; folders are Drive folders.
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG;
@@ -664,7 +664,7 @@
     setTimeout(importSheet, 250); // after the drawer's history step is undone
   };
   function importSheet() {
-    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Offshoot. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
+    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Serendip. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
       '<div class="pick"><button type="button" data-act="keep">' + icon('notes') + 'From Google Keep (Takeout export)</button>' +
       '<button type="button" data-act="notion">' + icon('notes') + 'From Notion (Markdown export)</button></div>' +
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
@@ -901,12 +901,12 @@
     try { localStorage.setItem('qn-styles', JSON.stringify(MYSTYLES)); localStorage.setItem('qn-styles-gone', JSON.stringify(GONE)); } catch (e) { toast('Could not keep that style on this device.'); }
     if (!noSync) { clearTimeout(saveStyles.t); saveStyles.t = setTimeout(syncStyles, 3000); }
   }
-  // Your styles also live in Drive (Offshoot's main folder › .offshoot › styles.json), so every device has them.
+  // Your styles also live in Drive (Serendip's main folder › .serendip › styles.json), so every device has them.
   // Each style carries u (when it was last saved): the newer one wins; deleted ones stay deleted.
   async function syncStyles() {
     if (Drive.demo || !Drive.signedIn() || !navigator.onLine || !sync.root()) return;
     try {
-      var dir = await Drive.markedFolder('.offshoot', sync.root(), 'qnSettings');
+      var dir = await Drive.markedFolder('.serendip', sync.root(), 'qnSettings');
       var f = await Drive.findExact('styles.json', dir.id), remote = { styles: [], gone: {} };
       if (f) { try { remote = JSON.parse(await Drive.readText(f.id)) || remote; } catch (e) {} }
       var by = {}, changed = false, gone = Object.assign({}, remote.gone || {}, GONE);
@@ -1855,8 +1855,8 @@
     var parents = [];
     try { parents = await sync.rootParents(); } catch (e) { toast('Could not reach Drive just now.'); return; }
     var inReadables = CFG.READABLES_FOLDER_ID && parents.indexOf(CFG.READABLES_FOLDER_ID) > -1;
-    openSheet('<form><h2>Main folder</h2><p>Offshoot finds this folder by a hidden mark, so renaming or moving it is safe on every device.</p>' +
-      '<input id="rootName" type="text" maxlength="80" value="' + esc(sync.rootName() === 'Notes' ? 'Offshoot' : sync.rootName()) + '" autofocus>' +
+    openSheet('<form><h2>Main folder</h2><p>Serendip finds this folder by a hidden mark, so renaming or moving it is safe on every device.</p>' +
+      '<input id="rootName" type="text" maxlength="80" value="' + esc(sync.rootName() === 'Notes' ? 'Serendip' : sync.rootName()) + '" autofocus>' +
       (inReadables ? '<label class="chk" style="display:flex;gap:10px;align-items:center;margin:12px 0"><input type="checkbox" id="rootOut" checked> Move it out of “Readables”, to the top of My Drive</label>' : '') +
       '<div class="row"><button class="primary" type="submit">Save</button><button type="button" data-act="close">Cancel</button></div></form>', null, async function () {
       var name = $('rootName').value.trim(), out = $('rootOut') && $('rootOut').checked;
@@ -1877,7 +1877,7 @@
       '<div class="set"><b>Sync</b><p>' + esc(h.text) + '</p><button type="button" data-act="sync">Sync now</button></div>' +
       '<div class="set"><b>Folders</b><p>Default folder: <b style="display:inline;font-weight:500">' + esc(defaultFolder() ? folderName(defaultFolder()) : 'Inbox') + '</b>. New notes go here unless you are inside another folder.</p>' +
         '<button type="button" data-act="pickdefault">Choose default folder</button>' +
-        '<p style="margin-top:12px !important">Main folder in Drive: <b style="display:inline;font-weight:500">' + esc(sync.rootName()) + '</b> (your notes, and your pen tips, lines and patterns in its hidden .offshoot folder).</p>' +
+        '<p style="margin-top:12px !important">Main folder in Drive: <b style="display:inline;font-weight:500">' + esc(sync.rootName()) + '</b> (your notes, and your pen tips, lines and patterns in its hidden .serendip folder).</p>' +
         (Drive.demo ? '' : '<button type="button" data-act="renameroot">Rename or move the main folder</button>') +
         '<p style="margin-top:12px !important">When the app opens, show:</p><div class="pick" style="margin:0">' +
         [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
@@ -1887,7 +1887,7 @@
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
         '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button> <button type="button" data-act="fbinbox">Your feedback and replies</button></div>' +
-      '<div class="set"><b>About</b><p>Offshoot ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Offshoot can only see the files it makes.</p>' +
+      '<div class="set"><b>About</b><p>Serendip ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Serendip can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
         '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +
@@ -1924,6 +1924,10 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Now called Serendip', d: 'Named after serendipity: the delight of finding connections you were not looking for, as quick notes spread out, link up and become ideas. New icon too. Your notes stay exactly where they are; you can rename the Drive folder in Settings › Folders.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M80 82l30-28 32 15-17 36z M110 54l15 51" fill="none" stroke="' + A + '" stroke-width="3" stroke-linejoin="round"/>' +
+        '<circle cx="80" cy="82" r="7" fill="' + A + '"/><circle cx="110" cy="54" r="7" fill="' + A + '"/><circle cx="125" cy="105" r="7" fill="' + A + '"/><circle cx="142" cy="69" r="10" fill="' + Y + '"/>' +
+        '<circle cx="50" cy="40" r="3" fill="' + INKC + '" opacity=".4"/><circle cx="185" cy="38" r="3" fill="' + INKC + '" opacity=".4"/><circle cx="190" cy="104" r="3" fill="' + INKC + '" opacity=".4"/>') },
     { t: 'Shapes by holding, Distort, and styles everywhere', d: 'Draw a rough circle, box, triangle, star or line and keep the pen still at the end: it becomes a clean shape; keep holding and move to size or turn it. Select something and tap Distort: drag corners for perspective, the dots on the sides to skew. Lines now look right while you draw them (pencil, your own tips and lines). A tip can grow, or show more of itself, as you press harder. Your tips, lines and patterns are kept in Drive, so every device has them; rename or move the main folder in Settings.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="62" cy="70" r="26" fill="none" stroke="' + INKC + '" stroke-width="3"/><path d="M110 46l40 6-6 52-44-10z" fill="none" stroke="' + A + '" stroke-width="3"/>' +
         '<path d="M190 44l7 15 16 2-12 11 3 16-14-8-14 8 3-16-12-11 16-2z" fill="none" stroke="' + Y + '" stroke-width="2.5" stroke-linejoin="round"/>') },
@@ -1936,7 +1940,7 @@
     { t: 'Shapes, and notes that join and split', d: 'Select two or more things and tap Combine shapes: Join, Cut out, Overlap or Exclude. The parts stay whole: switch between them any time, or Release to get the parts back. In the notes list, hold a note to pick it, tap others, then Duplicate or Combine them into one note (side by side; Undo is there). In a note, select something and tap To new note to copy it, or extract it, into a note of its own.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="80" cy="70" r="34" fill="' + A + '"/><circle cx="114" cy="70" r="34" fill="' + SURF + '"/>' +
         '<rect x="150" y="34" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="160" y="74" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/>') },
-    { t: 'Offshoot, and images on the page', d: 'Quick Notes is now Offshoot: an endless page where ideas branch off. Your notes and Drive folder stay as they are. Images can now sit anywhere on the page: use the new Image button in the tools, move, resize and turn them with Select, and put them in front of or behind drawings. Select a text box holding images (Keep notes, for example) and tap Take images out to free them.',
+    { t: 'Serendip, and images on the page', d: 'Quick Notes is now Serendip: an endless page where ideas branch off. Your notes and Drive folder stay as they are. Images can now sit anywhere on the page: use the new Image button in the tools, move, resize and turn them with Select, and put them in front of or behind drawings. Select a text box holding images (Keep notes, for example) and tap Take images out to free them.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-6 120 70)"><rect x="96" y="34" width="96" height="64" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M102 92l24-24 18 18 12-12 30 18" fill="none" stroke="' + A + '" stroke-width="3"/></g>' +
         '<path d="M50 112c6-30 14-50 22-70" stroke="' + INKC + '" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M62 74c12-8 22-8 32-18" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="94" cy="56" r="7" fill="' + Y + '"/>') },
     { t: 'Select, line up, and collectives', d: 'The Lasso is now Select. In its card you can choose Lasso or Tap to pick (tap things to add them, tap again to take them out), and whether it picks from all layers, this layer or this group. Arrange lines things up, spreads them evenly, and brings them forward or sends them back. Collective ties things from different layers together, text included, so they move, turn and fade as one. To Text art and To text box switch text between the two kinds.',
@@ -1966,7 +1970,7 @@
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-8 120 70)"><rect x="70" y="34" width="100" height="72" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M84 84c10-14 20 6 30-4s16-10 24 0" fill="none" stroke="' + INKC + '" stroke-width="3.5" stroke-linecap="round"/></g>' +
         '<circle cx="54" cy="104" r="9" fill="' + A + '" opacity=".35"/><circle cx="186" cy="38" r="9" fill="' + A + '" opacity=".35"/><path d="M60 98l14-12M180 44l-14 12" stroke="' + A + '" stroke-width="3" stroke-linecap="round"/>') },
-    { t: 'Sign in once, stay signed in', d: 'Offshoot now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
+    { t: 'Sign in once, stay signed in', d: 'Serendip now keeps you signed in. The cloud at the top shows a tick when every note is in your Google Drive, and only asks for you when something needs you.',
       a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M92 86h52a16 16 0 002.4-31.8A24 24 0 0099 48.6 19 19 0 0092 86z" fill="' + SOFT + '" stroke="' + A + '" stroke-width="3"/><path d="M105 67l9 9 17-18" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>') },
     { t: 'A real sketchbook', d: 'Tap the pen at the top of a note. Pick a tool in the first row; its settings appear right under it: five pens, any colour, size and opacity.',
       a: art('<rect x="20" y="16" width="200" height="30" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/>' + [0, 1, 2, 3, 4, 5].map(function (i) { return '<circle cx="' + (42 + i * 31) + '" cy="31" r="7" fill="' + (i === 1 ? A : MUT) + '" opacity="' + (i === 1 ? 1 : .35) + '"/>'; }).join('') +
@@ -1992,7 +1996,7 @@
     function draw(dir) {
       var sl = SLIDES[i];
       el.innerHTML = '<div class="wn-card" role="dialog" aria-modal="true" aria-label="What’s new">' +
-        '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Offshoot' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
+        '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Serendip' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
         '<button type="button" class="wn-skip" data-wn="done">Skip</button></div>' +
         '<div class="wn-slide ' + (dir || '') + '">' + sl.a + '<h2>' + esc(sl.t) + '</h2><p>' + esc(sl.d) + '</p></div>' +
         '<div class="wn-foot"><div class="wn-dots">' + SLIDES.map(function (x, k) { return '<i' + (k === i ? ' class="on"' : '') + '></i>'; }).join('') + '</div>' +
@@ -2177,7 +2181,7 @@
     try { history.replaceState({ v: 'exit' }, ''); history.pushState(navState(), ''); } catch (e) {}
     showList();
 
-    // Android "Share to Offshoot": arrives as ?title=…&text=…&url=…
+    // Android "Share to Serendip": arrives as ?title=…&text=…&url=…
     var p = new URLSearchParams(location.search);
     if (p.has('text') || p.has('url') || p.has('title')) {
       var url = p.get('url') || '', text = p.get('text') || '';

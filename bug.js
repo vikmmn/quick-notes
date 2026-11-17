@@ -1,4 +1,4 @@
-// Offshoot: send feedback. Touching the small feedback button takes a picture of the whole app at that instant;
+// Serendip: send feedback. Touching the small feedback button takes a picture of the whole app at that instant;
 // you draw on it in place, double-tap to write notes where you want them, and tap the button again to send. It is
 // saved as a note in "Feedback" (with the picture and the
 // details needed to fix it: version, device, what was on screen, the last things tapped and any errors).
@@ -354,7 +354,7 @@
       small = c2.toDataURL('image/jpeg', 0.72);
     }
     var lines = [
-      'Offshoot ' + (CFG.VERSION || '?') + ' · ' + new Date().toString().slice(0, 24),
+      'Serendip ' + (CFG.VERSION || '?') + ' · ' + new Date().toString().slice(0, 24),
       'Device: ' + navigator.userAgent,
       'Screen: ' + innerWidth + '×' + innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x · ' +
         (matchMedia('(display-mode: standalone)').matches ? 'installed app' : 'browser tab') + ' · ' + (navigator.onLine ? 'online' : 'offline') +
