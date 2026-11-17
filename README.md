@@ -11,9 +11,11 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Each note is a canvas: a text box at the top left like Keep; double-tap anywhere for another text box;
   write or draw with a pen (an S Pen draws without switching tools; the finger scrolls); move text and drawings
   with the Move tool; the canvas grows as you need it.
-- Drawing: pen, pencil, marker, brush and highlighter with colour, size and opacity; whole-stroke and slicing
+- Drawing: pen, pencil, marker, brush and highlighter with colour, size, opacity and smoothing; whole-stroke and slicing
   erasers; lasso to select, move, resize, rotate, duplicate, recolour and group; nudge and smooth with a reach;
-  tap-to-fill closed shapes or draw filled shapes; layers with opacity, blend modes, hide, lock and masking.
+  tap-to-fill closed shapes or draw filled shapes; layers (with previews) with opacity, blend modes, hide, lock and masking.
+  The stroke being drawn is painted on a low-latency canvas and only the changed parts of the drawing are redrawn.
+  Pen › Finger: a finger draws, moves the page, or (Auto) draws until a pen is used on the device.
 - Word-style formatting (bold, italic, underline, strikethrough, highlight, colour, size, headings, lists,
   checklists, quotes, alignment, links), saved as Markdown. Undo and redo for everything.
 - Smart search on the device: word forms, small typos, "exact phrases", ranked, with highlighted snippets.
@@ -23,9 +25,10 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Labels work across folders: tap one to see every note with it, narrow by folder, rename it everywhere.
 - Android "Share to Quick Notes" for links and text (once installed).
 - Keeps sending changes while the phone sleeps (Background Sync in the service worker, Android Chrome).
-- A bug button (drag it anywhere; hide it in Settings): takes a picture of the screen to draw on, asks what went
-  wrong, and saves a note in "Bug reports" with the picture and the details (version, device, what was on screen,
-  the last taps and any errors). `bug.js`, with `screenshot.js` (html-to-image, MIT) for the picture.
+- A feedback button (drag it anywhere; hide it in Settings): takes a picture of the whole app to draw on, asks for a
+  problem, idea or question, and saves a note in "Feedback" (or an existing "Bug reports" folder) with the picture and
+  the details (version, device, what was on screen, the last taps and any errors). `bug.js`, with `screenshot.js`
+  (html-to-image, MIT) for the picture.
 - Updates only when you tap **Update now** (Settings › Check for update).
 - A cloud icon shows at a glance whether every note is in Drive; a banner appears only when something needs you.
 - Stays signed in with the optional sign-in helper (see below).

@@ -3,7 +3,7 @@
 // A note's drawing is a list of layers, bottom first:
 //   { id, name, vis, lock, op (opacity 0–1), blend ('normal', 'multiply'…), clip (masked by the layer below), items: [...] }
 // Items, bottom first, in note coordinates:
-//   stroke { id, t: 's', b: brush, c: colour, s: size, o: opacity, f: 1 if drawn with a pen (real pressure), g: group id, p: [[x, y, pressure], …] }
+//   stroke { id, t: 's', b: brush, c: colour, s: size, o: opacity, f: 1 if drawn with a pen (real pressure), st: smoothing 0–1 (optional), g: group id, p: [[x, y, pressure], …] }
 //   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …] }   (one or more closed outlines)
 // Saved inside the note's Markdown file as <!-- qn:ink {"v":2,"layers":[…]} -->.
 // Older notes (groups of strokes, positions relative to the group) are converted when they are opened.
@@ -64,6 +64,7 @@
         else {
           x.b = it.b; x.s = r1(it.s);
           if (it.f) x.f = 1;
+          if (it.st != null) x.st = Math.round(it.st * 100) / 100;
           x.p = it.p.map(function (q) { return [r1(q[0]), r1(q[1]), Math.round((q[2] == null ? 0.5 : q[2]) * 100) / 100]; });
         }
         return x;
@@ -78,8 +79,17 @@
   }
 
   // ---------- Drawing ----------
-  var cache = new WeakMap();
-  function invalidate(it) { cache.delete(it); }
+  var cache = new WeakMap(), boxCache = new WeakMap();
+  function invalidate(it) { cache.delete(it); boxCache.delete(it); }
+  // The outline of a stroke (perfect-freehand), for the saved drawing and for the live stroke while drawing.
+  function outline(it, pts, last) {
+    var B = BRUSH[it.b] || BRUSH.pen;
+    return pts.length ? LIB().getStroke(pts, {
+      size: widthOf(it), thinning: it.f ? Math.min(0.7, B.thin + 0.1) : B.thin, smoothing: B.smooth, streamline: it.st != null ? it.st : B.stream,
+      simulatePressure: !it.f && B.thin > 0, last: last,
+      start: B.taper ? { taper: widthOf(it) * 3 } : undefined, end: B.taper ? { taper: widthOf(it) * 4 } : undefined
+    }) : [];
+  }
   function itemD(it) {
     var d = cache.get(it);
     if (d != null) return d;
@@ -88,12 +98,7 @@
         return 'M' + ring.map(function (q) { return q[0].toFixed(1) + ' ' + q[1].toFixed(1); }).join('L') + 'Z';
       }).join('');
     } else {
-      var B = BRUSH[it.b] || BRUSH.pen, pts = it.p;
-      var out = pts.length ? LIB().getStroke(pts, {
-        size: widthOf(it), thinning: it.f ? Math.min(0.7, B.thin + 0.1) : B.thin, smoothing: B.smooth, streamline: B.stream,
-        simulatePressure: !it.f && B.thin > 0, last: true,
-        start: B.taper ? { taper: widthOf(it) * 3 } : undefined, end: B.taper ? { taper: widthOf(it) * 4 } : undefined
-      }) : [];
+      var out = outline(it, it.p, true);
       if (!out.length) d = '';
       else {
         d = 'M' + out[0][0].toFixed(1) + ' ' + out[0][1].toFixed(1);
@@ -104,18 +109,18 @@
     cache.set(it, d);
     return d;
   }
-  function itemSvg(it) {
-    var B = BRUSH[it.b] || {};
+  function itemSvg(it, plain) {
+    var B = plain ? {} : BRUSH[it.b] || {};
     var o = it.o == null ? 1 : it.o;
     return '<path data-i="' + it.id + '" d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
       (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') +
       (B.grain ? ' filter="url(#qn-grain)"' : '') + (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
   }
-  function layerSvg(l, below, prefix) {
+  function layerSvg(l, below, prefix, plain) {
     var st = 'opacity:' + l.op + ';' + (l.blend && l.blend !== 'normal' ? 'mix-blend-mode:' + l.blend + ';' : '') + 'isolation:isolate';
     var mask = l.clip && below ? ' mask="url(#' + prefix + 'm-' + l.id + ')"' : '';
     return '<g id="' + prefix + 'L-' + l.id + '" data-l="' + l.id + '" style="' + st + '"' + mask + (l.vis ? '' : ' display="none"') + '>' +
-      l.items.map(itemSvg).join('') + '</g>';
+      l.items.map(function (it) { return itemSvg(it, plain); }).join('') + '</g>';
   }
   function defsSvg(layers, prefix) {
     var masks = '';
@@ -126,18 +131,21 @@
     return '<defs><filter id="qn-grain" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="1" seed="3" result="n"/>' +
       '<feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.6 1.35" result="a"/><feComposite in="SourceGraphic" in2="a" operator="in"/></filter>' + masks + '</defs>';
   }
-  function markup(layers, prefix, dx, dy) {
+  function markup(layers, prefix, dx, dy, plain) {
     return defsSvg(layers, prefix) + '<g transform="translate(' + dx + ' ' + dy + ')">' +
-      layers.map(function (l, i) { return layerSvg(l, layers[i - 1], prefix); }).join('') + '</g>';
+      layers.map(function (l, i) { return layerSvg(l, layers[i - 1], prefix, plain); }).join('') + '</g>';
   }
 
   // ---------- Geometry ----------
   function itemBox(it) {
+    var cached = boxCache.get(it);
+    if (cached) return cached;
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, pad = it.t === 'f' ? 0 : widthOf(it) / 2;
     var each = function (q) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; };
     if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(each); }); else it.p.forEach(each);
-    if (x0 === Infinity) return { x: 0, y: 0, w: 0, h: 0 };
-    return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
+    var r = x0 === Infinity ? { x: 0, y: 0, w: 0, h: 0 } : { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
+    boxCache.set(it, r);
+    return r;
   }
   function unionBox(list) {
     var b = null;
@@ -162,6 +170,8 @@
     return c;
   }
   function hits(it, x, y, r) {
+    var bb = itemBox(it);
+    if (x < bb.x - r || y < bb.y - r || x > bb.x + bb.w + r || y > bb.y + bb.h + r) return false;
     if (it.t === 'f') return it.d.some(function (ring) { return inPoly(x, y, ring); });
     var w = widthOf(it) / 2 + r, p = it.p;
     if (p.length === 1) return Math.hypot(p[0][0] - x, p[0][1] - y) <= w;
@@ -313,7 +323,7 @@
     if (!b) return '';
     var w = Math.max(1, b.w), h = Math.max(1, b.h), sc = Math.min(1, maxW / w, maxH / h);
     return '<svg class="ink-thumb" width="' + Math.round(w * sc) + '" height="' + Math.round(h * sc) + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-      markup(layers, 't' + (++thumbN) + '-', -b.x, -b.y) + '</svg>';
+      markup(layers, 't' + (++thumbN) + '-', -b.x, -b.y, true) + '</svg>';
   }
 
   // ---------- The engine: tools working on one note's layers ----------
@@ -331,10 +341,78 @@
 
     function active() { return layers.filter(function (l) { return l.id === activeId; })[0] || layers[layers.length - 1]; }
     function editable(l) { return l.vis && !l.lock; }
-    function render() { cancelAnimationFrame(raf); raf = 0; svg.innerHTML = markup(layers, 'c-', M, M); drawUi(); }
+    function render() { cancelAnimationFrame(raf); raf = 0; pending = []; svg.innerHTML = markup(layers, 'c-', M, M); drawUi(); }
     function soon() { if (!raf) raf = requestAnimationFrame(render); }
-    function done(kind) { render(); o.changed(kind || 'ink'); }
-    function layerOf(it) { return layers.filter(function (l) { return l.items.indexOf(it) > -1; })[0]; }
+    // Undo keeps earlier versions of the drawing by reference (no copies), so an item is never changed in place once
+    // it has been saved in a version: the first change in a gesture swaps in a copy (own), and every change that is
+    // recorded (commit) starts afresh.
+    var owned = new WeakSet();
+    function own(it) {
+      if (owned.has(it)) return it;
+      var l = layerOf(it); if (!l) return it;
+      var c = JSON.parse(JSON.stringify(it));
+      l.items[l.items.indexOf(it)] = c; owned.add(c);
+      if (sel) { var k = sel.items.indexOf(it); if (k > -1) sel.items[k] = c; }
+      return c;
+    }
+    function commit(kind) { o.changed(kind || 'ink'); owned = new WeakSet(); }
+    function done(kind) { render(); commit(kind); }
+    function layerOf(it) { for (var i = 0; i < layers.length; i++) if (layers[i].items.indexOf(it) > -1) return layers[i]; return null; }
+
+    // ---- Changing only what changed, instead of redrawing the whole drawing ----
+    function elOf(it) { return svg.querySelector('[data-i="' + it.id + '"]'); }
+    function groupOf(l) { return svg.querySelector('[data-l="' + l.id + '"]'); }
+    var pending = [], patchRaf = 0;
+    function patch(items) { items.forEach(function (it) { if (pending.indexOf(it) < 0) pending.push(it); }); if (!patchRaf) patchRaf = requestAnimationFrame(flushPatch); }
+    function flushPatch() {
+      cancelAnimationFrame(patchRaf); patchRaf = 0;
+      var list = pending; pending = [];
+      list.forEach(function (it) { var e = elOf(it); if (e) e.setAttribute('d', itemD(it)); });
+      drawUi();
+    }
+    function addEl(l, it) { var g = groupOf(l); if (g) g.insertAdjacentHTML('beforeend', itemSvg(it)); else soon(); }
+
+    // ---- The stroke being drawn: painted on a low-latency canvas over the page, one frame at a time ----
+    var host = o.uiHost || stage;
+    var live = document.createElement('canvas'); live.className = 'ink-live'; host.appendChild(live);
+    var lctx = null, liveRaf = 0, liveShown = false;
+    try { lctx = live.getContext('2d', { desynchronized: true }); } catch (e) {}
+    if (!lctx) lctx = live.getContext('2d');
+    function inkColor(c) {
+      if (c && c !== 'ink') return c;
+      return getComputedStyle(svg).getPropertyValue('--ink').trim() || '#202124';
+    }
+    function startLive(d) {
+      var dpr = Math.min(3, window.devicePixelRatio || 1), W = host.clientWidth, H = host.clientHeight;
+      if (live.width !== Math.round(W * dpr) || live.height !== Math.round(H * dpr)) {
+        live.width = Math.round(W * dpr); live.height = Math.round(H * dpr);
+        live.style.width = W + 'px'; live.style.height = H + 'px';
+      }
+      // The view as a matrix (page → screen), so the stroke is drawn at the right place, size and turn.
+      var a = o.toScreen(0, 0), bx = o.toScreen(1, 0), by = o.toScreen(0, 1);
+      d.m = [dpr * (bx[0] - a[0]), dpr * (bx[1] - a[1]), dpr * (by[0] - a[0]), dpr * (by[1] - a[1]), dpr * a[0], dpr * a[1]];
+      var B = BRUSH[d.stroke.b] || {};
+      d.color = inkColor(d.stroke.c);
+      d.alpha = (d.stroke.o == null ? 1 : d.stroke.o) * (d.layer.op == null ? 1 : d.layer.op) * (B.grain ? 0.88 : 1);
+      live.style.mixBlendMode = B.blend || d.layer.blend !== 'normal' && d.layer.blend || '';
+      clearLive();
+    }
+    function clearLive() { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); liveShown = false; }
+    function drawLive() {
+      liveRaf = 0;
+      var d = drag; if (!d || !d.stroke) return;
+      var it = d.stroke, pts = d.pred && d.pred.length ? it.p.concat(d.pred) : it.p;
+      var out = outline(it, pts, false);
+      clearLive();
+      if (!out.length) return;
+      lctx.setTransform(d.m[0], d.m[1], d.m[2], d.m[3], d.m[4], d.m[5]);
+      lctx.beginPath(); lctx.moveTo(out[0][0], out[0][1]);
+      for (var i = 1; i < out.length; i++) lctx.lineTo(out[i][0], out[i][1]);
+      lctx.closePath();
+      lctx.globalAlpha = d.alpha; lctx.fillStyle = d.color; lctx.fill();
+      liveShown = true;
+    }
+    function liveSoon() { if (!liveRaf) liveRaf = requestAnimationFrame(drawLive); }
 
     // ---- Overlay: lasso line, tool circle, selection frame and handles ----
     var cursor = null;
@@ -400,13 +478,13 @@
     bar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     bar.addEventListener('input', function (e) {
       if (e.target.dataset.op == null || !sel) return;
-      var v = +e.target.value / 100; sel.items.forEach(function (it) { it.o = v; }); render();
+      var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { own(it).o = v; }); render();
     });
     bar.addEventListener('change', function (e) { if (e.target.dataset.op != null) o.changed('ink'); });
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
-      if (b.dataset.c) { sel.items.forEach(function (it) { it.c = b.dataset.c; }); done(); renderBar('color'); return; }
+      if (b.dataset.c) { sel.items.slice().forEach(function (it) { own(it).c = b.dataset.c; }); done(); renderBar('color'); return; }
       if (b.dataset.tol) {
         var to = layers.filter(function (l) { return l.id === b.dataset.tol; })[0];
         sel.items.forEach(function (it) { var l = layerOf(it); if (l && l !== to) { l.items.splice(l.items.indexOf(it), 1); to.items.push(it); } });
@@ -425,8 +503,8 @@
         });
         done(); setSel(copies); return;
       }
-      if (act === 'group') { var g = uid('g'); sel.items.forEach(function (it) { it.g = g; }); done(); renderBar(); return; }
-      if (act === 'ungroup') { sel.items.forEach(function (it) { delete it.g; }); done(); renderBar(); return; }
+      if (act === 'group') { var g = uid('g'); sel.items.slice().forEach(function (it) { own(it).g = g; }); commit(); renderBar(); return; }
+      if (act === 'ungroup') { sel.items.slice().forEach(function (it) { delete own(it).g; }); commit(); renderBar(); return; }
     });
 
     // ---- Transforming the selection: drag inside to move, the corner to scale, the knob to rotate ----
@@ -439,6 +517,7 @@
       return null;
     }
     function startTransform(kind, p) {
+      sel.items.slice().forEach(own);
       var b = sel.box;
       drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }) };
     }
@@ -462,7 +541,7 @@
         else { it.p = src.p.map(function (q) { var m = map(q); return [m[0], m[1], q[2]]; }); if (d.kind === 'scale') it.s = src.s * s; }
         invalidate(it);
       });
-      refreshBox(); soon();
+      refreshBox(); patch(sel.items);
     }
 
     // ---- Pointer input (positions are note coordinates) ----
@@ -476,10 +555,10 @@
         var L = active();
         if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
         var pen = opt.pen, it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [p] };
+        if (pen.st != null) it.st = pen.st;
         if (ev.pointerType === 'pen') it.f = 1;
-        var g = svg.querySelector('[data-l="' + L.id + '"]');
-        var tmp = document.createElementNS(NS, 'g'); g.appendChild(tmp);
-        drag = { stroke: it, el: tmp, layer: L };
+        drag = { stroke: it, layer: L };
+        startLive(drag); liveSoon();
         return true;
       }
       if (tool === 'erase') { drag = { erase: true, any: false }; cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); drawUi(); return true; }
@@ -491,16 +570,21 @@
       }
       return false;
     };
-    self.move = function (p, ev, pts) {
+    self.move = function (p, ev, pts, pred) {
       if (!drag) {
         if (ev.pointerType !== 'touch' && (tool === 'erase' || tool === 'nudge')) { cursor = [p[0], p[1], (tool === 'erase' ? opt.erase.s : opt.nudge.r) / Z()]; drawUi(); }
         return;
       }
       if (drag.kind) { applyTransform(p); return; }
       if (drag.stroke) {
-        (pts || [p]).forEach(function (q) { drag.stroke.p.push(q); });
-        invalidate(drag.stroke);
-        drag.el.innerHTML = itemSvg(drag.stroke);
+        var sp = drag.stroke.p;
+        (pts || [p]).forEach(function (q) {
+          var last = sp[sp.length - 1];
+          if (last && Math.abs(q[0] - last[0]) + Math.abs(q[1] - last[1]) < 0.15 / Z()) { last[2] = Math.max(last[2], q[2]); return; } // no movement
+          sp.push(q);
+        });
+        drag.pred = pred && pred.length ? pred.slice(-2) : null;
+        liveSoon();
         return;
       }
       if (drag.lasso) { drag.lasso.push(p); drawUi(); return; }
@@ -513,22 +597,28 @@
           l.items.forEach(function (it) {
             var b = itemBox(it);
             if (p[0] < b.x - R || p[0] > b.x + b.w + R || p[1] < b.y - R || p[1] > b.y + b.h + R) return;
-            if (opt.nudge.m === 'smooth' ? smooth(it, p[0], p[1], R, k) : nudge(it, drag.last[0], drag.last[1], dx, dy, R, k)) drag.any = true;
+            var t = own(it);
+            if (opt.nudge.m === 'smooth' ? smooth(t, p[0], p[1], R, k) : nudge(t, drag.last[0], drag.last[1], dx, dy, R, k)) { drag.any = true; patch([t]); }
           });
         });
-        drag.last = p; soon(); return;
+        drag.last = p; drawUi(); return;
       }
     };
     self.up = function (p) {
       var d = drag; drag = null;
       if (!d) return;
-      if (d.kind) { refreshBox(); done(); return; }
+      if (d.kind) { refreshBox(); flushPatch(); commit(); return; }
       if (d.stroke) {
+        cancelAnimationFrame(liveRaf); liveRaf = 0;
         if (d.stroke.p.length === 1) d.stroke.p.push([p[0] + 0.4, p[1] + 0.4, p[2]]);
-        d.layer.items.push(d.stroke); invalidate(d.stroke); done(); return;
+        d.layer.items.push(d.stroke); invalidate(d.stroke);
+        addEl(d.layer, d.stroke);
+        // Take the live stroke away once the saved one is on screen (two frames), unless a new stroke has begun.
+        requestAnimationFrame(function () { requestAnimationFrame(function () { if (!drag || !drag.stroke) clearLive(); }); });
+        commit(); return;
       }
-      if (d.erase) { cursor = null; drawUi(); if (d.any) done(); return; }
-      if (d.nudge) { cursor = null; drawUi(); if (d.any) done(); return; }
+      if (d.erase) { cursor = null; drawUi(); if (d.any) commit(); return; }
+      if (d.nudge) { cursor = null; flushPatch(); if (d.any) commit(); return; }
       if (d.tap) { fillAt(d.tap); return; }
       if (d.lasso) {
         var poly = d.lasso, len = 0;
@@ -561,7 +651,12 @@
         setSel(picked.length ? picked : null);
       }
     };
-    self.cancel = function () { if (drag && drag.el) drag.el.remove(); drag = null; cursor = null; drawUi(); };
+    self.cancel = function () {
+      if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); }
+      if (drag && (drag.kind || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
+      drag = null; cursor = null; drawUi();
+    };
+    self.busy = function () { return !!drag; };
     self.leave = function () { if (!drag) { cursor = null; drawUi(); } };
 
     function eraseAt(p) {
@@ -571,15 +666,17 @@
         for (var i = l.items.length - 1; i >= 0; i--) {
           var it = l.items[i];
           if (!hits(it, p[0], p[1], r)) continue;
+          var e = elOf(it);
           if (opt.erase.m === 'slice' && it.t !== 'f') {
             var parts = slice(it, p[0], p[1], r);
             if (!parts) continue;
             Array.prototype.splice.apply(l.items, [i, 1].concat(parts));
+            if (e) e.insertAdjacentHTML('afterend', parts.map(function (q) { return itemSvg(q); }).join(''));
           } else l.items.splice(i, 1);
+          if (e) e.remove(); else soon();
           drag.any = true;
         }
       });
-      if (drag.any) soon();
     }
     function addFill(L, rings) {
       var f = { id: uid('f'), t: 'f', c: opt.fill.c, o: opt.fill.o, d: rings };
@@ -606,12 +703,28 @@
       var all = []; layers.forEach(function (l) { all = all.concat(l.items); });
       var b = unionBox(all); return b ? { r: b.x + b.w, b: b.y + b.h } : { r: 0, b: 0 };
     };
-    self.shift = function (dx, dy) { layers.forEach(function (l) { l.items.forEach(function (it) { eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); invalidate(it); }); }); render(); };
+    self.shift = function (dx, dy) {
+      layers.forEach(function (l) { l.items = l.items.map(function (it) { var c = JSON.parse(JSON.stringify(it)); eachPoint(c, function (q) { q[0] += dx; q[1] += dy; }); return c; }); });
+      render(); owned = new WeakSet();
+    };
     self.clearSelection = function () { setSel(null); };
     self.reset = function () { // after undo/redo replaced the layers
       if (!layers.length) layers.push(newLayer());
       if (!active() || active().id !== activeId) activeId = layers.filter(function (l) { return l.id === activeId; }).length ? activeId : layers[layers.length - 1].id;
-      sel = null; bar.classList.add('hidden'); render();
+      sel = null; bar.classList.add('hidden'); owned = new WeakSet(); render();
+    };
+    // Little pictures of each layer, all at the same scale, for the layers panel.
+    self.layerThumbs = function (w, h) {
+      var all = []; layers.forEach(function (l) { all = all.concat(l.items); });
+      var b = unionBox(all), out = {};
+      layers.forEach(function (l) {
+        if (!b || !l.items.length) { out[l.id] = ''; return; }
+        var sc = Math.min(w / Math.max(1, b.w), h / Math.max(1, b.h));
+        var copy = { id: l.id, vis: true, op: 1, blend: 'normal', clip: false, items: l.items };
+        out[l.id] = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + (w / sc) + ' ' + (h / sc) + '" preserveAspectRatio="xMidYMid meet">' +
+          markup([copy], 'lt' + (++thumbN) + '-', -b.x + (w / sc - b.w) / 2, -b.y + (h / sc - b.h) / 2, true) + '</svg>';
+      });
+      return out;
     };
     // Layers
     self.layers = function () { return layers.map(function (l) { return { id: l.id, name: l.name, vis: l.vis, lock: l.lock, op: l.op, blend: l.blend, clip: l.clip, n: l.items.length, active: l.id === activeId }; }).reverse(); };
@@ -641,6 +754,6 @@
     render();
   }
 
-  window.QNInk = { Engine: Engine, svgFor: function (layers, prefix, dx, dy) { return markup(layers, prefix, dx, dy); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  window.QNInk = { Engine: Engine, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();

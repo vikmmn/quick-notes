@@ -224,13 +224,15 @@
     n.body = N.bodyOf(n);
     if (n === S.cur) {
       clearTimeout(S.saveTimer);
-      S.saveTimer = setTimeout(saveNow, 300);
+      S.saveTimer = setTimeout(saveNow, 600);
     } else store.put(n);
     sync.schedule(n.fileId ? 2500 : 8000); // a new note waits a little, so its file name gets more than the first letters
     renderStatus();
   }
   function saveNow() {
     clearTimeout(S.saveTimer);
+    // Saving a big drawing takes a moment; never in the middle of a stroke.
+    if (S.canvas && S.canvas.busy && S.canvas.busy()) { S.saveTimer = setTimeout(saveNow, 400); return; }
     if (S.cur && !S.cur.isDraft && notes[S.cur.id]) store.put(S.cur);
   }
 
@@ -620,9 +622,13 @@
     blur: function () { setTimeout(function () { if (!S.canvas || !S.canvas.active() || !document.activeElement.closest || !document.activeElement.closest('.ProseMirror')) showFmt(false); }, 120); },
     selection: function (ed) { updateFmt(ed); },
     penSeen: function () {
-      if (S.penToast) return; S.penToast = true;
-      toast('Pen found: the pen writes, your finger scrolls.', null, null, 4000);
-    }
+      PREF.penSeen = true; savePref();
+      if (S.penToast || PREF.finger) return; S.penToast = true;
+      toast('Pen found: the pen writes, your finger moves the page. To draw with a finger too, choose Pen › Finger › Draws.', null, null, 5000);
+    },
+    penKnown: function () { return !!PREF.penSeen; },
+    finger: function () { return PREF.finger || 'auto'; },
+    head: function () { return $('noteHead'); }
   };
   function openNote(n, isNew) {
     if (S.cur) closeNote();
@@ -765,8 +771,12 @@
     Array.prototype.forEach.call($('tools').querySelectorAll('[data-tool]'), function (b) { b.setAttribute('aria-pressed', b.dataset.tool === t ? 'true' : 'false'); });
     var o = INKOPT, html = '', G = function (x, half) { return '<div class="grp' + (half ? ' half' : '') + '">' + x + '</div>'; };
     if (t === 'pen') {
+      var fm = PREF.finger || 'auto';
       html = G(Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('')) +
-        G(swatches(o.pen.c, 'pen')) + G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100));
+        G(swatches(o.pen.c, 'pen')) + G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
+          slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
+        G(HINT('Finger') + chip('Auto', 'data-finger="auto" title="Draws until a pen is used, then moves the page"', fm === 'auto') +
+          chip('Draws', 'data-finger="draw"', fm === 'draw') + chip('Moves the page', 'data-finger="scroll"', fm === 'scroll'));
     } else if (t === 'erase') {
       html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
         slider('Size', 'erase', 's', 3, 60, o.erase.s));
@@ -797,6 +807,11 @@
     var b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.tool) return setTool(b.dataset.tool);
+    if (b.dataset.finger) {
+      PREF.finger = b.dataset.finger === 'auto' ? '' : b.dataset.finger; savePref();
+      toast(b.dataset.finger === 'draw' ? 'Your finger draws. Two fingers still move and zoom the page.' : b.dataset.finger === 'scroll' ? 'Your finger moves the page; only the pen draws.' : 'Your finger draws until you use a pen.', null, null, 3000);
+      return setTool(PREF.tool);
+    }
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
@@ -836,26 +851,40 @@
 
   // ---------- Layers panel ----------
   function toggleLayers() { var p = $('layersPanel'); p.classList.toggle('hidden'); if (!p.classList.contains('hidden')) renderLayers(); }
+  var LIC = {
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.2 4.1M6.6 6.6A17 17 0 002 12s3.6 7 10 7a9.8 9.8 0 005.4-1.6M9.9 9.9a3 3 0 004.2 4.2"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 017.7-1.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+    dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>',
+    merge: '<path d="M7 4v5a5 5 0 005 5h0a5 5 0 015 5v1M17 4v5a5 5 0 01-5 5M12 20v-6"/>',
+    rename: '<path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/>', del: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
+  };
+  function lic(name, attrs, label, cls) { return '<button type="button" class="lic' + (cls ? ' ' + cls : '') + '" ' + attrs + ' aria-label="' + label + '" title="' + label + '"><svg viewBox="0 0 24 24">' + LIC[name] + '</svg></button>'; }
   function renderLayers() {
     var p = $('layersPanel');
     if (!S.canvas || p.classList.contains('hidden')) return;
     p.style.top = Math.round($('tools').getBoundingClientRect().bottom + 6) + 'px';
-    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS;
-    p.innerHTML = '<div class="lhead"><b>Layers</b><button type="button" data-lo="add">+ Add</button><button type="button" class="icon" data-lo="close" aria-label="Close">✕</button></div>' +
+    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(64, 44);
+    p.innerHTML = '<div class="lhead"><b>Layers</b>' + lic('plus', 'data-lo="add"', 'Add a layer', 'ladd') + lic('close', 'data-lo="close"', 'Close') + '</div>' +
       list.map(function (l, i) {
-        var row = '<div class="lrow' + (l.active ? ' on' : '') + '" data-id="' + l.id + '">' +
-          '<button type="button" class="icon" data-lo="vis" aria-label="' + (l.vis ? 'Hide' : 'Show') + '" title="' + (l.vis ? 'Hide' : 'Show') + '">' + (l.vis ? '◉' : '○') + '</button>' +
-          '<span class="lname" data-lo="active">' + esc(l.name) + ' <small>' + l.n + (l.clip ? ' · clipped' : '') + '</small></span>' +
-          '<button type="button" class="icon" data-lo="lock" aria-label="' + (l.lock ? 'Unlock' : 'Lock') + '" title="' + (l.lock ? 'Unlock' : 'Lock') + '">' + (l.lock ? '🔒' : '🔓') + '</button></div>';
-        if (l.active) row += '<div class="lmore" data-id="' + l.id + '">' +
-          '<label class="oslider">Opacity <input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop></label>' +
-          '<label class="oslider">Blend <select data-lblend>' + blends.map(function (b) { return '<option' + (b === l.blend ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select></label>' +
-          '<label class="oslider"><input type="checkbox" data-lclip' + (l.clip ? ' checked' : '') + (i === list.length - 1 ? ' disabled' : '') + '> Mask with layer below</label>' +
-          '<div class="lbtns"><button type="button" data-lo="up"' + (i === 0 ? ' disabled' : '') + '>Up</button><button type="button" data-lo="down"' + (i === list.length - 1 ? ' disabled' : '') + '>Down</button>' +
-          '<button type="button" data-lo="dup">Duplicate</button><button type="button" data-lo="merge"' + (i === list.length - 1 ? ' disabled' : '') + '>Merge down</button>' +
-          '<button type="button" data-lo="rename">Rename</button><button type="button" data-lo="delete" class="danger">Delete</button></div></div>';
-        return row;
-      }).join('') + '<p class="where" style="margin:8px 4px 2px">New drawing goes into the highlighted layer.</p>';
+        var info = l.n + (l.n === 1 ? ' item' : ' items') + (l.op < 1 ? ' · ' + Math.round(l.op * 100) + '%' : '') + (l.blend !== 'normal' ? ' · ' + l.blend : '') + (l.clip ? ' · masked' : '');
+        var card = '<div class="lcard' + (l.active ? ' on' : '') + (l.vis ? '' : ' hid') + '" data-id="' + l.id + '" data-lo="active">' +
+          '<div class="lthumb">' + (th[l.id] || '') + '</div>' +
+          '<div class="lmeta"><b>' + esc(l.name) + '</b><small>' + info + '</small></div>' +
+          lic(l.vis ? 'eye' : 'eyeOff', 'data-lo="vis"', l.vis ? 'Hide' : 'Show', l.vis ? '' : 'off') +
+          lic(l.lock ? 'lock' : 'unlock', 'data-lo="lock"', l.lock ? 'Unlock' : 'Lock', l.lock ? '' : 'off') + '</div>';
+        if (l.active) card += '<div class="ltools" data-id="' + l.id + '">' +
+          '<label class="lop">Opacity<input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop><output>' + Math.round(l.op * 100) + '%</output></label>' +
+          '<div class="lrow2"><select data-lblend aria-label="Blend">' + blends.map(function (b) { return '<option value="' + b + '"' + (b === l.blend ? ' selected' : '') + '>' + b.replace('-', ' ') + '</option>'; }).join('') + '</select>' +
+          '<button type="button" class="lmask" data-lo="clip" aria-pressed="' + !!l.clip + '"' + (i === list.length - 1 ? ' disabled' : '') + ' title="Only show this layer where the layer below has paint">Mask</button></div>' +
+          '<div class="lacts">' + lic('up', 'data-lo="up"' + (i === 0 ? ' disabled' : ''), 'Move up') + lic('down', 'data-lo="down"' + (i === list.length - 1 ? ' disabled' : ''), 'Move down') +
+          lic('dup', 'data-lo="dup"', 'Duplicate') + lic('merge', 'data-lo="merge"' + (i === list.length - 1 ? ' disabled' : ''), 'Merge down') +
+          lic('rename', 'data-lo="rename"', 'Rename') + lic('del', 'data-lo="delete"', 'Delete', 'danger') + '</div></div>';
+        return card;
+      }).join('');
   }
   $('layersPanel').addEventListener('click', function (e) {
     var b = e.target.closest('[data-lo]'); if (!b || !S.canvas) return;
@@ -879,14 +908,13 @@
   }
   $('layersPanel').addEventListener('input', function (e) {
     var row = e.target.closest('[data-id]'); if (!row || !S.canvas) return;
-    if (e.target.dataset.lop != null) S.canvas.ink().layerOp('op', row.dataset.id, +e.target.value / 100);
+    if (e.target.dataset.lop != null) { S.canvas.ink().layerOp('op', row.dataset.id, +e.target.value / 100); var out = e.target.parentNode.querySelector('output'); if (out) out.textContent = e.target.value + '%'; }
   });
   $('layersPanel').addEventListener('change', function (e) {
     var row = e.target.closest('[data-id]'); if (!row || !S.canvas) return;
     var eng = S.canvas.ink(), id = row.dataset.id;
     if (e.target.dataset.lop != null) eng.layerOp('opdone', id, +e.target.value / 100);
     if (e.target.dataset.lblend != null) eng.layerOp('blend', id, e.target.value);
-    if (e.target.dataset.lclip != null) eng.layerOp('clip', id);
     renderLayers();
   });
 
@@ -1253,8 +1281,8 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
-      '<div class="set"><b>Bug button</b><p>A small red button you can drag anywhere. It takes a picture of the screen to draw on and describe a bug, and saves it in the “Bug reports” folder.</p>' +
-        '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the bug button' : 'Show the bug button') + '</button> <button type="button" data-act="bugnow">Report a bug now</button></div>' +
+      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). It takes a picture of the app to draw on, so you can point at a problem or an idea and say what you mean. It is saved in your “Feedback” folder.</p>' +
+        '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
@@ -1290,9 +1318,17 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
-    { t: 'Found a bug? Tap the bug', d: 'The small red bug button takes a picture of the screen. Draw on it to point at the problem, say what went wrong, and it is saved in your “Bug reports” folder, with the details needed to fix it. Drag the button anywhere; hide it in Settings.',
+    { t: 'Drawing keeps up with your pen', d: 'Strokes now appear as fast as you write, and erasing no longer stalls on big drawings. A new Smoothing slider under Pen steadies shaky lines.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M44 92c18-40 34-46 50-20s30 22 46-6 32-30 56 0" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>' +
+        '<path d="M190 60l12-12 6 6-12 12z" fill="' + A + '"/><path d="M48 108h60" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/><circle cx="84" cy="108" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/>') },
+    { t: 'Layers, made simpler', d: 'Each layer now shows a little picture of what is on it. Tap a layer to draw on it; its opacity, blend, mask and tools open right under it.',
+      a: art('<rect x="60" y="14" width="120" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="72" y="28" width="96" height="30" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="72" y="66" width="96" height="30" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/>' +
+        '<rect x="78" y="33" width="30" height="20" rx="4" fill="' + SURF + '"/><path d="M82 48c6-8 10 2 16-6" stroke="' + INKC + '" stroke-width="2" fill="none"/><rect x="78" y="71" width="30" height="20" rx="4" fill="' + SOFT + '"/>') },
+    { t: 'Your finger, your choice', d: 'Under Pen › Finger: let your finger draw, only move the page, or (Auto) draw until you pick up a pen. The title now zooms and moves with the page.',
+      a: art('<rect x="40" y="18" width="160" height="104" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M70 90c14-26 30-26 44-6" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/><circle cx="150" cy="70" r="16" fill="' + A + '" opacity=".3"/><circle cx="150" cy="70" r="7" fill="' + A + '"/>') },
+    { t: 'Send feedback', d: 'The small round button at the side takes a picture of the whole app. Draw on it, pick Problem, Idea or Question, and say what you mean. It is saved in your Feedback folder with the details needed to fix it.',
       a: art('<rect x="60" y="12" width="120" height="116" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="74" y="28" width="92" height="10" rx="5" fill="' + MUT + '" opacity=".35"/><rect x="74" y="46" width="70" height="10" rx="5" fill="' + MUT + '" opacity=".35"/>' +
-        '<ellipse cx="128" cy="86" rx="30" ry="18" fill="none" stroke="#d93025" stroke-width="4"/><circle cx="54" cy="96" r="20" fill="#d93025"/><path d="M48 90h12v14a6 6 0 01-12 0zM54 90v20M46 98h-5M62 98h5" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>') },
+        '<ellipse cx="128" cy="86" rx="30" ry="18" fill="none" stroke="#d93025" stroke-width="4"/><circle cx="54" cy="96" r="18" fill="' + A + '"/><path d="M45 89h18v11h-11l-5 4z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>') },
     { t: 'An endless page', d: 'Every note is now an endless page. Pinch to zoom, move with two fingers, twist to turn it. Tap with two fingers to undo, three to redo. The zoom button has Fit everything, Zoom into an area and a Navigator map.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-8 120 70)"><rect x="70" y="34" width="100" height="72" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M84 84c10-14 20 6 30-4s16-10 24 0" fill="none" stroke="' + INKC + '" stroke-width="3.5" stroke-linecap="round"/></g>' +
         '<circle cx="54" cy="104" r="9" fill="' + A + '" opacity=".35"/><circle cx="186" cy="38" r="9" fill="' + A + '" opacity=".35"/><path d="M60 98l14-12M180 44l-14 12" stroke="' + A + '" stroke-width="3" stroke-linecap="round"/>') },
@@ -1348,7 +1384,7 @@
     draw(); el.classList.remove('hidden');
   }
 
-  // ---------- Bug reports: saved as notes in "Bug reports", with the annotated picture and the details ----------
+  // ---------- Feedback: saved as notes in "Feedback" (or an older "Bug reports"), with the annotated picture and the details ----------
   if (window.QNBug) {
     QNBug.context = function () {
       var v = S.canvas && S.canvas.viewOps ? S.canvas.viewOps.info() : null, st = sync.status();
@@ -1366,11 +1402,12 @@
     };
     QNBug.save = async function (r) {
       var md = r.text || '(no description)';
-      var title = 'Bug: ' + md.split(/\s+/).slice(0, 7).join(' ').replace(/[\n#]/g, ' ').slice(0, 60);
+      var kindName = { problem: 'Problem', idea: 'Idea', question: 'Question' }[r.kind] || 'Feedback';
+      var title = kindName + ': ' + md.split(/\s+/).slice(0, 7).join(' ').replace(/[\n#]/g, ' ').slice(0, 60);
       var img = '';
       if (r.png && navigator.onLine && Drive.signedIn()) {
         try {
-          var name = 'bug-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + N.shortId() + '.png';
+          var name = 'feedback-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + N.shortId() + '.png';
           var made = await Drive.upload(name, await attachmentsFolder(), r.png, 'image/png');
           var map = await attachments(); map[name] = made.id; imgCache[name] = URL.createObjectURL(r.png);
           img = '![](Attachments/' + encodeURIComponent(name) + ')';
@@ -1378,15 +1415,15 @@
       }
       if (!img && r.small) img = '![](' + r.small + ')';
       var body = md + (img ? '\n\n' + img : '') + '\n\n### Details\n\n```\n' + r.details + '\n```';
-      // The "Bug reports" folder (made the first time, when online).
-      var folder = null, t = tree();
-      Object.keys(t).forEach(function (k) { if (t[k].name === 'Bug reports' && t[k].parentId === rootId()) folder = k; });
-      if (!folder && navigator.onLine && Drive.signedIn() && rootId()) { try { folder = await sync.createFolder('Bug reports', rootId()); } catch (e) {} }
+      // The "Feedback" folder (made the first time, when online). Feedback saved before 3.4 went to "Bug reports"; keep using it.
+      var folder = null, fname = 'Feedback', t = tree();
+      ['Bug reports', 'Feedback'].forEach(function (nm) { Object.keys(t).forEach(function (k) { if (t[k].name === nm && t[k].parentId === rootId()) { folder = k; fname = nm; } }); });
+      if (!folder && navigator.onLine && Drive.signedIn() && rootId()) { try { folder = await sync.createFolder('Feedback', rootId()); } catch (e) {} }
       var n = newDraft(title, body);
-      n.labels = ['bug']; n.folderId = folder || null;
+      n.labels = ['feedback']; n.folderId = folder || null;
       touchNote(n); store.put(n); sync.schedule(1500); renderStatus();
       if (S.view === 'list') renderList();
-      toast('Bug report saved in “Bug reports”. Tell Claude to read it.', null, null, 4000);
+      toast('Thanks! Saved in “' + fname + '”.', null, null, 3500);
     };
     QNBug.show(PREF.bugBtn !== false);
   }
