@@ -53,6 +53,8 @@
         try { o = JSON.parse(m[1]); } catch (e) {}
         cur = { id: o.id || shortId(), x: +o.x || 0, y: +o.y || 0, w: o.w ? +o.w : null, lines: [] };
         if (o.r) cur.r = +o.r; // turned to how it was written on a turned page
+        if (o.g) cur.g = String(o.g); // in a collective with drawings
+        if (o.co) cur.co = +o.co;
         if (o.l) cur.l = String(o.l); // the drawing layer the text belongs to (hidden, locked and faded with it)
         boxes.push(cur);
       } else if (cur) cur.lines.push(line);
@@ -81,6 +83,8 @@
       var meta = { id: b.id, x: Math.round(b.x), y: Math.round(b.y), w: b.w ? Math.round(b.w) : null };
       if (b.l) meta.l = b.l;
       if (b.r) meta.r = Math.round(b.r * 1000) / 1000;
+      if (b.g) meta.g = b.g;
+      if (b.co) meta.co = Math.round(b.co * 100) / 100;
       return '<!-- qn:box ' + JSON.stringify(meta) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
     });

@@ -114,7 +114,7 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; return o; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; return o; })), ink: copyLayers(ink) }; }
     function sameAs(a, b) {
       if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
@@ -147,7 +147,8 @@
       boxes.forEach(function (b) {
         var e = editors[b.id], L = layerOfBox(b); if (!e || !L) return;
         e.el.style.display = L.vis === false ? 'none' : '';
-        e.el.style.opacity = L.op == null || L.op === 1 ? '' : L.op;
+        var op = (L.op == null ? 1 : L.op) * (b.co || 1);
+        e.el.style.opacity = op === 1 ? '' : op;
         e.el.classList.toggle('locked', !!L.lock);
         if (e.ed.setEditable && e.lockState !== !!L.lock) { e.lockState = !!L.lock; e.ed.setEditable(!L.lock); }
       });
@@ -243,17 +244,19 @@
         var e = editors[b.id], L = layerOfBox(b);
         return e && String(b.md || '').trim() && (!L || (L.vis !== false && !L.lock));
       }
+      function lid(b) { var L = layerOfBox(b); return L ? L.id : null; }
       function rect(b) { var e = editors[b.id]; return { x: b.x, y: b.y, w: e ? e.el.offsetWidth : (b.w || 160), h: e ? e.el.offsetHeight : 32 }; }
       return {
         rect: function (id) { var b = byId(id); return b ? rect(b) : null; },
-        at: function (x, y) {
-          for (var i = boxes.length - 1; i >= 0; i--) { var b = boxes[i]; if (!usable(b)) continue; var r = rect(b); if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return b.id; }
+        at: function (x, y, okL) {
+          for (var i = boxes.length - 1; i >= 0; i--) { var b = boxes[i]; if (!usable(b) || okL && !okL(lid(b))) continue; var r = rect(b); if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return b.id; }
           return null;
         },
-        pick: function (poly, inPoly, m) {
+        pick: function (poly, inPoly, m, okL) {
           // Circling the start of the text, or its middle, is enough (a text box is often much wider than its text);
           // Fully needs the whole box, Partly any corner of it.
           return boxes.filter(usable).filter(function (b) {
+            if (okL && !okL(lid(b))) return false;
             var r = rect(b), cs = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
             if (m === 'full') return cs.every(function (q) { return inPoly(q[0], q[1], poly); });
             if (m === 'part' && cs.some(function (q) { return inPoly(q[0], q[1], poly); })) return true;
@@ -280,11 +283,48 @@
             var c = { id: 'b' + window.Notes.shortId(), x: b.x + dx, y: b.y + dy, w: b.w, md: b.md };
             if (b.l) c.l = b.l;
             if (b.r) c.r = b.r;
+            if (b.co) c.co = b.co;
             boxes.push(c); mountBox(c); return c.id;
           }).filter(Boolean);
         },
         setLayer: function (ids, lid) { ids.forEach(function (id) { var b = byId(id); if (b) b.l = lid; }); },
         turned: function (ids) { return ids.some(function (id) { var b = byId(id); return b && b.r; }); },
+        // Collectives: text boxes can belong to one with drawings (g), and fade with it (co).
+        groupOf: function (id) { var b = byId(id); return b && b.g || null; },
+        inGroups: function (gs) { return boxes.filter(function (b) { return b.g && gs[b.g] && usable(b); }).map(function (b) { return b.id; }); },
+        setGroup: function (ids, g, co) {
+          ids.forEach(function (id) { var b = byId(id); if (!b) return; if (g) b.g = g; else { delete b.g; delete b.co; } if (co != null) { if (co >= 1) delete b.co; else b.co = co; } });
+          applyBoxLayers();
+        },
+        // Text box → Text art: its words, font, size and place (the box goes).
+        toArt: function (ids) {
+          return ids.map(function (id) {
+            var b = byId(id), e = editors[id]; if (!b || !e) return null;
+            var txt = e.ed.getText({ blockSeparator: '\n' }).replace(/\s+$/, ''); if (!txt) return null;
+            var pm = e.el.querySelector('.ProseMirror'), first = pm && pm.firstElementChild || pm;
+            var leaf = first; while (leaf && leaf.firstElementChild) leaf = leaf.firstElementChild;
+            var cs = getComputedStyle(leaf || first), dx = 0, dy = 0;
+            for (var n = first; n && n !== e.el; n = n.offsetParent) { dx += n.offsetLeft; dy += n.offsetTop; }
+            var fs = parseFloat(cs.fontSize) || 16, a = b.r || 0;
+            return { id: id, txt: txt, fs: fs, font: cs.fontFamily, r: a, lid: lid(b), co: b.co,
+              x: b.x + dx * Math.cos(a) - dy * Math.sin(a), y: b.y + dx * Math.sin(a) + dy * Math.cos(a) };
+          }).filter(Boolean);
+        },
+        // Text art → a text box with the same words, font and size.
+        fromArt: function (s, bottomId) {
+          var md = String(s.txt).split('\n').map(function (l) { return l.replace(/^(\s*)([#>*+-]|\d+[.)])/, '$1\\$2'); }).join('\n\n');
+          var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, s.x), y: Math.max(0, s.y - s.fs * 0.2), w: null, md: md };
+          if (s.lid && s.lid !== bottomId) b.l = s.lid;
+          if (s.r) b.r = s.r;
+          boxes.push(b);
+          var e = mountBox(b); layout();
+          var ch = e.ed.chain().selectAll();
+          if (s.font && !/Google Sans/.test(s.font)) ch = ch.setFontFamily(s.font);
+          if (Math.abs(s.fs - 16) > 0.5) ch = ch.setFontSize(Math.round(s.fs) + 'px');
+          ch.run(); e.ed.commands.setTextSelection(0);
+          flushText(b.id); applyBoxLayers();
+          return b.id;
+        },
         straighten: function (ids) { ids.forEach(function (id) { var b = byId(id); if (b && b.r) { delete b.r; if (editors[id]) editors[id].el.style.transform = ''; } }); }
       };
     }
