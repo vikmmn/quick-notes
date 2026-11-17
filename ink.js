@@ -375,9 +375,10 @@
     // ---- The stroke being drawn: painted on a low-latency canvas over the page, one frame at a time ----
     var host = o.uiHost || stage;
     var live = document.createElement('canvas'); live.className = 'ink-live'; host.appendChild(live);
-    var lctx = null, liveRaf = 0, liveShown = false;
-    try { lctx = live.getContext('2d', { desynchronized: true }); } catch (e) {}
-    if (!lctx) lctx = live.getContext('2d');
+    // A plain canvas: a "desynchronized" (low-latency) one shows as solid black over the page on some Android
+    // tablets (3.4.0 on a Galaxy Tab S6 Lite). It is only shown while a stroke is being drawn.
+    var lctx = live.getContext('2d'), liveRaf = 0;
+    live.style.display = 'none';
     function inkColor(c) {
       if (c && c !== 'ink') return c;
       return getComputedStyle(svg).getPropertyValue('--ink').trim() || '#202124';
@@ -397,7 +398,7 @@
       live.style.mixBlendMode = B.blend || d.layer.blend !== 'normal' && d.layer.blend || '';
       clearLive();
     }
-    function clearLive() { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); liveShown = false; }
+    function clearLive() { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); live.style.display = 'none'; }
     function drawLive() {
       liveRaf = 0;
       var d = drag; if (!d || !d.stroke) return;
@@ -410,7 +411,7 @@
       for (var i = 1; i < out.length; i++) lctx.lineTo(out[i][0], out[i][1]);
       lctx.closePath();
       lctx.globalAlpha = d.alpha; lctx.fillStyle = d.color; lctx.fill();
-      liveShown = true;
+      live.style.display = '';
     }
     function liveSoon() { if (!liveRaf) liveRaf = requestAnimationFrame(drawLive); }
 

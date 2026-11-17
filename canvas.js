@@ -265,7 +265,7 @@
     });
 
     // ---- Pointer handling ----
-    var drag = null, taps = [], panV = null;
+    var drag = null, taps = [], panV = null, panMoved = false;
     on(host, 'pointerdown', function (ev) {
       if (head && head.contains(ev.target)) return; // the title and labels work as usual
       if (ev.pointerType === 'pen' && !penSeen) { penSeen = true; hooks.penSeen(); }
@@ -308,26 +308,22 @@
         if (isFinger && tool === 'type') startPan(ev);
         return;
       }
-      // Empty space with the Type tool: double-tap adds a text box; a finger drag scrolls.
+      // Empty space with the Type tool: a tap starts writing there (a new text box), or just below the text carries
+      // on at its end, like Keep; a tap while typing only puts the keyboard away. A finger drag scrolls.
       if (tool === 'type') {
-        var now = Date.now();
-        taps = taps.filter(function (t) { return now - t.t < 400; });
-        var last = taps[taps.length - 1];
-        if (last && Math.abs(last.x - p[0]) < 30 && Math.abs(last.y - p[1]) < 30) {
-          taps = []; ev.preventDefault(); clearTimeout(self._tapTimer);
-          addBox(p[0] - 4, p[1] - 14); changed('layout');
-          return;
-        }
-        taps.push({ t: now, x: p[0], y: p[1] });
+        var wasTyping = !!(document.activeElement && stage.contains(document.activeElement) && document.activeElement.closest('.box'));
+        panMoved = false;
         var pDown = p;
-        clearTimeout(self._tapTimer);
+        clearTimeout(self._tapTimer); // a quick second tap (double-tap) counts as one tap
         self._tapTimer = setTimeout(function () {
-          // A single tap below the text puts the caret at the end of the note, like Keep.
-          if (drag && drag.moved) return;
-          var first = editors[boxes[0].id];
-          if (first && pDown[1] > boxes[0].y + first.el.offsetHeight - 10 && pDown[0] < boxes[0].x + first.el.offsetWidth &&
-            !boxes.some(function (b, i) { return i && pDown[1] > b.y - 20; })) first.ed.commands.focus('end');
-        }, 380);
+          if (drag && drag.type === 'pan' || panMoved || wasTyping) return; // still held, dragged, or was typing
+          // A tap just below the text (or near an empty note) carries on at its end, like Keep; elsewhere it starts a text box.
+          var first = editors[boxes[0].id], fb = boxes[0];
+          var below = first && pDown[1] > fb.y + first.el.offsetHeight - 10 && pDown[1] < fb.y + first.el.offsetHeight + 90 &&
+            pDown[0] > fb.x - 20 && pDown[0] < fb.x + first.el.offsetWidth;
+          if (first && (below || !String(fb.md || '').trim() && pDown[1] < fb.y + 140 && pDown[0] < fb.x + 400)) { first.ed.commands.focus('end'); return; }
+          addBox(pDown[0] - 4, pDown[1] - 14); changed('layout');
+        }, 300);
       }
       startPan(ev);
     });
@@ -383,7 +379,7 @@
         delete drag.fingers[ev.pointerId];
         if (Object.keys(drag.fingers).length) return;
         var vx = drag.vx || 0, vy = drag.vy || 0;
-        if (drag.moved) { taps = []; clearTimeout(self._tapTimer); }
+        if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; }
         drag = null;
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };

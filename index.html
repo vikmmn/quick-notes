@@ -318,6 +318,13 @@
   /* The note menu: a round button in the bottom-left corner */
   #menuFab { left: 16px; width: 48px; height: 48px; border-radius: 16px; }
   #menuFab.lift { bottom: calc(66px + env(safe-area-inset-bottom)); }
+  /* Pen size, on the page: always at hand while writing, without opening the tools */
+  #penQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); width: 40px; padding: 10px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 20px; box-shadow: var(--shadow); }
+  #penQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  #penQuick .pq-dot { width: 24px; height: 24px; display: grid; place-items: center; }
+  #penQuick .pq-dot i { display: block; border-radius: 50%; background: var(--ink); }
+  #penQuick input { writing-mode: vertical-lr; direction: rtl; width: 24px; height: 120px; margin: 0; accent-color: var(--accent); }
   #noteMenu { position: fixed; left: 16px; z-index: 36; bottom: calc(76px + env(safe-area-inset-bottom)); min-width: 240px; max-width: calc(100vw - 32px);
     background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; }
   #noteMenu.lift { bottom: calc(124px + env(safe-area-inset-bottom)); }
@@ -469,6 +476,7 @@
     <div id="canvasHost"></div>
   </div>
   <button id="menuFab" class="fab" type="button" aria-label="Note options" aria-expanded="false"><svg class="i"><use href="#i-more"/></svg></button>
+  <div id="penQuick" class="hidden" title="Pen size"><span class="pq-dot"></span><input type="range" min="1" max="24" step="0.5" aria-label="Pen size"></div>
   <div id="viewCtl">
     <button id="compass" type="button" class="hidden" aria-label="Straighten the page" title="Straighten"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l3.5 9h-7z" fill="var(--bad)" stroke="none"/><path d="M12 21l-3.5-9h7z" fill="var(--muted)" stroke="none"/></svg></button>
     <button id="zoomBtn" type="button" aria-label="Zoom and view" aria-expanded="false">100%</button>

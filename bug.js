@@ -1,5 +1,6 @@
-// Quick Notes: send feedback. A small feedback button takes a picture of the whole app screen, lets you draw on it
-// and say what went wrong (or what you'd like), and saves it as a note in "Feedback" (with the picture and the
+// Quick Notes: send feedback. Touching the small feedback button takes a picture of the whole app at that instant;
+// you draw on it in place, double-tap to write notes where you want them, and tap the button again to send. It is
+// saved as a note in "Feedback" (with the picture and the
 // details needed to fix it: version, device, what was on screen, the last things tapped and any errors).
 // Loads first, to catch early errors.
 (function () {
@@ -36,30 +37,31 @@
     'background:var(--accent,#00796b);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:.5;touch-action:none;cursor:grab;transition:opacity .2s,left .2s}' +
     '.qn-bugbtn:hover,.qn-bugbtn.held{opacity:.95;transition:opacity .2s}' +
     '.qn-bugbtn svg{width:21px;height:21px}' +
-    '.qn-bugview .kinds{display:flex;gap:6px;flex-wrap:wrap}' +
-    '.qn-bugview .kinds button{min-height:32px;padding:4px 12px;font-size:14px;border-radius:999px;color:var(--ink,#222)}' +
-    '.qn-bugview .kinds button[aria-pressed=true]{background:var(--accent-soft,#d8efec);border-color:var(--accent,#00796b)}' +
-    '.qn-bugview{position:fixed;inset:0;z-index:95;background:var(--paper,#fff);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}' +
-    '.qn-bugview .bh{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--rule,#ddd)}' +
-    '.qn-bugview .bh b{flex:1;font:500 17px/1.2 var(--font,system-ui)}' +
-    '.qn-bugview .bt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;background:var(--field,#f1f3f4)}' +
-    '.qn-bugview .bt button{min-height:34px;padding:5px 12px;font-size:14px;border-radius:8px;color:var(--ink,#222)}' +
-    '.qn-bugview .bt button[aria-pressed=true]{background:var(--accent-soft,#d8efec)}' +
-    '.qn-bugview .bt .c{width:28px;height:28px;padding:0;min-height:0;border-radius:50%;border:2px solid var(--rule,#ddd)}' +
-    '.qn-bugview .bt .c[aria-pressed=true]{border-color:var(--ink,#222)}' +
-    '.qn-bugview .bs{flex:1;min-height:0;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#808080;touch-action:none}' +
-    '.qn-bugview .bs canvas{max-width:100%;max-height:100%;box-shadow:0 2px 12px rgba(0,0,0,.35);touch-action:none;background:#fff}' +
-    '.qn-bugview .bf{padding:8px 10px 10px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule,#ddd)}' +
-    '.qn-bugview textarea{font:16px/1.4 var(--font,system-ui);color:var(--ink,#222);background:var(--surface,#fff);border:1px solid var(--rule,#ddd);border-radius:12px;padding:10px 12px;min-height:76px;resize:vertical}' +
-    '.qn-bugview .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}' +
-    '.qn-bugview .busy{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:15px var(--font,system-ui)}';
+    '.qn-bugbtn.send{z-index:99;opacity:1;width:52px;height:52px;box-shadow:0 0 0 6px rgba(0,121,107,.3),0 4px 14px rgba(0,0,0,.4)}' +
+    '.qn-bugbtn.send svg{width:26px;height:26px}' +
+    '.qn-bugview{position:fixed;inset:0;z-index:95;background:#000;touch-action:none;overflow:hidden}' +
+    '.qn-bugview canvas{position:absolute;left:0;top:0;width:100vw;height:100vh;touch-action:none}' +
+    '.qn-bugview .bt{position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:6px 8px;' +
+    'background:rgba(32,33,36,.92);border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);white-space:nowrap}' +
+    '.qn-bugview .bt button{min-height:34px;padding:5px 12px;font-size:14px;border-radius:10px;color:#fff;background:transparent;border:1px solid rgba(255,255,255,.18)}' +
+    '.qn-bugview .bt button[aria-pressed=true]{background:rgba(95,196,181,.3);border-color:#5fc4b5}' +
+    '.qn-bugview .bt .c{width:26px;height:26px;padding:0;min-height:0;border-radius:50%;border:2px solid rgba(255,255,255,.3)}' +
+    '.qn-bugview .bt .c[aria-pressed=true]{border-color:#fff;box-shadow:0 0 0 2px #5fc4b5}' +
+    '.qn-bugview .bt i{width:1px;align-self:stretch;background:rgba(255,255,255,.2);margin:0 2px}' +
+    '.qn-bugview .hint{position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);background:rgba(32,33,36,.9);color:#fff;' +
+    'font:14px/1.35 var(--font,system-ui);padding:8px 14px;border-radius:12px;pointer-events:none;transition:opacity .6s;text-align:center;max-width:90vw}' +
+    '.qn-bugview .tn{position:absolute;min-width:160px;max-width:min(320px,70vw);background:#fff8c4;color:#202124;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,.45);padding:2px}' +
+    '.qn-bugview .tn textarea{display:block;width:100%;box-sizing:border-box;border:0;outline:0;background:transparent;color:#202124;font:15px/1.35 var(--font,system-ui);padding:6px 8px;resize:none;overflow:hidden;min-height:34px}' +
+    '.qn-bugview .busy{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:15px var(--font,system-ui);background:rgba(0,0,0,.5)}';
   document.head.appendChild(css);
 
-  var btn = null;
+  var ICON_FB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z" fill="currentColor" fill-opacity=".2"/><path d="M12 8v4M12 14.5v.01"/></svg>';
+  var ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 16-3-7z" fill="currentColor" fill-opacity=".25"/><path d="M11 13l9-9"/></svg>';
+  var btn = null, shotP = null;
   function makeButton() {
     btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'qn-bugbtn qn-bug-ui'; btn.setAttribute('aria-label', 'Send feedback'); btn.title = 'Send feedback (drag to move)';
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z" fill="currentColor" fill-opacity=".2"/><path d="M12 8v4M12 14.5v.01"/></svg>';
+    btn.innerHTML = ICON_FB;
     var pos = null;
     try { pos = JSON.parse(localStorage.getItem('qn-bugpos') || 'null'); } catch (e) {}
     function place(x, y) {
@@ -67,26 +69,37 @@
       btn.style.left = x + 'px'; btn.style.top = y + 'px'; return [x, y];
     }
     place(pos ? (pos[0] + 19 < innerWidth / 2 ? 2 : innerWidth - 40) : 2, pos ? pos[1] : Math.round(innerHeight * 0.42));
-    // Drag it anywhere (it tucks against the nearest side); a tap opens the feedback screen.
+    // The picture is taken the moment the button is touched, before anything else reacts to the touch, so open
+    // menus, pop-ups and the keyboard's formatting bar are in it. (This listener runs before the app's own.)
     var d = null;
-    btn.addEventListener('pointerdown', function (e) { d = { x: e.clientX, y: e.clientY, l: btn.offsetLeft, t: btn.offsetTop, moved: false }; btn.classList.add('held'); btn.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    window.addEventListener('pointerdown', function (e) {
+      if (!btn || !(e.target === btn || btn.contains(e.target))) return;
+      e.stopPropagation(); e.preventDefault();
+      d = { x: e.clientX, y: e.clientY, l: btn.offsetLeft, t: btn.offsetTop, moved: false };
+      btn.classList.add('held');
+      try { btn.setPointerCapture(e.pointerId); } catch (x) {}
+      if (!view) { shotP = capture(); shotP.catch(function () {}); }
+    }, true);
     btn.addEventListener('pointermove', function (e) {
-      if (!d) return;
+      if (!d || view) return;
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 6) d.moved = true;
       if (d.moved) place(d.l + e.clientX - d.x, d.t + e.clientY - d.y);
     });
     btn.addEventListener('pointerup', function (e) {
       if (!d) return;
       var moved = d.moved; d = null; e.stopPropagation(); btn.classList.remove('held');
+      if (view) { send(); return; }
       if (moved) {
+        shotP = null;
         var side = btn.offsetLeft + 19 < innerWidth / 2 ? 2 : innerWidth - 40;
         var at = place(side, btn.offsetTop);
         try { localStorage.setItem('qn-bugpos', JSON.stringify(at)); } catch (x) {}
         return;
       }
-      open();
+      open(shotP);
     });
-    window.addEventListener('resize', function () { place(btn.offsetLeft, btn.offsetTop); });
+    btn.addEventListener('click', function (e) { e.stopPropagation(); });
+    window.addEventListener('resize', function () { if (!view) place(btn.offsetLeft, btn.offsetTop); });
     document.body.appendChild(btn);
   }
   function showButton(on) {
@@ -94,7 +107,7 @@
     if (btn) btn.style.display = on ? '' : 'none';
   }
 
-  // ---- A picture of the screen ----
+  // ---- A picture of the whole app, exactly as it is on screen ----
   async function capture() {
     if (!window.htmlToImage) {
       await new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = 'screenshot.js'; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
@@ -110,73 +123,125 @@
     return Promise.race([window.htmlToImage.toCanvas(document.body, opts), timeout]);
   }
 
-  // ---- The report screen: draw on the picture, say what went wrong ----
-  var view = null;
-  async function open() {
+  // ---- The feedback screen: the picture lies exactly over the app; draw on it, double-tap to write a note there,
+  // and tap the feedback button again to send. ----
+  var view = null, sendFn = null;
+  async function open(p) {
     if (view) return;
     var ctx = (QNBug.context && QNBug.context()) || {};
-    btn.style.visibility = 'hidden';
     var shot = null, failed = null;
-    try { shot = await capture(); } catch (e) { failed = e; }
-    btn.style.visibility = '';
+    try { shot = await (p || capture()); } catch (e) { failed = e; }
     view = document.createElement('div'); view.className = 'qn-bugview qn-bug-ui';
-    var KINDS = { problem: 'Something’s wrong. What happened, and what did you expect?', idea: 'What would make Quick Notes better for you?', question: 'What would you like to know?' };
-    var kind = 'problem';
-    view.innerHTML = '<div class="bh"><button type="button" data-b="cancel">Cancel</button><b>Send feedback</b><button type="button" class="primary" data-b="save">Save</button></div>' +
+    view.innerHTML = '<canvas></canvas>' +
       '<div class="bt"><button type="button" data-t="pen" aria-pressed="true">Pen</button><button type="button" data-t="box" aria-pressed="false">Box</button>' +
-      ['#d93025', '#f9ab00', '#1a73e8', '#111111'].map(function (c, i) { return '<button type="button" class="c" data-c="' + c + '" style="background:' + c + '" aria-pressed="' + !i + '" aria-label="Colour"></button>'; }).join('') +
-      '<span style="flex:1"></span><button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button></div>' +
-      '<div class="bs"><canvas></canvas>' + (failed ? '<div class="busy">Couldn’t take a picture of the screen (' + String(failed.message || failed) + '). You can still describe the bug.</div>' : '') + '</div>' +
-      '<div class="bf"><div class="kinds">' + [['problem', 'Problem'], ['idea', 'Idea'], ['question', 'Question']].map(function (k) { return '<button type="button" data-k="' + k[0] + '" aria-pressed="' + (k[0] === kind) + '">' + k[1] + '</button>'; }).join('') + '</div>' +
-      '<textarea placeholder="' + KINDS[kind] + ' (Draw on the picture to point at things.)"></textarea>' +
-      '<div class="row"><button type="button" data-b="share">Share…</button></div></div>';
+      ['#d93025', '#f9ab00', '#1a73e8', '#ffffff'].map(function (c, i) { return '<button type="button" class="c" data-c="' + c + '" style="background:' + c + '" aria-pressed="' + !i + '" aria-label="Colour"></button>'; }).join('') +
+      '<i></i><button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button><button type="button" data-b="cancel">Cancel</button></div>' +
+      '<div class="hint">' + (failed ? 'Couldn’t take a picture of the screen (' + String(failed.message || failed) + '). Double-tap to write what happened.' :
+        'Draw on the screen to point at things. Double-tap anywhere to write a note there.<br>Tap the round button again to send.') + '</div>';
     document.body.appendChild(view);
+    if (btn) { btn.classList.add('send'); btn.innerHTML = ICON_SEND; btn.setAttribute('aria-label', 'Send this feedback'); btn.title = 'Send'; }
+    var hint = view.querySelector('.hint');
+    setTimeout(function () { if (hint) hint.style.opacity = '0'; }, 5000);
     var cv = view.querySelector('canvas'), g = cv.getContext('2d');
     var w = shot ? shot.width : Math.round(innerWidth * 2), h = shot ? shot.height : Math.round(innerHeight * 2);
-    cv.width = w; cv.height = h;
-    var marks = [], cur = null, tool = 'pen', color = '#d93025';
-    function paint() {
+    cv.width = w; cv.height = h; cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; // exactly over the app, even when the keyboard opens
+    var marks = [], notes = [], cur = null, tool = 'pen', color = '#d93025', lastTap = null;
+    function paint(withNotes) {
       g.clearRect(0, 0, w, h);
-      if (shot) g.drawImage(shot, 0, 0); else { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); }
+      if (shot) g.drawImage(shot, 0, 0); else { g.fillStyle = '#202124'; g.fillRect(0, 0, w, h); }
       marks.concat(cur ? [cur] : []).forEach(function (m) {
-        g.strokeStyle = m.c; g.lineWidth = Math.max(3, w / 140); g.lineCap = 'round'; g.lineJoin = 'round';
+        g.strokeStyle = m.c; g.lineWidth = Math.max(3, w / 300); g.lineCap = 'round'; g.lineJoin = 'round';
         g.beginPath();
         if (m.t === 'box') { var a = m.p[0], b = m.p[m.p.length - 1]; g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
         else m.p.forEach(function (q, i) { if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); });
         g.stroke();
       });
+      if (withNotes) notes.forEach(drawNote);
+    }
+    // A written note, drawn into the picture where it was placed.
+    function drawNote(n) {
+      var text = n.ta.value.trim(); if (!text) return;
+      var k = w / innerWidth, fs = 15 * k, pad = 8 * k, maxW = Math.min(320, innerWidth * 0.7) * k - 2 * pad;
+      g.font = fs + 'px system-ui, sans-serif';
+      var lines = [];
+      text.split('\n').forEach(function (para) {
+        var line = '';
+        para.split(/\s+/).forEach(function (word) {
+          var t = line ? line + ' ' + word : word;
+          if (g.measureText(t).width > maxW && line) { lines.push(line); line = word; } else line = t;
+        });
+        lines.push(line);
+      });
+      var lw = Math.max.apply(null, lines.map(function (l) { return g.measureText(l).width; })), lh = fs * 1.35;
+      var x = n.x * k, y = n.y * k, bw = lw + 2 * pad, bh = lines.length * lh + 2 * pad;
+      g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x + 2 * k, y + 3 * k, bw, bh);
+      g.fillStyle = '#fff8c4'; g.fillRect(x, y, bw, bh);
+      g.fillStyle = '#202124'; g.textBaseline = 'top';
+      lines.forEach(function (l, i) { g.fillText(l, x + pad, y + pad + i * lh + fs * 0.1); });
     }
     paint();
     function pt(e) { var r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * w / r.width, (e.clientY - r.top) * h / r.height]; }
-    cv.addEventListener('pointerdown', function (e) { cur = { t: tool, c: color, p: [pt(e)] }; cv.setPointerCapture(e.pointerId); e.preventDefault(); });
+    function addNote(x, y) {
+      var n = { x: Math.min(x, innerWidth - 170), y: Math.min(y, innerHeight - 60) };
+      n.el = document.createElement('div'); n.el.className = 'tn';
+      n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
+      n.el.innerHTML = '<textarea rows="1" placeholder="Type here"></textarea>';
+      n.ta = n.el.firstChild;
+      n.ta.addEventListener('input', function () { n.ta.style.height = 'auto'; n.ta.style.height = n.ta.scrollHeight + 'px'; });
+      n.ta.addEventListener('blur', function () { setTimeout(function () { if (!n.ta.value.trim() && view) { n.el.remove(); notes.splice(notes.indexOf(n), 1); } }, 150); });
+      n.el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      view.appendChild(n.el); notes.push(n);
+      setTimeout(function () { n.ta.focus(); }, 30);
+    }
+    cv.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') document.activeElement.blur();
+      if (hint) hint.style.opacity = '0';
+      var now = Date.now();
+      if (lastTap && now - lastTap.t < 380 && Math.abs(e.clientX - lastTap.x) < 30 && Math.abs(e.clientY - lastTap.y) < 30) {
+        lastTap = null; cur = null; addNote(e.clientX, e.clientY); return;
+      }
+      lastTap = { t: now, x: e.clientX, y: e.clientY };
+      cur = { t: tool, c: color, p: [pt(e)] }; cv.setPointerCapture(e.pointerId);
+    });
     cv.addEventListener('pointermove', function (e) { if (cur) { cur.p.push(pt(e)); paint(); } });
-    cv.addEventListener('pointerup', function () { if (cur && cur.p.length > 1) marks.push(cur); cur = null; paint(); });
+    cv.addEventListener('pointerup', function () {
+      if (cur && cur.p.length > 2) { marks.push(cur); lastTap = null; }
+      cur = null; paint();
+    });
     var busy = false;
-    view.addEventListener('click', async function (e) {
+    view.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || busy) return;
       if (b.dataset.t) { tool = b.dataset.t; view.querySelectorAll('[data-t]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); return; }
       if (b.dataset.c) { color = b.dataset.c; view.querySelectorAll('[data-c]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); return; }
-      if (b.dataset.k) { kind = b.dataset.k; view.querySelectorAll('[data-k]').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); view.querySelector('textarea').placeholder = KINDS[kind] + ' (Draw on the picture to point at things.)'; return; }
       var act = b.dataset.b;
-      if (act === 'undo') { marks.pop(); paint(); }
-      if (act === 'clear') { marks = []; paint(); }
+      if (act === 'undo') { if (marks.length) marks.pop(); else if (notes.length) { notes.pop().el.remove(); } paint(); }
+      if (act === 'clear') { marks = []; notes.forEach(function (n) { n.el.remove(); }); notes = []; paint(); }
       if (act === 'cancel') close();
-      if (act === 'save' || act === 'share') {
-        var text = view.querySelector('textarea').value.trim();
-        if (!text && !marks.length) { view.querySelector('textarea').focus(); view.querySelector('textarea').placeholder = 'Say a few words first.'; return; }
-        busy = true; b.textContent = act === 'save' ? 'Saving…' : 'Preparing…';
-        var report = await build(text, ctx, cv, !!shot);
-        report.kind = kind;
-        try {
-          if (act === 'share') await share(report);
-          else { await QNBug.save(report); close(); }
-        } catch (err) { if (err && err.name !== 'AbortError') alert('Could not ' + act + ' the feedback: ' + (err.message || err)); }
-        busy = false; b.textContent = act === 'save' ? 'Save' : 'Share…';
-      }
     });
-    setTimeout(function () { view.querySelector('textarea').focus(); }, 300);
+    view.querySelector('.bt').addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    sendFn = async function () {
+      if (busy) return;
+      var texts = notes.map(function (n) { return n.ta.value.trim(); }).filter(Boolean);
+      if (!texts.length && !marks.length) {
+        hint.innerHTML = 'Draw on the screen or double-tap to write something first.'; hint.style.opacity = '1';
+        setTimeout(function () { hint.style.opacity = '0'; }, 3000); return;
+      }
+      busy = true; btn.style.opacity = '.5';
+      paint(true);
+      var report = await build(texts.join('\n\n'), ctx, cv, !!shot);
+      try { await QNBug.save(report); close(); }
+      catch (err) { alert('Could not save the feedback: ' + (err.message || err)); paint(); }
+      busy = false; if (btn) btn.style.opacity = '';
+    };
   }
-  function close() { if (view) { view.remove(); view = null; } }
+  function send() { if (sendFn) sendFn(); }
+  function close() {
+    if (view) { view.remove(); view = null; }
+    sendFn = null; shotP = null;
+    if (btn && btn.dataset.tmp) { delete btn.dataset.tmp; btn.style.display = 'none'; }
+    if (btn) { btn.classList.remove('send'); btn.innerHTML = ICON_FB; btn.setAttribute('aria-label', 'Send feedback'); btn.title = 'Send feedback (drag to move)'; }
+  }
 
   async function build(text, ctx, cv, hasShot) {
     var png = hasShot ? await new Promise(function (ok) { cv.toBlob(ok, 'image/png'); }) : null;
@@ -200,16 +265,8 @@
     lines.push('', 'Errors:'); lines = lines.concat(errors.length ? errors.slice(-15) : ['(none)']);
     return { text: text, png: png, small: small, details: lines.join('\n') };
   }
-  async function share(r) {
-    var body = (r.text || 'Feedback') + '\n\n' + r.details;
-    var files = r.png ? [new File([r.png], 'quick-notes-feedback.png', { type: 'image/png' })] : [];
-    if (navigator.share && (!files.length || (navigator.canShare && navigator.canShare({ files: files })))) return navigator.share({ title: 'Quick Notes feedback', text: body, files: files });
-    await navigator.clipboard.writeText(body);
-    alert('Copied the feedback. Paste it where you want to send it.');
-  }
-
   var QNBug = window.QNBug = {
-    show: showButton, open: function () { if (!btn) makeButton(); open(); },
+    show: showButton, open: function () { if (!btn) makeButton(); if (btn.style.display === 'none') { btn.dataset.tmp = '1'; btn.style.display = ''; } open(); },
     context: null, save: null,
     note: function (what) { push(actions, 30, what); }
   };
