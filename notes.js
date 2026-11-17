@@ -1,4 +1,4 @@
-// Serendip: the note file format, the copy kept on this device, and syncing with Google Drive.
+// Serendipity: the note file format, the copy kept on this device, and syncing with Google Drive.
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG;
@@ -483,7 +483,7 @@
         folders.rootName = name; saveFolders(); hooks.folders();
       },
       rootParents: async function () { needReady(); await ensureFolders(); var f = await Drive.get(folders.notes); return f.parents || []; },
-      rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Serendip'; },
+      rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Serendipity'; },
       inbox: function () { return folders && folders[CFG.SUBFOLDERS[0]]; },
       tree: function () { return tree; },
       createFolder: async function (name, parentId) {

@@ -1,6 +1,6 @@
 // Keeps the installed app exactly as it is until you tap "Update now".
 // Releasing a new version = change VERSION below (and in config.js), then publish.
-var VERSION = '3.15.1';
+var VERSION = '3.15.2';
 var SHELL_CACHE = 'qn-shell-' + VERSION;
 var SHELL = [
   './', './index.html', './import.html', './import.js', './notion.html', './notion.js', './ink.js', './privacy.html', './bug.js', './screenshot.js', './zip.js', './app.js', './notes.js', './canvas.js', './search.js', './vendor.js', './drive.js', './config.js', './demo-data.js', './manifest.webmanifest',

@@ -1,4 +1,4 @@
-// Serendip sign-in helper: a Cloudflare Worker that keeps you signed in to Google Drive,
+// Serendipity sign-in helper: a Cloudflare Worker that keeps you signed in to Google Drive,
 // and carries feedback from the app to the developer (and the developer's replies back).
 //
 // Google only gives a web page one-hour sign-ins. Signing in once through this helper gives a lasting
@@ -43,7 +43,7 @@ export default {
       if (!body.code || !String(body.redirect_uri || '').startsWith(env.ALLOWED_ORIGIN + '/')) return reply(400, { error: 'bad_request' });
       const t = await google(env, { grant_type: 'authorization_code', code: body.code, redirect_uri: body.redirect_uri });
       if (!t.access_token) return reply(400, { error: t.error || 'exchange_failed', error_description: t.error_description });
-      if (!t.refresh_token) return reply(400, { error: 'no_lasting_permission', error_description: 'Google did not give a lasting permission. Remove Serendip from myaccount.google.com/permissions, then sign in again.' });
+      if (!t.refresh_token) return reply(400, { error: 'no_lasting_permission', error_description: 'Google did not give a lasting permission. Remove Serendipity from myaccount.google.com/permissions, then sign in again.' });
       return reply(200, { access_token: t.access_token, expires_in: t.expires_in, refresh: await seal(env, t.refresh_token) });
     }
 

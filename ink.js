@@ -1,4 +1,4 @@
-// Serendip: the drawing engine. Layers of vector strokes and fills, drawn as SVG.
+// Serendipity: the drawing engine. Layers of vector strokes and fills, drawn as SVG.
 //
 // A note's drawing is a list of layers, bottom first:
 //   { id, name, vis, lock, op (opacity 0–1), blend ('normal', 'multiply'…), clip (masked by the layer below), items: [...] }
