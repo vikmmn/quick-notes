@@ -100,6 +100,7 @@
       changed: function () { changed('ink'); },
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
       textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
+      toNewNote: hooks.toNewNote ? function (d, move) { return hooks.toNewNote(d, move); } : null,
       imageUrl: function (src) { return hooks.imageUrl ? hooks.imageUrl(src) : null; },
       view: function () { // the part of the page on screen, as a box in page coordinates
         var W = host.clientWidth, H = host.clientHeight, pts = [toWorld(0, 0), toWorld(W, 0), toWorld(0, H), toWorld(W, H)];
@@ -297,6 +298,7 @@
           ids.forEach(function (id) { var b = byId(id); if (!b) return; if (g) b.g = g; else { delete b.g; delete b.co; } if (co != null) { if (co >= 1) delete b.co; else b.co = co; } });
           applyBoxLayers();
         },
+        exportBoxes: function (ids) { return ids.map(function (id) { flushText(id); var b = byId(id); return b ? JSON.parse(JSON.stringify(b)) : null; }).filter(Boolean); },
         hasImages: function (ids) { return ids.some(function (id) { var e = editors[id]; return e && e.el.querySelector('.ProseMirror img:not(.ProseMirror-separator)'); }); },
         // Images in text boxes → their sources, sizes and places on the page; they leave the text.
         takeImages: function (ids) {

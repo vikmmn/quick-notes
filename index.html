@@ -102,6 +102,15 @@
   .card { position: relative; break-inside: avoid; margin: 0 0 10px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--rule);
     border-radius: var(--radius); cursor: pointer; overflow-wrap: anywhere; transition: box-shadow .15s; }
   .card:hover { box-shadow: var(--shadow); }
+  .card { -webkit-touch-callout: none; }
+  .picking .card { user-select: none; -webkit-user-select: none; }
+  .card.picked { outline: 2.5px solid var(--accent); outline-offset: -1px; background: var(--accent-soft); }
+  .card.picked::after { content: '✓'; position: absolute; top: 8px; right: 10px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font: 600 13px/22px var(--font); text-align: center; }
+  .pickbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 55; display: flex; gap: 6px; align-items: center;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 6px 8px 6px 16px; box-shadow: var(--shadow); white-space: nowrap; }
+  .pickbar span { color: var(--muted); font-size: 14px; margin-right: 4px; }
+  .pickbar button { border-radius: 999px; }
+  .pickbar button[disabled] { opacity: .45; }
   .card h3 { margin: 0 0 4px; font: 500 16px/1.35 var(--font); padding-right: 18px; }
   .card .pin { position: absolute; top: 10px; right: 10px; color: var(--accent); }
   .card .pin svg.i { width: 16px; height: 16px; }
@@ -265,6 +274,8 @@
   .inkbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
   .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
   .inkbar .sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); }
+  .inkbar .bop { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px; padding: 4px 8px; }
+  .inkbar .bop[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
   .inkbar .ic { padding: 6px 7px; display: inline-flex; align-items: center; justify-content: center; }
   .inkbar .op, .oslider { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; flex: none; padding: 0 6px; }
   .oslider input[type=range], .inkbar input[type=range] { width: 92px; accent-color: var(--accent); }
@@ -483,6 +494,8 @@
       <p id="emptyMsg" class="empty hidden"></p>
     </div>
   </main>
+  <div id="pickBar" class="pickbar hidden" role="toolbar" aria-label="Picked notes"><span id="pickCount"></span>
+    <button type="button" data-pk="dup">Duplicate</button><button type="button" data-pk="combine">Combine</button><button type="button" data-pk="cancel">Cancel</button></div>
   <button id="newFab" class="fab primary" type="button" aria-label="New note"><svg class="i"><use href="#i-plus"/></svg></button>
 </section>
 

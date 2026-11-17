@@ -263,7 +263,7 @@
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
     if (foot.length) inner += '<div class="foot">' + foot.join('') + '</div>';
-    return '<article class="card" tabindex="0" data-id="' + esc(n.id) + '">' + (inner || '<p class="where">Empty note</p>') + '</article>';
+    return '<article class="card' + (S.pick && S.pick.ids[n.id] ? ' picked' : '') + '" tabindex="0" data-id="' + esc(n.id) + '">' + (inner || '<p class="where">Empty note</p>') + '</article>';
   }
   function renderList() {
     var words = S.q.trim();
@@ -420,6 +420,8 @@
     if (!c) return;
     var n = notes[c.dataset.id];
     if (!n) return;
+    if (Date.now() - (S.heldAt || 0) < 600) return; // the end of a hold
+    if (S.pick) { e.preventDefault(); togglePick(c); return; }
     var tick = e.target.closest('input[data-tick]');
     if (tick) { tickTask(n, +tick.dataset.tick); setTimeout(renderList, 200); return; }
     var link = e.target.closest('a');
@@ -432,6 +434,133 @@
     if (e.target.closest('input, a')) return;
     if (S.q.trim()) window.QNSearch.remember(S.q);
     openNote(n);
+  }
+  // ---------- Several notes at once: hold a note to pick it, then tap others; Duplicate or Combine them ----------
+  function togglePick(c) {
+    var id = c.dataset.id, P = S.pick || (S.pick = { ids: {}, order: [] });
+    if (P.ids[id]) { delete P.ids[id]; P.order = P.order.filter(function (x) { return x !== id; }); }
+    else { P.ids[id] = 1; P.order.push(id); }
+    c.classList.toggle('picked', !!P.ids[id]);
+    showPickBar();
+  }
+  function showPickBar() {
+    var n = S.pick ? S.pick.order.length : 0;
+    if (S.pick && !n) S.pick = null;
+    $('pickBar').classList.toggle('hidden', !S.pick); $('newFab').classList.toggle('hidden', !!S.pick);
+    $('listView').classList.toggle('picking', !!S.pick);
+    if (!S.pick) { Array.prototype.forEach.call(document.querySelectorAll('.card.picked'), function (c) { c.classList.remove('picked'); }); return; }
+    $('pickCount').textContent = n + (n === 1 ? ' note' : ' notes');
+    $('pickBar').querySelector('[data-pk=combine]').disabled = n < 2;
+  }
+  function endPick() { S.pick = null; showPickBar(); }
+  (function () {
+    var hold = null;
+    ['pinned', 'others', 'results'].forEach(function (id) {
+      $(id).addEventListener('pointerdown', function (e) {
+        var c = e.target.closest('.card'); if (!c || e.button > 0 || e.target.closest('input, a')) return;
+        hold = { c: c, x: e.clientX, y: e.clientY, t: setTimeout(function () {
+          if (!hold) return; S.heldAt = Date.now(); togglePick(hold.c); if (navigator.vibrate) navigator.vibrate(12); hold = null;
+        }, 480) };
+      });
+      $(id).addEventListener('contextmenu', function (e) { if (e.target.closest('.card')) e.preventDefault(); });
+    });
+    var stop = function (e) { if (hold && (!e.clientX || Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10 || e.type !== 'pointermove')) { clearTimeout(hold.t); hold = null; } };
+    document.addEventListener('pointermove', stop); document.addEventListener('pointerup', stop); document.addEventListener('pointercancel', stop);
+  })();
+  $('pickBar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var picked = S.pick ? S.pick.order.map(function (id) { return notes[id]; }).filter(Boolean) : [];
+    if (b.dataset.pk === 'cancel') return endPick();
+    if (b.dataset.pk === 'dup') { picked.forEach(function (n) { saveNew(copyOf(n, (n.title || 'Note') + ' (copy)')); }); endPick(); renderList(); toast(picked.length === 1 ? 'Copy made' : picked.length + ' copies made'); return; }
+    if (b.dataset.pk === 'combine' && picked.length > 1) { endPick(); combineNotes(picked); }
+  });
+
+  // A note's copy, with its own id and no Drive file yet.
+  function copyOf(n, title) {
+    var c = JSON.parse(JSON.stringify(n));
+    c.id = N.uuid(); c.title = title; c.fileId = null; c.md5 = null; c.fileName = null; c.moveFrom = null; c.conflict = null;
+    c.created = c.updated = new Date().toISOString(); c.v = 0; c.deleted = false; c.isDraft = true;
+    return c;
+  }
+  // A note made here (not typed): it is kept and goes to Drive like any other.
+  function saveNew(c) {
+    delete c.isDraft;
+    c.updated = new Date().toISOString(); c.dirty = true; c.v = (c.v || 0) + 1; c.body = N.bodyOf(c);
+    notes[c.id] = c; store.put(c); sync.schedule(8000); renderStatus();
+    return c;
+  }
+  function trashNote(n) { // like Delete, without leaving the screen; Undo brings it back
+    if (!n.fileId) { delete notes[n.id]; store.del(n.id); return; }
+    n.deleted = true; n.dirty = true; n.v++; store.put(n); sync.schedule(7000);
+  }
+  function untrash(n) { n.deleted = false; n.dirty = true; n.v++; notes[n.id] = n; store.put(n); }
+  // How far right a note's content reaches (text boxes without a set width count as a usual column).
+  function rightEdge(n) {
+    var r = 0;
+    (n.boxes || []).forEach(function (b) { if (b.md && b.md.trim() || b !== n.boxes[0]) r = Math.max(r, b.x + (b.w || 720)); });
+    var ib = n.ink && window.QNInk.hasInk(n.ink) ? window.QNInk.boundsOf(n.ink) : null;
+    if (ib) r = Math.max(r, ib.x + ib.w);
+    return r;
+  }
+  // Put another note's text and drawings into `into`, moved by dx, dy; its layers come along on top, under its own name.
+  function mergeInto(into, src, dx, dy, label) {
+    var ink = JSON.parse(JSON.stringify(window.QNInk.hasInk(src.ink) ? src.ink : []));
+    var ids = window.QNInk.freshIds(ink);
+    window.QNInk.shiftAll(ink, dx, dy);
+    ink.forEach(function (l, i) { if (label) l.name = label + ' · ' + l.name; if (i === 0) l.clip = false; if (l.gid) l.gname = (label ? label + ' · ' : '') + (l.gname || 'Group'); });
+    var srcBottom = src.ink && src.ink[0] ? src.ink[0].id : null;
+    if (!into.ink || !window.QNInk.hasInk(into.ink)) {
+      into.ink = ink.length ? ink : into.ink;
+    } else into.ink = into.ink.concat(ink);
+    var intoBottom = into.ink && into.ink[0] ? into.ink[0].id : null;
+    (src.boxes || []).forEach(function (b, i) {
+      if (!b.md || !b.md.trim()) return;
+      var c = JSON.parse(JSON.stringify(b));
+      c.id = 'b' + N.shortId(); c.x = Math.max(0, b.x + dx); c.y = Math.max(0, b.y + dy);
+      if (i === 0 && !c.w) c.w = 720;
+      var lid = b.l ? ids.layers[b.l] : srcBottom ? ids.layers[srcBottom] : null;
+      if (lid && lid !== intoBottom) c.l = lid; else delete c.l;
+      if (c.g) c.g = ids.groups[c.g] || c.g;
+      into.boxes.push(c);
+    });
+  }
+  function combineNotes(list) {
+    if (S.canvas) S.canvas.flush();
+    var first = list[0], c = copyOf(first, first.title || 'Combined note');
+    c.labels = []; list.forEach(function (n) { (n.labels || []).forEach(function (l) { if (c.labels.indexOf(l) < 0) c.labels.push(l); }); });
+    c.ink = JSON.parse(JSON.stringify(first.ink || [])); c.boxes = JSON.parse(JSON.stringify(first.boxes || []));
+    if (window.QNInk.hasInk(c.ink)) window.QNInk.freshIds(c.ink).layers && (function () {
+      // the first note's boxes point at its layers by id: keep them pointing at the renamed ones
+      var old = (first.ink || []).map(function (l) { return l.id; });
+      c.boxes.forEach(function (b) { if (b.l) { var i = old.indexOf(b.l); b.l = i > -1 && c.ink[i] ? c.ink[i].id : undefined; if (!b.l) delete b.l; } });
+    })();
+    list.slice(1).forEach(function (n) {
+      var dx = rightEdge(c) + 160;
+      if (n.title) { // its title comes along as a heading at the top of its text
+        n = JSON.parse(JSON.stringify(n));
+        var b0 = n.boxes[0]; b0.md = '## ' + n.title + (b0.md && b0.md.trim() ? '\n\n' + b0.md : '');
+      }
+      mergeInto(c, n, dx, 0, n.title || 'Note');
+    });
+    saveNew(c);
+    list.forEach(trashNote);
+    renderList();
+    toast('Combined ' + list.length + ' notes into one', 'Undo', function () {
+      list.forEach(untrash); trashNote(c); renderList();
+    }, 8000);
+  }
+  // From a selection in a note: a new note with a copy of it (or with it, when it is extracted).
+  function toNewNote(d, move) {
+    if (!S.cur) return false;
+    var c = newDraft('', '');
+    c.folderId = S.cur.folderId; c.labels = (S.cur.labels || []).slice();
+    c.title = (S.cur.title ? S.cur.title + ' (part)' : '');
+    var dx = -(d.box ? d.box.x : 0), dy = -(d.box ? d.box.y : 0) + 56;
+    var src = { ink: d.ink, boxes: [{ id: 'bX', x: 0, y: 0, md: '' }].concat(d.boxes.map(function (b) { b = JSON.parse(JSON.stringify(b)); if (!b.w) b.w = 720; return b; })) };
+    mergeInto(c, src, dx, dy, '');
+    saveNew(c); renderStatus();
+    toast(move ? 'Moved into a new note' : 'Copied into a new note', 'Open', function () { if (S.canvas) S.canvas.flush(); openNote(notes[c.id]); }, 7000);
+    return true;
   }
   ['pinned', 'others', 'results'].forEach(function (id) {
     $(id).addEventListener('click', onCards);
@@ -621,6 +750,7 @@
       dirty: false, deleted: false, conflict: null, v: 0, isDraft: true };
   }
   var canvasHooks = {
+    toNewNote: toNewNote,
     change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); if (kind === 'ink' || kind === 'restore') renderLayers(); },
     notice: function (t) { toast(t, null, null, 3500); },
     view: function (v) {
@@ -677,7 +807,7 @@
     sync.run();
   }
   function showList() {
-    S.view = 'list'; dockFeedback();
+    S.view = 'list'; dockFeedback(); if (S.pick) endPick();
     $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden');
     renderList();
   }
@@ -1381,9 +1511,7 @@
     }, null, true);
     if (b.dataset.m === 'copy') {
       S.canvas.flush();
-      var c = JSON.parse(JSON.stringify(n));
-      c.id = N.uuid(); c.title = (n.title || 'Note') + ' (copy)'; c.fileId = null; c.md5 = null; c.fileName = null; c.moveFrom = null; c.conflict = null;
-      c.created = c.updated = new Date().toISOString(); c.v = 0; c.isDraft = true;
+      var c = copyOf(n, (n.title || 'Note') + ' (copy)');
       openNote(c); touchNote(c); toast('Copy made');
     }
     if (b.dataset.m === 'history') historySheet(n);
@@ -1579,6 +1707,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Shapes, and notes that join and split', d: 'Select two or more things and tap Combine shapes: Join, Cut out, Overlap or Exclude. The parts stay whole: switch between them any time, or Release to get the parts back. In the notes list, hold a note to pick it, tap others, then Duplicate or Combine them into one note (side by side; Undo is there). In a note, select something and tap To new note to copy it, or extract it, into a note of its own.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="80" cy="70" r="34" fill="' + A + '"/><circle cx="114" cy="70" r="34" fill="' + SURF + '"/>' +
+        '<rect x="150" y="34" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="160" y="74" width="46" height="34" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/>') },
     { t: 'Offshoot, and images on the page', d: 'Quick Notes is now Offshoot: an endless page where ideas branch off. Your notes and Drive folder stay as they are. Images can now sit anywhere on the page: use the new Image button in the tools, move, resize and turn them with Select, and put them in front of or behind drawings. Select a text box holding images (Keep notes, for example) and tap Take images out to free them.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-6 120 70)"><rect x="96" y="34" width="96" height="64" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M102 92l24-24 18 18 12-12 30 18" fill="none" stroke="' + A + '" stroke-width="3"/></g>' +
         '<path d="M50 112c6-30 14-50 22-70" stroke="' + INKC + '" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M62 74c12-8 22-8 32-18" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="94" cy="56" r="7" fill="' + Y + '"/>') },
