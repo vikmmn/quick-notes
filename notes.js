@@ -52,6 +52,7 @@
         var o = {};
         try { o = JSON.parse(m[1]); } catch (e) {}
         cur = { id: o.id || shortId(), x: +o.x || 0, y: +o.y || 0, w: o.w ? +o.w : null, lines: [] };
+        if (o.l) cur.l = String(o.l); // the drawing layer the text belongs to (hidden, locked and faded with it)
         boxes.push(cur);
       } else if (cur) cur.lines.push(line);
       else before.push(line);
@@ -76,7 +77,9 @@
   function canvasText(n) {
     if (isPlain(n)) return String(n.boxes[0].md || '').replace(/\s+$/, '');
     var parts = readingOrder(n.boxes).map(function (b) {
-      return '<!-- qn:box ' + JSON.stringify({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), w: b.w ? Math.round(b.w) : null }) + ' -->\n' +
+      var meta = { id: b.id, x: Math.round(b.x), y: Math.round(b.y), w: b.w ? Math.round(b.w) : null };
+      if (b.l) meta.l = b.l;
+      return '<!-- qn:box ' + JSON.stringify(meta) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
     });
     if (hasInk(n)) parts.push('<!-- qn:ink\n' + JSON.stringify(window.QNInk.toJSON(n.ink)) + '\n-->');

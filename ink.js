@@ -34,7 +34,7 @@
     if (raw[0] && raw[0].items) {
       return raw.map(function (l, i) {
         return { id: l.id || uid('L'), name: l.name || 'Layer ' + (i + 1), vis: l.vis !== false, lock: !!l.lock, op: l.op == null ? 1 : +l.op,
-          blend: l.blend || 'normal', clip: !!l.clip, items: (l.items || []).filter(function (it) { return it && (it.t === 'f' ? it.d && it.d.length : it.p && it.p.length); }) };
+          blend: l.blend || 'normal', clip: !!l.clip, gid: l.gid || undefined, gname: l.gname || undefined, items: (l.items || []).filter(function (it) { return it && (it.t === 'f' ? it.d && it.d.length : it.p && it.p.length); }) };
       });
     }
     // Version 1: groups of strokes, each placed at the group's position.
@@ -74,6 +74,7 @@
       if (l.op !== 1) o.op = Math.round(l.op * 100) / 100;
       if (l.blend && l.blend !== 'normal') o.blend = l.blend;
       if (l.clip) o.clip = true;
+      if (l.gid) { o.gid = l.gid; o.gname = l.gname || 'Group'; }
       return o;
     }) };
   }
@@ -733,7 +734,50 @@
       return out;
     };
     // Layers
-    self.layers = function () { return layers.map(function (l) { return { id: l.id, name: l.name, vis: l.vis, lock: l.lock, op: l.op, blend: l.blend, clip: l.clip, n: l.items.length, active: l.id === activeId }; }).reverse(); };
+    self.layers = function () { return layers.map(function (l) { return { id: l.id, name: l.name, vis: l.vis, lock: l.lock, op: l.op, blend: l.blend, clip: l.clip, gid: l.gid, gname: l.gname, n: l.items.length, active: l.id === activeId }; }).reverse(); };
+    self.activeLayer = function () { return activeId; };
+    self.layerInfo = function (id) { var l = layers.filter(function (x) { return x.id === id; })[0]; return l ? { vis: l.vis, lock: l.lock, op: l.op } : null; };
+    self.bottomLayer = function () { return layers[0].id; };
+    // Several layers at once (selected with tap-and-hold): group, ungroup, hide, merge, delete.
+    self.layersOp = function (op, ids, val) {
+      var set = layers.filter(function (l) { return ids.indexOf(l.id) > -1; });
+      if (!set.length) return;
+      if (op === 'group') {
+        // A group is a run of layers next to each other: the chosen layers gather just under the topmost of them.
+        var gid = uid('G'), top = Math.max.apply(null, set.map(function (l) { return layers.indexOf(l); }));
+        var anchor = layers[top];
+        var order = layers.filter(function (l) { return set.indexOf(l) < 0 || l === anchor; }); // the note's own array is reordered in place
+        var at = order.indexOf(anchor);
+        var rest = set.filter(function (l) { return l !== anchor; }).sort(function (a, b) { return layers.indexOf(a) - layers.indexOf(b); });
+        Array.prototype.splice.apply(order, [at, 0].concat(rest));
+        layers.length = 0; order.forEach(function (l) { layers.push(l); });
+        set.forEach(function (l) { l.gid = gid; l.gname = val || 'Group'; });
+      }
+      if (op === 'ungroup') set.forEach(function (l) { delete l.gid; delete l.gname; });
+      if (op === 'vis') { var show = set.some(function (l) { return !l.vis; }); set.forEach(function (l) { l.vis = show; }); }
+      if (op === 'lock') { var lk = set.some(function (l) { return !l.lock; }); set.forEach(function (l) { l.lock = lk; }); }
+      if (op === 'gname') set.forEach(function (l) { l.gname = String(val || '').trim().slice(0, 40) || l.gname; });
+      if (op === 'merge') {
+        var order = set.slice().sort(function (a, b) { return layers.indexOf(a) - layers.indexOf(b); }), base = order[0];
+        order.slice(1).forEach(function (l) { base.items = base.items.concat(l.items); layers.splice(layers.indexOf(l), 1); });
+        activeId = base.id;
+      }
+      if (op === 'delete') {
+        set.forEach(function (l) { layers.splice(layers.indexOf(l), 1); });
+        if (!layers.length) layers.push(newLayer());
+        if (!layers.some(function (l) { return l.id === activeId; })) activeId = layers[layers.length - 1].id;
+      }
+      setSel(null); done('ink');
+    };
+    // Drag a layer to a new place in the list (index counted from the bottom), into a group or out of one.
+    self.moveLayer = function (id, to, gid, gname) {
+      var i = layers.findIndex(function (l) { return l.id === id; }); if (i < 0) return;
+      var l = layers.splice(i, 1)[0];
+      to = Math.max(0, Math.min(layers.length, to));
+      layers.splice(to, 0, l);
+      if (gid) { l.gid = gid; l.gname = gname || 'Group'; } else { delete l.gid; delete l.gname; }
+      setSel(null); done('ink');
+    };
     self.layerOp = function (op, id, val) {
       var i = layers.findIndex(function (l) { return l.id === id; }), l = layers[i];
       if (op === 'add') { var nl = newLayer('Layer ' + (layers.length + 1)); var at = i < 0 ? layers.length : i + 1; layers.splice(at, 0, nl); activeId = nl.id; done('ink'); return; }
