@@ -791,7 +791,16 @@
         G(swatches(o.pen.c, 'pen')) + G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
           slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
         G(HINT('Finger') + chip('Auto', 'data-finger="auto" title="Draws until a pen is used, then moves the page"', fm === 'auto') +
-          chip('Draws', 'data-finger="draw"', fm === 'draw') + chip('Moves the page', 'data-finger="scroll"', fm === 'scroll'));
+          chip('Draws', 'data-finger="draw"', fm === 'draw') + chip('Moves the page', 'data-finger="scroll"', fm === 'scroll')) +
+        // How the pen's pressure and tilt shape the line (from the next stroke on; like Affinity's pressure and tilt).
+        '<div class="osec">Pressure</div>' +
+        G(slider('Thickness', 'pen', 'th', 0, 95, o.pen.th != null ? o.pen.th : Math.min(0.7, window.QNInk.BRUSH[o.pen.b].thin + 0.1), 100) +
+          slider('Opacity', 'pen', 'po', 0, 100, o.pen.po || 0, 100)) +
+        G(HINT('Curve') + chip('Soft', 'data-pc="soft" title="Light pressure already gives a full line"', o.pen.pc === 'soft') +
+          chip('Normal', 'data-pc="normal"', !o.pen.pc || o.pen.pc === 'normal') + chip('Firm', 'data-pc="firm" title="You have to press harder for a full line"', o.pen.pc === 'firm')) +
+        '<div class="osec">Tilt <small>(if your pen reports it)</small></div>' +
+        G(slider('Thickness', 'pen', 'tw', 0, 100, o.pen.tw || 0, 100) + slider('Opacity', 'pen', 'to', 0, 100, o.pen.to || 0, 100)) +
+        G('<button type="button" class="ochip" data-act="pencheck">Check my pen</button>');
     } else if (t === 'erase') {
       html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
         slider('Size', 'erase', 's', 3, 60, o.erase.s));
@@ -841,6 +850,24 @@
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
   setTimeout(function () { showTools(PREF.showTools); }, 0);
+  // What the pen tells the app: write on the square to see pressure and tilt.
+  function penCheck() {
+    showOpts(false);
+    openSheet('<h2>Check my pen</h2><p>Write or press on the square with your pen.</p>' +
+      '<div id="pcPad" style="height:180px;border-radius:14px;background:var(--field);touch-action:none;display:grid;place-items:center;color:var(--muted);font-size:14px">Write here</div>' +
+      '<p id="pcOut" style="font-size:14px;line-height:1.6;margin-top:10px">Pressure: –<br>Tilt: –</p><div class="row"><button type="button" data-act="close">Done</button></div>');
+    var seen = { pr: false, tilt: false }, pad = $('pcPad');
+    function show(e) {
+      if (e.pointerType !== 'pen') { $('pcOut').innerHTML = 'That was a ' + (e.pointerType === 'touch' ? 'finger' : e.pointerType) + '; use the pen.'; return; }
+      var pr = e.pressure, alt = e.altitudeAngle, tx = e.tiltX || 0, ty = e.tiltY || 0;
+      if (pr > 0 && pr !== 0.5) seen.pr = true;
+      if (tx || ty || (alt != null && alt < Math.PI / 2 - 0.01)) seen.tilt = true;
+      $('pcOut').innerHTML = 'Pressure: ' + (seen.pr ? 'yes, ' + Math.round(pr * 100) + '%' : 'not reported (or still testing)') +
+        '<br>Tilt: ' + (seen.tilt ? 'yes, ' + Math.round(alt != null ? 90 - alt * 180 / Math.PI : Math.max(Math.abs(tx), Math.abs(ty))) + '° from upright' : 'not reported by this pen (tilt settings will do nothing)');
+    }
+    pad.addEventListener('pointerdown', function (e) { pad.setPointerCapture(e.pointerId); show(e); });
+    pad.addEventListener('pointermove', function (e) { if (e.buttons || e.pressure) show(e); });
+  }
   // The settings card opens beside the tool, when the chosen tool is tapped again.
   function placeOpts() {
     var on = $('tools').querySelector('.tool[aria-pressed="true"]'), card = $('penOpts');
@@ -859,6 +886,8 @@
     var b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.act === 'closeopts') return showOpts(false);
+    if (b.dataset.pc) { INKOPT.pen.pc = b.dataset.pc; applyInk(); savePref(); return setTool('pen'); }
+    if (b.dataset.act === 'pencheck') return penCheck();
     if (b.dataset.act === 'side') return setSide(!PREF.toolsLeft);
     if (b.dataset.tool) {
       if (b.dataset.tool === PREF.tool) return showOpts(!$('tools').classList.contains('opts'));
@@ -1200,6 +1229,17 @@
           $('pop').classList.add('hidden');
         });
         return;
+      case 'font':
+        // With nothing selected, the font goes on the whole text box.
+        var FONTS = [['', 'Sans (standard)', 'var(--font)'], ['Lora, serif', 'Serif', 'Lora, serif'], ['"JetBrains Mono", monospace', 'Mono', '"JetBrains Mono", monospace'],
+          ['Caveat, cursive', 'Handwriting', 'Caveat, cursive'], ['"Permanent Marker", cursive', 'Marker', '"Permanent Marker", cursive'], ['"Playfair Display", serif', 'Display', '"Playfair Display", serif']];
+        popAt(b, FONTS.map(function (f) { return '<button data-v="' + esc(f[0]) + '" style="font-family:' + esc(f[2]) + ';font-size:16px">' + f[1] + '</button>'; }).join(''), function (p) {
+          var chain = ed.chain().focus();
+          if (ed.state.selection.empty) chain = chain.selectAll();
+          if (p.dataset.v) chain.setFontFamily(p.dataset.v).run(); else chain.unsetFontFamily().run();
+          $('pop').classList.add('hidden');
+        });
+        return;
       case 'size':
         popAt(b, '<button data-v="14px" style="font-size:13px">Small</button><button data-v="">Normal</button><button data-v="21px" style="font-size:18px">Large</button><button data-v="28px" style="font-size:22px">Huge</button>', function (p) {
           if (p.dataset.v) ed.chain().focus().setFontSize(p.dataset.v).run(); else ed.chain().focus().unsetFontSize().run();
@@ -1508,6 +1548,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Fonts, pressure and a smarter lasso', d: 'Text now comes in six fonts (the F button while typing). The Lasso picks up text along with drawings. Under Pen: how pressure and tilt change thickness and opacity, a pressure curve, and Check my pen to see what your pen reports.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><text x="40" y="58" font-family="Caveat, cursive" font-size="30" fill="' + INKC + '">Aa</text><text x="96" y="58" font-family="Lora, serif" font-size="26" fill="' + INKC + '">Aa</text><text x="150" y="58" font-family="Permanent Marker, cursive" font-size="24" fill="' + INKC + '">Aa</text>' +
+        '<path d="M40 96c30-14 60 14 90 0s40-10 60 0" fill="none" stroke="' + A + '" stroke-width="6" stroke-linecap="round" stroke-opacity=".55"/>') },
     { t: 'Tools at the side', d: 'The drawing tools are now a slim floating column at the side of the page. Tap a tool to use it; tap it again for its settings, in a small card beside it. ⇄ in the card moves the tools to the other side.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="184" y="24" width="24" height="92" rx="12" fill="' + SOFT + '" stroke="' + RULE + '"/>' +
         '<circle cx="196" cy="40" r="7" fill="' + A + '"/><circle cx="196" cy="60" r="4" fill="' + MUT + '"/><circle cx="196" cy="78" r="4" fill="' + MUT + '"/><circle cx="196" cy="96" r="4" fill="' + MUT + '"/>' +

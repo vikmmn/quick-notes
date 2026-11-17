@@ -96,7 +96,7 @@
     eng = new window.QNInk.Engine({
       uiHost: host, toScreen: function (x, y) { return toScreen(x + M, y + M); }, zoom: function () { return view.z; },
       zoomTo: function (b) { fitRect(b, true); },
-      layers: ink, svg: svg, stage: stage, margin: M,
+      layers: ink, svg: svg, stage: stage, margin: M, boxes: boxApi(),
       changed: function () { changed('ink'); },
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
       view: function () { // the part of the page on screen, as a box in page coordinates
@@ -234,6 +234,52 @@
       if (md !== b.md) { b.md = md; hooks.change('text'); }
     }
     function flushAll() { clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
+    // What the Lasso needs from the text boxes: find them, move them, copy, delete, change layer.
+    function boxApi() {
+      function byId(id) { return boxes.filter(function (x) { return x.id === id; })[0]; }
+      function usable(b) {
+        var e = editors[b.id], L = layerOfBox(b);
+        return e && String(b.md || '').trim() && (!L || (L.vis !== false && !L.lock));
+      }
+      function rect(b) { var e = editors[b.id]; return { x: b.x, y: b.y, w: e ? e.el.offsetWidth : (b.w || 160), h: e ? e.el.offsetHeight : 32 }; }
+      return {
+        rect: function (id) { var b = byId(id); return b ? rect(b) : null; },
+        at: function (x, y) {
+          for (var i = boxes.length - 1; i >= 0; i--) { var b = boxes[i]; if (!usable(b)) continue; var r = rect(b); if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return b.id; }
+          return null;
+        },
+        pick: function (poly, inPoly) {
+          // Circling the start of the text, or its middle, is enough (a text box is often much wider than its text).
+          return boxes.filter(usable).filter(function (b) {
+            var r = rect(b);
+            return inPoly(r.x + 12, r.y + Math.min(r.h / 2, 20), poly) || inPoly(r.x + r.w / 2, r.y + r.h / 2, poly);
+          }).map(function (b) { return b.id; });
+        },
+        place: function (id, x, y, w) {
+          var b = byId(id), e = editors[id]; if (!b || !e) return;
+          b.x = Math.max(0, x); b.y = Math.max(0, y); if (w) b.w = Math.round(w);
+          e.el.style.left = (b.x + M) + 'px'; e.el.style.top = (b.y + M) + 'px'; if (w) e.el.style.width = b.w + 'px';
+        },
+        remove: function (ids) {
+          ids.forEach(function (id) {
+            var i = boxes.findIndex(function (x) { return x.id === id; }); if (i < 0) return;
+            if (boxes.length === 1) { var e1 = editors[id]; if (e1) e1.ed.commands.clearContent(); boxes[0].md = ''; return; }
+            var e = editors[id]; if (e) { e.ed.destroy(); e.el.remove(); delete editors[id]; }
+            boxes.splice(i, 1);
+            if (selected && selected.id === id) select(null);
+          });
+        },
+        dup: function (ids, dx, dy) {
+          return ids.map(function (id) {
+            var b = byId(id); if (!b) return null;
+            var c = { id: 'b' + window.Notes.shortId(), x: b.x + dx, y: b.y + dy, w: b.w, md: b.md };
+            if (b.l) c.l = b.l;
+            boxes.push(c); mountBox(c); return c.id;
+          }).filter(Boolean);
+        },
+        setLayer: function (ids, lid) { ids.forEach(function (id) { var b = byId(id); if (b) b.l = lid; }); }
+      };
+    }
     function removeBox(id) {
       var i = boxes.findIndex(function (x) { return x.id === id; });
       if (i < 0 || i === 0 && boxes.length === 1) return;
@@ -263,9 +309,18 @@
       layout();
     }
 
+    // How far the pen leans: 0 upright, 1 lying flat (from the angle the pen reports, if it reports one).
+    function penTilt(ev) {
+      if (ev.altitudeAngle != null && ev.altitudeAngle < Math.PI / 2 - 0.001) return Math.max(0, Math.min(1, 1 - ev.altitudeAngle / (Math.PI / 2)));
+      var tx = ev.tiltX || 0, ty = ev.tiltY || 0;
+      if (!tx && !ty) return 0;
+      var a = Math.atan(Math.sqrt(Math.pow(Math.tan(tx * Math.PI / 180), 2) + Math.pow(Math.tan(ty * Math.PI / 180), 2)));
+      return Math.max(0, Math.min(1, a / (Math.PI / 2)));
+    }
     function point(ev) {
       var l = local(ev), w = toWorld(l[0], l[1]);
-      return [w[0] - M, w[1] - M, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
+      if (ev.pointerType !== 'pen') return [w[0] - M, w[1] - M, 0.5];
+      return [w[0] - M, w[1] - M, ev.pressure || 0.5, penTilt(ev)];
     }
 
     // ---- Selection (Move tool) ----
