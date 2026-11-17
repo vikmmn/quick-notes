@@ -419,7 +419,12 @@
     var cursor = null;
     function drawUi() {
       var h = '', k = 1 / Z();
-      if (drag && drag.lasso && drag.lasso.length > 1) h += '<path d="M' + drag.lasso.map(function (q) { return (q[0] + M) + ' ' + (q[1] + M); }).join('L') + '" fill="' + (tool === 'fill' ? 'rgba(0,121,107,.12)' : 'none') + '" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
+      if (drag && drag.lasso && drag.lasso.length > 1) {
+        var lp = 'M' + drag.lasso.map(function (q) { return (q[0] + M) + ' ' + (q[1] + M); }).join('L');
+        // Drawing a filled shape (like Concepts): the colour fills in as the outline is drawn.
+        if (drag.fillShape) h += '<path d="' + lp + 'Z" fill="' + (opt.fill.c === 'ink' ? 'var(--ink)' : opt.fill.c) + '" fill-opacity="' + (opt.fill.o == null ? 1 : opt.fill.o) + '" stroke="none"/>';
+        else h += '<path d="' + lp + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
+      }
       if (cursor) h += '<circle cx="' + (cursor[0] + M) + '" cy="' + (cursor[1] + M) + '" r="' + cursor[2] + '" fill="none" stroke="var(--muted)" stroke-width="' + k + '" stroke-dasharray="' + 3 * k + ' ' + 3 * k + '"/>';
       if (sel && sel.box) {
         var b = sel.box, pd = 6 * k, x = b.x + M - pd, y = b.y + M - pd, w = b.w + 2 * pd, hh = b.h + 2 * pd;

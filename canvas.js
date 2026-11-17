@@ -295,6 +295,8 @@
       // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
       var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
       if (inkTool && !(isFinger && !fingerDraws())) {
+        // The pen writing in Type mode switches the tools to Pen, so the toolbar shows what is happening.
+        if (tool === 'type' && inkTool === 'pen' && hooks.autoTool) { hooks.autoTool('pen'); tool = 'pen'; }
         if (eng.tool() !== inkTool) eng.setTool(inkTool);
         if (eng.down(p, ev)) {
           ev.preventDefault();
@@ -308,22 +310,30 @@
         if (isFinger && tool === 'type') startPan(ev);
         return;
       }
-      // Empty space with the Type tool: a tap starts writing there (a new text box), or just below the text carries
-      // on at its end, like Keep; a tap while typing only puts the keyboard away. A finger drag scrolls.
+      // Empty space, finger (or mouse), any tool: a double-tap starts writing there (a new text box, Type tool);
+      // in Type mode a single tap just below the text carries on at its end, like Keep. A drag scrolls.
+      var now = Date.now();
+      taps = taps.filter(function (t) { return now - t.t < 350; });
+      var last = taps[taps.length - 1];
+      if (last && Math.abs(last.x - p[0]) < 40 / view.z && Math.abs(last.y - p[1]) < 40 / view.z) {
+        taps = []; clearTimeout(self._tapTimer); ev.preventDefault();
+        if (tool !== 'type' && hooks.autoTool) { hooks.autoTool('type'); tool = 'type'; }
+        addBox(p[0] - 4, p[1] - 14); changed('layout');
+        return;
+      }
+      taps.push({ t: now, x: p[0], y: p[1] });
       if (tool === 'type') {
         var wasTyping = !!(document.activeElement && stage.contains(document.activeElement) && document.activeElement.closest('.box'));
         panMoved = false;
         var pDown = p;
-        clearTimeout(self._tapTimer); // a quick second tap (double-tap) counts as one tap
+        clearTimeout(self._tapTimer);
         self._tapTimer = setTimeout(function () {
-          if (drag && drag.type === 'pan' || panMoved || wasTyping) return; // still held, dragged, or was typing
-          // A tap just below the text (or near an empty note) carries on at its end, like Keep; elsewhere it starts a text box.
+          if (drag && drag.type === 'pan' || panMoved || wasTyping || taps.length !== 1) return; // held, dragged, typing, or a double-tap
           var first = editors[boxes[0].id], fb = boxes[0];
           var below = first && pDown[1] > fb.y + first.el.offsetHeight - 10 && pDown[1] < fb.y + first.el.offsetHeight + 90 &&
             pDown[0] > fb.x - 20 && pDown[0] < fb.x + first.el.offsetWidth;
-          if (first && (below || !String(fb.md || '').trim() && pDown[1] < fb.y + 140 && pDown[0] < fb.x + 400)) { first.ed.commands.focus('end'); return; }
-          addBox(pDown[0] - 4, pDown[1] - 14); changed('layout');
-        }, 300);
+          if (first && (below || !String(fb.md || '').trim() && pDown[1] < fb.y + 140 && pDown[0] < fb.x + 400)) first.ed.commands.focus('end');
+        }, 360);
       }
       startPan(ev);
     });
