@@ -762,7 +762,7 @@
   // ---------- Tools: type, pen (five brushes), erase, lasso, nudge, fill, move text; layers ----------
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
   var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
-    lasso: { m: 'most' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
+    lasso: { m: 'most', how: 'loop', sc: 'all' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
   (function migrate() { // settings saved by earlier versions
     if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
     else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
@@ -808,11 +808,15 @@
       html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
         slider('Size', 'erase', 's', 3, 60, o.erase.s));
     } else if (t === 'lasso') {
-      var lm = (o.lasso && o.lasso.m) || 'most';
-      html = G(HINT('Picks what is') + chip('Partly in', 'data-k="lasso" data-m="part" title="Anything the loop touches"', lm === 'part') +
+      var lm = (o.lasso && o.lasso.m) || 'most', how = o.lasso.how || 'loop', sc = o.lasso.sc || 'all';
+      html = G(chip('Lasso', 'data-set="lasso.how" data-v="loop" title="Draw a loop round things"', how === 'loop') +
+          chip('Tap to pick', 'data-set="lasso.how" data-v="tap" title="Tap things to add them; tap again to take them out"', how === 'tap')) +
+        G(HINT('From') + chip('All layers', 'data-set="lasso.sc" data-v="all"', sc === 'all') + chip('This layer', 'data-set="lasso.sc" data-v="layer"', sc === 'layer') +
+          chip('This group', 'data-set="lasso.sc" data-v="group" title="The layer group the current layer is in"', sc === 'group')) +
+        G(HINT('Picks what is') + chip('Partly in', 'data-k="lasso" data-m="part" title="Anything the loop touches"', lm === 'part') +
           chip('Mostly in', 'data-k="lasso" data-m="most" title="At least half inside the loop"', lm === 'most') +
           chip('Fully in', 'data-k="lasso" data-m="full" title="Only what is completely inside"', lm === 'full')) +
-        G(HINT('Circle to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
+        G(HINT(how === 'tap' ? 'Tap to add or take out. Drag to move, corner to resize, knob to rotate.' : 'Circle to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
     } else if (t === 'nudge') {
       html = G(chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth')) +
         G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
@@ -827,7 +831,7 @@
         G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
     } else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
-    var NAMES = { type: 'Type', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Lasso', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
+    var NAMES = { type: 'Type', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
     if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
       '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
@@ -917,6 +921,7 @@
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
+    if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
     if (b.dataset.tfont != null) { INKOPT.text.font = b.dataset.tfont; applyInk(); savePref(); return setTool('text'); }
   });
@@ -1480,6 +1485,7 @@
   // ---------- Updates: only applied when you tap "Update now" ----------
   var registration = null;
   function offerUpdate() { $('updateBar').classList.remove('hidden'); }
+  if (/(^|[#&])nosw\b/.test(location.hash)) window.__qnState = S; // for testing the app in a browser
   if ('serviceWorker' in navigator && !Drive.demo && !/(^|[#&])nosw\b/.test(location.hash)) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
       registration = reg;
@@ -1567,6 +1573,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Select, line up, and collectives', d: 'The Lasso is now Select. In its card you can choose Lasso or Tap to pick (tap things to add them, tap again to take them out), and whether it picks from all layers, this layer or this group. Arrange lines things up, spreads them evenly, and brings them forward or sends them back. Collective ties things from different layers together, text included, so they move, turn and fade as one. To Text art and To text box switch text between the two kinds.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="50" y="30" width="140" height="70" rx="6" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="6 4"/>' +
+        '<path d="M60 40v50" stroke="' + A + '" stroke-width="3"/><rect x="62" y="42" width="60" height="12" rx="3" fill="' + INKC + '" opacity=".7"/><rect x="62" y="60" width="96" height="12" rx="3" fill="#c0392b" opacity=".7"/><rect x="62" y="78" width="40" height="12" rx="3" fill="' + Y + '" opacity=".8"/>') },
     { t: 'Text art, and text that stays straight', d: 'The new Text art tool (A in the tools) writes text that is part of your drawing: in a layer, in front of or behind drawings, with fonts, size, colour and opacity, and you can lasso it to move, turn or recolour. On a turned page, new text starts straight to you, then turns with the page. Lasso it and tap Straighten to line it up with the page again. The Lasso now picks what is partly, mostly or fully inside its loop.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M36 92c30-30 60 10 90-6s50-20 80 0" fill="none" stroke="' + A + '" stroke-width="10" stroke-linecap="round" stroke-opacity=".45"/>' +
         '<text x="48" y="84" font-family="Permanent Marker, cursive" font-size="34" fill="#c0392b" transform="rotate(-6 120 70)">Art!</text><text x="140" y="56" font-family="Lora, serif" font-size="20" fill="' + INKC + '">Aa</text>') },

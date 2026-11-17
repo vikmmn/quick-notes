@@ -265,6 +265,7 @@
   .inkbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
   .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
   .inkbar .sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); }
+  .inkbar .ic { padding: 6px 7px; display: inline-flex; align-items: center; justify-content: center; }
   .inkbar .op, .oslider { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; flex: none; padding: 0 6px; }
   .oslider input[type=range], .inkbar input[type=range] { width: 92px; accent-color: var(--accent); }
   .oslider select { font: 14px var(--font); color: var(--ink); background: var(--field); border: 0; border-radius: 8px; padding: 6px; }
@@ -514,7 +515,7 @@
     <button class="tool" type="button" data-tool="text" aria-pressed="false" title="Text art" aria-label="Text art"><svg class="i"><use href="#i-textart"/></svg><span class="tl">Text art</span></button>
     <button class="tool" type="button" data-tool="pen" aria-pressed="false" title="Pen" aria-label="Pen"><svg class="i"><use href="#i-pen"/></svg><span class="tl">Pen</span><i class="pdot"></i></button>
     <button class="tool" type="button" data-tool="erase" aria-pressed="false" title="Erase" aria-label="Erase"><svg class="i"><use href="#i-eraser"/></svg><span class="tl">Erase</span></button>
-    <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Lasso" aria-label="Lasso"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Lasso</span></button>
+    <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Select" aria-label="Select"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Select</span></button>
     <button class="tool" type="button" data-tool="nudge" aria-pressed="false" title="Nudge / Smooth" aria-label="Nudge / Smooth"><svg class="i"><use href="#i-nudge"/></svg><span class="tl">Nudge / Smooth</span></button>
     <button class="tool" type="button" data-tool="fill" aria-pressed="false" title="Fill" aria-label="Fill"><svg class="i"><use href="#i-fill"/></svg><span class="tl">Fill</span></button>
     <button class="tool" type="button" data-act="layers" title="Layers" aria-label="Layers"><svg class="i"><use href="#i-layers"/></svg><span class="tl">Layers</span></button>

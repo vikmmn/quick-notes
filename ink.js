@@ -63,6 +63,7 @@
         var x = { id: it.id, t: it.t, c: it.c };
         if (it.o != null && it.o !== 1) x.o = Math.round(it.o * 100) / 100;
         if (it.g) x.g = it.g;
+        if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
         if (it.t === 'f') x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); });
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
         else {
@@ -113,7 +114,7 @@
   }
   function xmlEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function textSvg(it, plain) {
-    var o = it.o == null ? 1 : it.o, deg = (it.r || 0) * 180 / Math.PI;
+    var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI;
     var lines = String(it.txt || '').split('\n');
     return '<text data-i="' + it.id + '" transform="translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '') + '"' +
       ' style="font-family:' + xmlEsc(it.font || 'sans-serif') + ';font-size:' + it.fs + 'px;white-space:pre" fill="' + colorOf(it.c) + '"' + (o !== 1 ? ' fill-opacity="' + o + '"' : '') + '>' +
@@ -157,7 +158,7 @@
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
     var B = plain ? {} : BRUSH[it.b] || {};
-    var o = it.o == null ? 1 : it.o, fade = !plain && hasFade(it);
+    var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
     var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
       (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') + (fade ? ' mask="url(#pm-' + it.id + ')"' : '') +
       (B.grain ? ' filter="url(#qn-grain)"' : '') + (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
@@ -386,7 +387,7 @@
     // Handles, tool circles and tap distances stay the same size on screen at any zoom.
     function Z() { return o.zoom ? o.zoom() : 1; }
     var tool = 'pen', opt = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 },
-      lasso: { m: 'most' },
+      lasso: { m: 'most', how: 'loop', sc: 'all' },
       text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
     var activeId = layers[layers.length - 1].id;
     var drag = null, sel = null, raf = 0;
@@ -511,9 +512,13 @@
     function setSel(items, bids) {
       items = items || []; bids = BX ? (bids || []) : [];
       if (!items.length && !bids.length) { sel = null; bar.classList.add('hidden'); drawUi(); return; }
-      // Grouped items come along with each other.
-      var gs = {}; items.forEach(function (it) { if (it.g) gs[it.g] = 1; });
-      layers.forEach(function (l) { if (editable(l)) l.items.forEach(function (it) { if (it.g && gs[it.g] && items.indexOf(it) < 0) items.push(it); }); });
+      // A collective (items grouped across layers, text boxes too) comes along as one.
+      var gs = {}, any = false; items.forEach(function (it) { if (it.g) { gs[it.g] = 1; any = true; } });
+      bids.forEach(function (id) { var g = BX.groupOf(id); if (g) { gs[g] = 1; any = true; } });
+      if (any) {
+        layers.forEach(function (l) { if (editable(l)) l.items.forEach(function (it) { if (it.g && gs[it.g] && items.indexOf(it) < 0) items.push(it); }); });
+        if (BX) BX.inGroups(gs).forEach(function (id) { if (bids.indexOf(id) < 0) bids.push(id); });
+      }
       sel = { items: items, boxes: bids, box: selBox(items, bids) };
       renderBar(); drawUi();
     }
@@ -521,17 +526,35 @@
     var SW = ['ink', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#ffffff'];
     function renderBar(mode) {
       if (!sel) return;
-      var grouped = sel.items.length > 1 && sel.items.every(function (it) { return it.g && it.g === sel.items[0].g; });
+      var g0 = sel.items.length ? sel.items[0].g : sel.boxes.length ? BX.groupOf(sel.boxes[0]) : null;
+      var grouped = !!g0 && sel.items.every(function (it) { return it.g === g0; }) && sel.boxes.every(function (id) { return BX.groupOf(id) === g0; });
+      var count = sel.items.length + sel.boxes.length;
       var inkSel = sel.items.length > 0, h;
+      var hasArt = sel.items.some(function (it) { return it.t === 'x'; });
       if (mode === 'color') {
         h = SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('') +
           '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label><button type="button" data-act="back">Done</button>';
+      } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
+        var co = sel.items.length ? sel.items[0].co || 1 : 1;
+        h = '<label class="op">Collective opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
+      } else if (mode === 'arrange') {
+        var I = function (act, label, d) { return '<button type="button" class="ic" data-arr="' + act + '" title="' + label + '" aria-label="' + label + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg></button>'; };
+        h = I('l', 'Align left', '<path d="M4 3v18M8 7h10M8 15h6"/>') + I('cx', 'Align centres', '<path d="M12 3v18M6 7h12M8 15h8"/>') + I('r', 'Align right', '<path d="M20 3v18M6 7h10M10 15h6"/>') +
+          I('t', 'Align top', '<path d="M3 4h18M7 8v10M15 8v6"/>') + I('cy', 'Align middles', '<path d="M3 12h18M7 6v12M15 8v8"/>') + I('b', 'Align bottom', '<path d="M3 20h18M7 6v10M15 10v6"/>') +
+          (count > 2 ? I('dx', 'Spread evenly across', '<path d="M4 4v16M20 4v16M10 8v8M14 8v8"/>') + I('dy', 'Spread evenly down', '<path d="M4 4h16M4 20h16M8 10h8M8 14h8"/>') : '') +
+          (inkSel ? I('front', 'To the front', '<rect x="8" y="8" width="10" height="10" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') + I('fwd', 'Forward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M13 11v4M11 13h4"/><path d="M5 15V5h10"/>') +
+            I('bwd', 'Backward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M11 13h4"/><path d="M5 15V5h10"/>') + I('back', 'To the back', '<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/><path d="M18 9v9H9"/>') : '') +
+          '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'layer') {
         h = layers.slice().reverse().map(function (l) { return '<button type="button" data-tol="' + l.id + '">' + esc(l.name) + '</button>'; }).join('') + '<button type="button" data-act="back">Cancel</button>';
       } else {
         h = '<button type="button" data-act="dup">Duplicate</button><button type="button" data-act="del">Delete</button>' +
-          (inkSel ? '<button type="button" data-act="' + (grouped ? 'ungroup' : 'group') + '"' + (sel.items.length < 2 ? ' disabled' : '') + '>' + (grouped ? 'Ungroup' : 'Group') + '</button>' +
-            '<button type="button" data-act="color">Colour</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
+          (grouped ? '<button type="button" data-act="ungroup" title="The items go back to being separate">Break up</button><button type="button" data-act="cop">Opacity</button>'
+            : count > 1 ? '<button type="button" data-act="group" title="Move, turn and fade these together, whatever layer each is on">Collective</button>' : '') +
+          (inkSel ? '<button type="button" data-act="color">Colour</button>' : '') +
+          (count > 1 || inkSel ? '<button type="button" data-act="arrange">Arrange</button>' : '') +
+          (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
+          (hasArt ? '<button type="button" data-act="tobox" title="Make this normal, editable text">To text box</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
           (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '') +
           ((sel.items.some(function (it) { return it.t === 'x' && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? '<button type="button" data-act="straight">Straighten</button>' : '');
       }
@@ -557,7 +580,14 @@
       if (e.target.dataset.op == null || !sel) return;
       var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { own(it).o = v; }); render();
     });
-    bar.addEventListener('change', function (e) { if (e.target.dataset.op != null) o.changed('ink'); });
+    bar.addEventListener('input', function (e) {
+      if (e.target.dataset.cop == null || !sel) return;
+      var v = +e.target.value / 100;
+      sel.items.slice().forEach(function (it) { var t = own(it); if (v >= 1) delete t.co; else t.co = v; });
+      if (sel.boxes.length) BX.setGroup(sel.boxes, BX.groupOf(sel.boxes[0]), v);
+      render();
+    });
+    bar.addEventListener('change', function (e) { if (e.target.dataset.op != null) o.changed('ink'); if (e.target.dataset.cop != null) commit(); });
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
@@ -575,7 +605,29 @@
         refreshBox(); render(); commit(); renderBar(); return;
       }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
-      if (act === 'color' || act === 'layer') return renderBar(act);
+      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange') return renderBar(act);
+      if (b.dataset.arr) { arrange(b.dataset.arr); return; }
+      if (act === 'toart') { // text boxes become Text art, in their layers, looking the same
+        var specs = BX.toArt(sel.boxes), made = [];
+        specs.forEach(function (s) {
+          var L = layers.filter(function (l) { return l.id === s.lid; })[0] || layers[0];
+          var it = { id: uid('x'), t: 'x', txt: s.txt, x: s.x, y: s.y, r: s.r || 0, fs: Math.round(s.fs * 10) / 10, font: s.font, c: 'ink', o: 1 };
+          var g = BX.groupOf(s.id); if (g) { it.g = g; if (s.co) it.co = s.co; }
+          L.items.push(it); made.push(it);
+        });
+        BX.remove(specs.map(function (s) { return s.id; }));
+        render(); commit(); setSel(sel.items.concat(made), []); return;
+      }
+      if (act === 'tobox') { // Text art becomes normal text boxes
+        var arts = sel.items.filter(function (it) { return it.t === 'x'; }), nb = [];
+        arts.forEach(function (it) {
+          var l = layerOf(it); if (!l) return;
+          var id = BX.fromArt({ txt: it.txt, x: it.x, y: it.y, r: it.r, fs: it.fs, font: it.font, lid: l.id }, layers[0].id);
+          if (it.g) BX.setGroup([id], it.g, it.co || 1); nb.push(id);
+          l.items.splice(l.items.indexOf(it), 1);
+        });
+        render(); commit(); setSel(sel.items.filter(function (it) { return arts.indexOf(it) < 0; }), sel.boxes.concat(nb)); return;
+      }
       if (act === 'del') { sel.items.forEach(function (it) { var l = layerOf(it); if (l) l.items.splice(l.items.indexOf(it), 1); }); if (sel.boxes.length) BX.remove(sel.boxes); setSel(null); done(); return; }
       if (act === 'dup') {
         var map = {}, copies = sel.items.map(function (it) {
@@ -587,9 +639,83 @@
         var boxCopies = sel.boxes.length ? BX.dup(sel.boxes, 20, 20) : [];
         done(); setSel(copies, boxCopies); return;
       }
-      if (act === 'group') { var g = uid('g'); sel.items.slice().forEach(function (it) { own(it).g = g; }); commit(); renderBar(); return; }
-      if (act === 'ungroup') { sel.items.slice().forEach(function (it) { delete own(it).g; }); commit(); renderBar(); return; }
+      if (act === 'group') { var g = uid('g'); sel.items.slice().forEach(function (it) { var t = own(it); t.g = g; delete t.co; }); if (sel.boxes.length) BX.setGroup(sel.boxes, g, 1); render(); commit(); renderBar(); return; }
+      if (act === 'ungroup') { sel.items.slice().forEach(function (it) { var t = own(it); delete t.g; delete t.co; }); if (sel.boxes.length) BX.setGroup(sel.boxes, null); render(); commit(); renderBar(); return; }
     });
+
+    // ---- Align and arrange: each collective counts as one piece, each other item and text box as one ----
+    function arrange(a) {
+      if (!sel) return;
+      if (a === 'front' || a === 'back' || a === 'fwd' || a === 'bwd') { // order within each item's own layer
+        layers.forEach(function (l) {
+          var its = l.items, isSel = function (it) { return sel.items.indexOf(it) > -1; };
+          if (!its.some(isSel)) return;
+          if (a === 'front') l.items = its.filter(function (it) { return !isSel(it); }).concat(its.filter(isSel));
+          else if (a === 'back') l.items = its.filter(isSel).concat(its.filter(function (it) { return !isSel(it); }));
+          else if (a === 'fwd') { for (var i = its.length - 2; i >= 0; i--) if (isSel(its[i]) && !isSel(its[i + 1])) { var t = its[i]; its[i] = its[i + 1]; its[i + 1] = t; } }
+          else { for (var j = 1; j < its.length; j++) if (isSel(its[j]) && !isSel(its[j - 1])) { var u = its[j]; its[j] = its[j - 1]; its[j - 1] = u; } }
+        });
+        render(); commit(); renderBar('arrange'); return;
+      }
+      var units = [], byG = {};
+      sel.items.forEach(function (it) { if (it.g) { if (!byG[it.g]) units.push(byG[it.g] = { items: [], boxes: [] }); byG[it.g].items.push(it); } else units.push({ items: [it], boxes: [] }); });
+      sel.boxes.forEach(function (id) { var g = BX.groupOf(id); if (g) { if (!byG[g]) units.push(byG[g] = { items: [], boxes: [] }); byG[g].boxes.push(id); } else units.push({ items: [], boxes: [id] }); });
+      if (units.length === 1) { // one collective on its own: line up its members
+        units = units[0].items.map(function (it) { return { items: [it], boxes: [] }; }).concat(units[0].boxes.map(function (id) { return { items: [], boxes: [id] }; }));
+      }
+      units.forEach(function (u) { u.r = selBox(u.items, u.boxes); });
+      units = units.filter(function (u) { return u.r; });
+      if (units.length < 2) { o.notice('Pick two or more things to line up.'); return; }
+      var B = sel.box, move = function (u, dx, dy) {
+        if (!dx && !dy) return;
+        u.items.forEach(function (it) { var t = own(it); shiftItem(t, dx, dy); invalidate(t); });
+        u.boxes.forEach(function (id) { var r0 = BX.rect(id); BX.place(id, r0.x + dx, r0.y + dy); });
+      };
+      if (a === 'dx' || a === 'dy') {
+        var X = a === 'dx', pos = function (u) { return X ? u.r.x : u.r.y; }, size = function (u) { return X ? u.r.w : u.r.h; };
+        units.sort(function (p, q) { return pos(p) + size(p) / 2 - pos(q) - size(q) / 2; });
+        var start = X ? B.x : B.y, span = X ? B.w : B.h, used = units.reduce(function (s, u) { return s + size(u); }, 0);
+        var gap = (span - used) / (units.length - 1), at = start;
+        units.forEach(function (u) { move(u, X ? at - u.r.x : 0, X ? 0 : at - u.r.y); at += size(u) + gap; });
+      } else units.forEach(function (u) {
+        var r0 = u.r;
+        if (a === 'l') move(u, B.x - r0.x, 0);
+        if (a === 'r') move(u, B.x + B.w - r0.x - r0.w, 0);
+        if (a === 'cx') move(u, B.x + B.w / 2 - r0.x - r0.w / 2, 0);
+        if (a === 't') move(u, 0, B.y - r0.y);
+        if (a === 'b') move(u, 0, B.y + B.h - r0.y - r0.h);
+        if (a === 'cy') move(u, 0, B.y + B.h / 2 - r0.y - r0.h / 2);
+      });
+      refreshBox(); render(); commit(); renderBar('arrange');
+    }
+
+    // ---- What the selection tools reach: all layers, the layer being worked on, or its group ----
+    function inScope(l) {
+      if (!editable(l)) return false;
+      var sc = opt.lasso.sc || 'all'; if (sc === 'all') return true;
+      var A = active(); if (sc === 'group' && A.gid) return l.gid === A.gid;
+      return l === A;
+    }
+    function scopeId(id) { if (!id) return true; var l = layers.filter(function (x) { return x.id === id; })[0]; return !l || inScope(l); }
+    function pickAt(p) { // the top thing under a tap: an item, or else a text box
+      for (var li = layers.length - 1; li >= 0; li--) {
+        if (!inScope(layers[li])) continue;
+        for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8 / Z())) return { it: layers[li].items[j] };
+      }
+      var bh = BX && BX.at(p[0], p[1], scopeId); return bh ? { box: bh } : null;
+    }
+    function toggleAt(p) { // the item selector: a tap adds to the selection, or takes away what is already in it
+      var h = pickAt(p);
+      if (!h) { setSel(null); return; }
+      var items = sel ? sel.items.slice() : [], bids = sel ? sel.boxes.slice() : [];
+      var g = h.it ? h.it.g : BX.groupOf(h.box);
+      var isIn = h.it ? items.indexOf(h.it) > -1 : bids.indexOf(h.box) > -1;
+      if (isIn) {
+        items = items.filter(function (it) { return g ? it.g !== g : it !== h.it; });
+        bids = bids.filter(function (id) { return g ? BX.groupOf(id) !== g : id !== h.box; });
+      } else if (h.it) items.push(h.it); else bids.push(h.box);
+      setSel(items, bids);
+    }
 
     // ---- Transforming the selection: drag inside to move, the corner to scale, the knob to rotate ----
     function handleAt(p) {
@@ -653,6 +779,7 @@
       if (tool === 'lasso') {
         var hnd = handleAt(p);
         if (hnd) { startTransform(hnd, p); return true; }
+        if (opt.lasso.how === 'tap') { drag = { pick: p }; return true; } // the item selector: tap to add or take away; a drag still moves
         drag = { lasso: [p], t: Date.now() }; setSel(null); return true;
       }
       if (tool === 'pen') {
@@ -680,7 +807,8 @@
         if (ev.pointerType !== 'touch' && (tool === 'erase' || tool === 'nudge')) { cursor = [p[0], p[1], (tool === 'erase' ? opt.erase.s : opt.nudge.r) / Z()]; drawUi(); }
         return;
       }
-      if (drag.kind) { applyTransform(p); return; }
+      if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) drag.far = true; if (drag.far) applyTransform(p); return; }
+      if (drag.pick) return;
       if (drag.stroke) {
         var sp = drag.stroke.p, isPen = !!drag.stroke.f;
         (pts || [p]).map(function (q) { return shapePt(q, isPen); }).forEach(function (q) {
@@ -713,7 +841,9 @@
     self.up = function (p) {
       var d = drag; drag = null;
       if (!d) return;
-      if (d.kind) { refreshBox(); flushPatch(); commit(); return; }
+      if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { toggleAt(d.start); return; } // a tap on the selection: in or out
+      if (d.kind) { if (!d.far) return; refreshBox(); flushPatch(); commit(); return; }
+      if (d.pick) { toggleAt(d.pick); return; }
       if (d.stroke) {
         cancelAnimationFrame(liveRaf); liveRaf = 0;
         if (d.stroke.p.length === 1) { var p0 = d.stroke.p[0]; d.stroke.p.push([p0[0] + 0.4, p0[1] + 0.4].concat(p0.slice(2))); }
@@ -738,17 +868,12 @@
           return;
         }
         if (len < 12 / Z()) { // a tap: pick what is under it
-          var hit = null;
-          for (var li = layers.length - 1; li >= 0 && !hit; li--) {
-            if (!editable(layers[li])) continue;
-            for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8 / Z())) { hit = layers[li].items[j]; break; }
-          }
-          if (!hit && BX) { var bh = BX.at(p[0], p[1]); if (bh) { setSel([], [bh]); return; } }
-          setSel(hit ? [hit] : null); return;
+          var hit = pickAt(p);
+          setSel(hit ? hit.it ? [hit.it] : [] : null, hit && hit.box ? [hit.box] : []); return;
         }
         var picked = [];
         layers.forEach(function (l) {
-          if (!editable(l)) return;
+          if (!inScope(l)) return;
           l.items.forEach(function (it) {
             var n = 0, inside = 0;
             eachPoint(it, function (q) { n++; if (inPoly(q[0], q[1], poly)) inside++; });
@@ -757,7 +882,7 @@
             if (n && inside >= need) picked.push(it);
           });
         });
-        setSel(picked, BX ? BX.pick(poly, inPoly, opt.lasso.m) : []);
+        setSel(picked, BX ? BX.pick(poly, inPoly, opt.lasso.m, scopeId) : []);
       }
     };
     self.cancel = function () {
@@ -898,6 +1023,7 @@
       render(); owned = new WeakSet();
     };
     self.clearSelection = function () { setSel(null); };
+    self.selection = function () { return sel ? { items: sel.items.length, boxes: sel.boxes.length } : null; };
     self.reset = function () { // after undo/redo replaced the layers
       if (!layers.length) layers.push(newLayer());
       if (!active() || active().id !== activeId) activeId = layers.filter(function (l) { return l.id === activeId; }).length ? activeId : layers[layers.length - 1].id;
