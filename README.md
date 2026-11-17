@@ -65,7 +65,7 @@ Text of that box
 | `vendor.js` | Bundled libraries: TipTap (rich text + Markdown), perfect-freehand (ink), markdown-it (previews) |
 | `drive.js` | Google sign-in and Google Drive (plus the pretend Drive for demo mode) |
 | `config.js` | Settings: sign-in key, sign-in helper address, Readables folder, version number |
-| `server/sign-in-helper.js` | The Cloudflare Worker that keeps you signed in (deployed separately, holds no data) |
+| `server/sign-in-helper.js` | The Cloudflare Worker that keeps you signed in and carries feedback to GitHub (deployed separately, holds no data) |
 | `sw.js` | Makes it installable, holds updates until approved, and sends changes handed over while the phone sleeps |
 | `manifest.webmanifest`, `*.png` | App name, icons and the Android share target |
 | `demo-data.js` | Pretend notes for demo mode only |
@@ -89,6 +89,21 @@ When the app goes to the background it writes its unsent changes to an outbox in
 Background Sync. The service worker sends them with the current Google sign-in even after the app is frozen,
 and updates the note's copy on the device. The app takes back anything not yet started when it comes back, so a
 change is never sent twice. Where Background Sync isn't available (iPhone), the app sends what it can before freezing.
+
+## Feedback to the developer (through the sign-in helper)
+The feedback button sends each report (words, the annotated picture and the details) through the sign-in helper to
+a **private** GitHub repository, as an issue; the picture goes into its `shots/` folder. Reply on the issue and the
+app shows the reply to the sender (a dot on the feedback button, a message, and Settings › Your feedback and
+replies), where they can answer back. Each install has a random ID it keeps to itself; an issue holds only a
+fingerprint of it, so only that install can read or answer its conversation. Closing an issue shows "Resolved".
+Until this is set up, feedback is saved in the sender's own Drive › Feedback, as before.
+
+1. **GitHub** › New repository › `quick-notes-feedback`, **Private**, with a README.
+2. **GitHub** › Settings › Developer settings › Fine-grained tokens › Generate: only that repository;
+   permissions **Issues: Read and write** and **Contents: Read and write**. Copy the token.
+3. **Cloudflare** › the sign-in helper Worker › Edit code: paste the new `server/sign-in-helper.js` › Deploy.
+   Settings › Variables and secrets: `FEEDBACK_REPO` (text) `vikmmn/quick-notes-feedback`, and
+   `FEEDBACK_TOKEN` (secret) the token.
 
 ## Staying signed in (the sign-in helper)
 Google gives a web app only one-hour sign-ins. `server/sign-in-helper.js` is a tiny Cloudflare Worker (free plan)

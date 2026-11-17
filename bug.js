@@ -37,6 +37,7 @@
     'background:var(--accent,#00796b);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:.5;touch-action:none;cursor:grab;transition:opacity .2s,left .2s}' +
     '.qn-bugbtn:hover,.qn-bugbtn.held{opacity:.95;transition:opacity .2s}' +
     '.qn-bugbtn svg{width:21px;height:21px}' +
+    '.qn-bugbtn.dot{opacity:1}.qn-bugbtn.dot::after{content:"";position:absolute;top:-1px;right:-1px;width:12px;height:12px;border-radius:50%;background:#d93025;border:2px solid var(--paper,#fff)}' +
     '.qn-bugbtn.send{z-index:99;opacity:1;width:52px;height:52px;box-shadow:0 0 0 6px rgba(0,121,107,.3),0 4px 14px rgba(0,0,0,.4)}' +
     '.qn-bugbtn.send svg{width:26px;height:26px}' +
     '.qn-bugview{position:fixed;inset:0;z-index:95;background:#000;touch-action:none;overflow:hidden}' +
@@ -137,7 +138,8 @@
       ['#d93025', '#f9ab00', '#1a73e8', '#ffffff'].map(function (c, i) { return '<button type="button" class="c" data-c="' + c + '" style="background:' + c + '" aria-pressed="' + !i + '" aria-label="Colour"></button>'; }).join('') +
       '<i></i><button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button><button type="button" data-b="cancel">Cancel</button></div>' +
       '<div class="hint">' + (failed ? 'Couldn’t take a picture of the screen (' + String(failed.message || failed) + '). Double-tap to write what happened.' :
-        'Draw on the screen to point at things. Double-tap anywhere to write a note there.<br>Tap the round button again to send.') + '</div>';
+        'Draw on the screen to point at things. Double-tap anywhere to write a note there.<br>Tap the round button again to send.') +
+      '<br><small style="opacity:.75">The picture and app details (version, device, recent taps and errors) go to the developer.</small></div>';
     document.body.appendChild(view);
     if (btn) { btn.classList.add('send'); btn.innerHTML = ICON_SEND; btn.setAttribute('aria-label', 'Send this feedback'); btn.title = 'Send'; }
     var hint = view.querySelector('.hint');
@@ -268,6 +270,7 @@
   var QNBug = window.QNBug = {
     show: showButton, open: function () { if (!btn) makeButton(); if (btn.style.display === 'none') { btn.dataset.tmp = '1'; btn.style.display = ''; } open(); },
     context: null, save: null,
-    note: function (what) { push(actions, 30, what); }
+    note: function (what) { push(actions, 30, what); },
+    badge: function (on) { if (btn) { btn.classList.toggle('dot', !!on); btn.title = on ? 'The developer answered your feedback (Settings › Your feedback and replies)' : 'Send feedback (drag to move)'; } }
   };
 })();

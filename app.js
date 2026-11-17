@@ -1298,8 +1298,8 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
-      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). Touching it takes a picture of the app; draw on it, double-tap to write, and tap the button again to send. It is saved in your “Feedback” folder.</p>' +
-        '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button></div>' +
+      '<div class="set"><b>Feedback button</b><p>A small round button at the side of the screen (drag it anywhere). Touching it takes a picture of the app; draw on it, double-tap to write, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
+        '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button> <button type="button" data-act="fbinbox">Your feedback and replies</button></div>' +
       '<div class="set"><b>About</b><p>Quick Notes ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Quick Notes can only see the files it makes.</p>' +
         '<button type="button" data-act="update">Check for update</button> <button type="button" data-act="whatsnew">What’s new</button></div>' +
       (Drive.demo ? '<div class="set"><b>Demo tools</b><p>Try the offline queue and the changed-elsewhere warning.</p>' +
@@ -1312,6 +1312,7 @@
       });
       if (act === 'whatsnew') { closeSheet(); return whatsNew(true); }
       if (act === 'bugbtn') { PREF.bugBtn = PREF.bugBtn === false; savePref(); if (window.QNBug) QNBug.show(PREF.bugBtn); settingsSheet(); return; }
+      if (act === 'fbinbox') { if (S.repliesSheet) S.repliesSheet(); return; }
       if (act === 'bugnow') { closeSheet(); if (window.QNBug) setTimeout(function () { QNBug.open(); }, 350); return; }
       if (act === 'signin') healthAction('signin');
       if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
@@ -1417,7 +1418,7 @@
         'Notes on phone': live().length + (st.waiting.length ? ', ' + st.waiting.length + ' waiting' : '')
       };
     };
-    QNBug.save = async function (r) {
+    async function saveFeedbackInDrive(r) {
       var md = r.text || '(no description)';
       var kindName = { problem: 'Problem', idea: 'Idea', question: 'Question' }[r.kind] || 'Feedback';
       var title = kindName + ': ' + md.split(/\s+/).slice(0, 7).join(' ').replace(/[\n#]/g, ' ').slice(0, 60);
@@ -1440,8 +1441,115 @@
       n.labels = ['feedback']; n.folderId = folder || null;
       touchNote(n); store.put(n); sync.schedule(1500); renderStatus();
       if (S.view === 'list') renderList();
-      toast('Thanks! Saved in “' + fname + '”.', null, null, 3500);
+      return fname;
+    }
+
+    // ---- Feedback to the developer: sent through the sign-in helper into a private GitHub repository, and the
+    // developer's replies shown here. Each install has a random ID it keeps to itself. ----
+    function feedbackId() {
+      var id = null; try { id = localStorage.getItem('qn-iid'); } catch (e) {}
+      if (!id) {
+        var a = crypto.getRandomValues(new Uint8Array(16));
+        id = Array.from(a, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        try { localStorage.setItem('qn-iid', id); } catch (e) {}
+      }
+      return id;
+    }
+    function fbGet(k) { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch (e) { return []; } }
+    function fbPut(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+    async function fbPost(path, data) {
+      if (!CFG.TOKEN_SERVER || Drive.demo) { var e0 = new Error('no_server'); e0.code = 'no_server'; throw e0; }
+      var res = await fetch(CFG.TOKEN_SERVER + '/feedback/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ iid: feedbackId() }, data)) });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) { var e = new Error(j.error_description || j.error || ('HTTP ' + res.status)); e.code = res.status === 404 || res.status === 501 ? 'no_server' : j.error; throw e; }
+      return j;
+    }
+    function blobB64(blob) {
+      return new Promise(function (ok, bad) { var fr = new FileReader(); fr.onload = function () { ok(String(fr.result).split(',')[1] || ''); }; fr.onerror = bad; fr.readAsDataURL(blob); });
+    }
+    function fbTitle(r) {
+      var md = String(r.text || '').trim();
+      return md ? md.split(/\s+/).slice(0, 9).join(' ').replace(/[\n#]/g, ' ').slice(0, 80) : 'Feedback (a drawing)';
+    }
+    async function sendFeedback(item) {
+      var res = await fbPost('send', item);
+      var list = fbGet('qn-fb'); list.push({ issue: res.issue, title: item.title, at: new Date().toISOString(), seen: 0 }); fbPut('qn-fb', list);
+      return res.issue;
+    }
+    // Feedback that couldn't go out (offline) waits here, with a smaller picture, and goes with the next chance.
+    async function flushFeedback() {
+      var out = fbGet('qn-fb-out'); if (!out.length || !navigator.onLine) return;
+      var left = [];
+      for (var i = 0; i < out.length; i++) { try { await sendFeedback(out[i]); } catch (e) { if (e.code !== 'no_server') left.push(out[i]); } }
+      fbPut('qn-fb-out', left);
+    }
+    QNBug.save = async function (r) {
+      var item = { title: fbTitle(r), text: r.text || '', details: r.details };
+      try {
+        if (r.png && r.png.size < 4000000) { item.image = await blobB64(r.png); item.imageType = 'png'; }
+        else if (r.small) { item.image = r.small.split(',')[1]; item.imageType = 'jpeg'; }
+        await sendFeedback(item); fbChecked = 0;
+        toast('Sent to the developer. Replies will show up here.', null, null, 4000);
+        return;
+      } catch (e) {
+        if (e.code !== 'no_server') { // offline or a hiccup: send it later, and keep a copy in Drive meanwhile
+          if (r.small) item.image = r.small.split(',')[1], item.imageType = 'jpeg'; else delete item.image;
+          var out = fbGet('qn-fb-out'); out.push(item); fbPut('qn-fb-out', out.slice(-5));
+        }
+        var fname = await saveFeedbackInDrive(r);
+        toast(e.code === 'no_server' ? 'Saved in your “' + fname + '” folder.' : 'Couldn’t send it yet; it will go when you’re online. A copy is in “' + fname + '”.', null, null, 4500);
+      }
     };
+    // Replies: checked when the app opens and comes back to the front (at most every few minutes).
+    var fbChecked = 0;
+    async function checkReplies(force) {
+      var list = fbGet('qn-fb'); if (!list.length || !navigator.onLine || Drive.demo) return null;
+      if (!force && Date.now() - fbChecked < 4 * 60 * 1000) return S.fbConvos || null;
+      fbChecked = Date.now();
+      var res; try { res = await fbPost('inbox', { issues: list.map(function (x) { return x.issue; }) }); } catch (e) { return null; }
+      var unread = 0;
+      (res.conversations || []).forEach(function (c) {
+        var rec = list.filter(function (x) { return x.issue === c.issue; })[0] || {};
+        var dev = c.messages.filter(function (m) { return m.from === 'dev'; }).length;
+        c.unread = Math.max(0, dev - (rec.seen || 0)) + (c.state === 'closed' && !rec.closedSeen ? 1 : 0);
+        unread += c.unread;
+      });
+      S.fbConvos = res.conversations || [];
+      QNBug.badge(unread > 0);
+      if (unread && !force) toast(unread === 1 ? 'The developer answered your feedback' : 'The developer answered your feedback (' + unread + ')', 'Read', function () { repliesSheet(); }, 9000);
+      return S.fbConvos;
+    }
+    function msgHtml(m) { return '<div class="fbm ' + (m.from === 'me' ? 'me' : 'dev') + '">' + esc(m.text).replace(/\n/g, '<br>') + '<small>' + (m.from === 'me' ? 'You' : 'Developer') + ' · ' + new Date(m.at).toLocaleDateString() + '</small></div>'; }
+    async function repliesSheet() {
+      openSheet('<h2>Your feedback</h2><p class="where">Loading…</p><div class="row"><button type="button" data-act="close">Close</button></div>');
+      var convos = await checkReplies(true);
+      var list = fbGet('qn-fb');
+      if (!list.length) { openSheet('<h2>Your feedback</h2><p>Nothing sent yet. Touch the round feedback button at the side of the screen to point at a problem or an idea.</p><div class="row"><button type="button" data-act="close">Close</button></div>'); return; }
+      if (!convos) { openSheet('<h2>Your feedback</h2><p>Couldn’t reach the developer’s inbox. Try again when you’re online.</p><div class="row"><button type="button" data-act="close">Close</button></div>'); return; }
+      var html = '<h2>Your feedback</h2>' + convos.slice().reverse().map(function (c) {
+        return '<div class="fbc' + (c.unread ? ' new' : '') + '"><div class="fbh"><b>' + esc(c.title) + '</b><small>' + new Date(c.at).toLocaleDateString() + ' · ' + (c.state === 'closed' ? 'Resolved' : 'Open') + '</small></div>' +
+          (c.messages.length ? c.messages.map(msgHtml).join('') : '<p class="where" style="margin:6px 0">No reply yet.</p>') +
+          '<div class="fbr"><textarea data-fbr="' + c.issue + '" rows="1" placeholder="Reply"></textarea><button type="button" data-act="fbsend" data-i="' + c.issue + '">Send</button></div></div>';
+      }).join('') + '<div class="row"><button type="button" data-act="close">Close</button></div>';
+      openSheet(html, async function (act, b) {
+        if (act !== 'fbsend') return;
+        var ta = $('sheet').querySelector('[data-fbr="' + b.dataset.i + '"]'), text = ta.value.trim(); if (!text) return ta.focus();
+        b.disabled = true; b.textContent = 'Sending…';
+        try { await fbPost('reply', { issue: +b.dataset.i, text: text }); repliesSheet(); }
+        catch (e) { b.disabled = false; b.textContent = 'Send'; toast('Couldn’t send: ' + e.message, null, null, 4000); }
+      });
+      // Everything shown counts as read.
+      list.forEach(function (rec) {
+        var c = convos.filter(function (x) { return x.issue === rec.issue; })[0]; if (!c) return;
+        rec.seen = c.messages.filter(function (m) { return m.from === 'dev'; }).length; if (c.state === 'closed') rec.closedSeen = true;
+      });
+      fbPut('qn-fb', list); QNBug.badge(false);
+    }
+    S.repliesSheet = repliesSheet;
+    setTimeout(function () { flushFeedback().then(function () { checkReplies(); }); }, 6000);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') checkReplies(); });
+    window.addEventListener('online', function () { flushFeedback().then(function () { checkReplies(); }); });
     QNBug.show(PREF.bugBtn !== false);
   }
 
