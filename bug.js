@@ -64,6 +64,8 @@
     '.qn-bugview .wait span{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.55);padding:10px 16px;border-radius:12px}' +
     '.qn-bugview .wait span::before{content:"";width:18px;height:18px;border-radius:50%;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;animation:qnspin .7s linear infinite}' +
     '.qn-bugview .tn{position:absolute;min-width:160px;max-width:min(320px,70vw);background:#fff8c4;color:#202124;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,.45);padding:2px}' +
+    '.qn-bugview .tn-grip{position:absolute;right:-12px;top:-12px;width:26px;height:26px;border-radius:50%;background:#202124;color:#fff8c4;display:grid;place-items:center;font:16px/1 system-ui;touch-action:none;cursor:move;box-shadow:0 2px 6px rgba(0,0,0,.4)}' +
+    '.qn-bugbtn.floating{z-index:90}' +
     '.qn-bugview .tn textarea{display:block;width:100%;box-sizing:border-box;border:0;outline:0;background:transparent;color:#202124;font:15px/1.35 var(--font,system-ui);padding:6px 8px;resize:none;overflow:hidden;min-height:34px}';
   document.head.appendChild(css);
 
@@ -131,6 +133,16 @@
     if (dockEl) { dockEl.appendChild(btn); btn.classList.add('docked'); }
     else { document.body.appendChild(btn); btn.classList.remove('docked'); }
   }
+  // A sheet, a menu or What's new over the bar: the button comes out of the bar to stay on top and usable (3.21).
+  setInterval(function () {
+    if (!btn || view || !dockEl || btn.style.display === 'none') return;
+    var over = document.querySelector('.sheet-back:not(.hidden), .wn:not(.hidden), .drawer-back:not(.hidden)');
+    if (over && btn.parentNode !== document.body) {
+      var r = btn.getBoundingClientRect(); if (!r.width) return;
+      document.body.appendChild(btn); btn.classList.remove('docked'); btn.classList.add('floating');
+      btn.style.left = Math.round(r.left) + 'px'; btn.style.top = Math.round(r.top) + 'px';
+    } else if (!over && btn.classList.contains('floating')) { btn.classList.remove('floating'); btn.style.left = btn.style.top = ''; dock(dockEl); }
+  }, 300);
   function lift() { // above the feedback screen, where it was, as the Send button
     var r = btn.getBoundingClientRect();
     document.body.appendChild(btn); btn.classList.remove('docked'); btn.classList.add('send');
@@ -215,34 +227,56 @@
       });
       if (withNotes) notes.forEach(drawNote);
     }
-    // A written note, drawn into the picture where it was placed.
+    // A written note, drawn into the picture exactly where and as it shows on screen: same place, width, font and
+    // line breaks. (Before 3.21 it was drawn at a fixed size, so the sent picture showed it smaller, wider or cut off,
+    // and while sending both showed at once.)
     function drawNote(n) {
-      var text = n.ta.value.trim(); if (!text) return;
-      var fs = 15 * k, pad = 8 * k, maxW = Math.min(320, innerWidth * 0.7) * k - 2 * pad;
-      g.font = fs + 'px system-ui, sans-serif';
+      var text = n.ta.value.replace(/\s+$/, ''); if (!text.trim()) return;
+      var cr = cv.getBoundingClientRect(), r = n.el.getBoundingClientRect(), cs = getComputedStyle(n.ta);
+      var fs = parseFloat(cs.fontSize) * k, lh = (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.35) * k;
+      var padX = (parseFloat(cs.paddingLeft) + 2) * k, padY = (parseFloat(cs.paddingTop) + 2) * k, maxW = (n.ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) * k;
+      g.font = (cs.fontWeight || '400') + ' ' + fs + 'px ' + cs.fontFamily;
       var lines = [];
       text.split('\n').forEach(function (para) {
         var line = '';
-        para.split(/\s+/).forEach(function (word) {
-          var t = line ? line + ' ' + word : word;
-          if (g.measureText(t).width > maxW && line) { lines.push(line); line = word; } else line = t;
+        para.split(/(\s+)/).forEach(function (word) {
+          if (!word) return;
+          var t = line + word;
+          if (g.measureText(t.trimEnd()).width > maxW && line.trim()) { lines.push(line.trimEnd()); line = word.trimStart(); }
+          else line = t;
+          while (g.measureText(line).width > maxW && line.length > 1) { // one long word: broken like the screen does
+            var cut = line.length; while (cut > 1 && g.measureText(line.slice(0, cut)).width > maxW) cut--;
+            lines.push(line.slice(0, cut)); line = line.slice(cut);
+          }
         });
-        lines.push(line);
+        lines.push(line.trimEnd());
       });
-      var lw = Math.max.apply(null, lines.map(function (l) { return g.measureText(l).width; })), lh = fs * 1.35;
-      var x = n.x * k, y = n.y * k, bw = lw + 2 * pad, bh = lines.length * lh + 2 * pad;
-      g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x + 2 * k, y + 3 * k, bw, bh);
-      g.fillStyle = '#fff8c4'; g.fillRect(x, y, bw, bh);
+      var x = (r.left - cr.left) * k, y = (r.top - cr.top) * k, bw = r.width * k, bh = Math.max(r.height * k, lines.length * lh + 2 * padY);
+      if (y + bh > h) y = Math.max(0, h - bh); if (x + bw > w) x = Math.max(0, w - bw); // all of it inside the picture
+      var rad = 10 * k;
+      var rr = function (ox, oy) { g.beginPath(); if (g.roundRect) g.roundRect(x + ox, y + oy, bw, bh, rad); else g.rect(x + ox, y + oy, bw, bh); };
+      g.fillStyle = 'rgba(0,0,0,.35)'; rr(2 * k, 3 * k); g.fill();
+      g.fillStyle = '#fff8c4'; rr(0, 0); g.fill();
       g.fillStyle = '#202124'; g.textBaseline = 'top';
-      lines.forEach(function (l, i) { g.fillText(l, x + pad, y + pad + i * lh + fs * 0.1); });
+      lines.forEach(function (l, i) { g.fillText(l, x + padX, y + padY + i * lh + (lh - fs) / 2); });
     }
     paint();
     function pt(e) { var r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * w / r.width, (e.clientY - r.top) * h / r.height]; }
     function noteEl(n) {
       n.el = document.createElement('div'); n.el.className = 'tn';
       n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
-      n.el.innerHTML = '<textarea rows="1" placeholder="Type here"></textarea>';
+      n.el.innerHTML = '<textarea rows="1" placeholder="Type here"></textarea><span class="tn-grip" title="Drag to move the note" aria-label="Move note">⠿</span>';
       n.ta = n.el.firstChild;
+      // Moving a note, while typing it or after (3.21): drag the grip at its corner.
+      var grip = n.el.lastChild, gs = null;
+      grip.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); grip.setPointerCapture(e.pointerId); gs = { x: e.clientX, y: e.clientY, nx: n.x, ny: n.y }; });
+      grip.addEventListener('pointermove', function (e) {
+        if (!gs) return;
+        n.x = Math.max(0, Math.min(innerWidth - 60, gs.nx + e.clientX - gs.x)); n.y = Math.max(0, Math.min(innerHeight - 40, gs.ny + e.clientY - gs.y));
+        n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
+      });
+      grip.addEventListener('pointerup', function () { gs = null; });
+      grip.addEventListener('pointercancel', function () { gs = null; });
       n.ta.addEventListener('input', function () { n.ta.style.height = 'auto'; n.ta.style.height = n.ta.scrollHeight + 'px'; });
       n.ta.addEventListener('blur', function () { setTimeout(function () { if (view && !n.ta.value.trim() && notes.indexOf(n) > -1) { n.el.remove(); notes.splice(notes.indexOf(n), 1); done.splice(done.indexOf(n), 1); } }, 150); });
       n.el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
@@ -329,13 +363,15 @@
       var texts = notes.map(function (n) { return n.ta.value.trim(); }).filter(Boolean);
       if (!texts.length && !marks.length) { say('Draw on the screen or write a note first.', 3000); return; }
       busy = true; if (btn) btn.classList.add('busy');
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       paint(true);
+      notes.forEach(function (n) { n.el.style.visibility = 'hidden'; }); // now in the picture: not shown twice
       var report = await build(texts.join('\n\n'), ctx, cv, !!shot);
       try {
         await QNBug.save(report);
         close();
         if (btn) { setLook('ok'); btn.classList.remove('sent'); void btn.offsetWidth; btn.classList.add('sent'); setTimeout(function () { if (!view) setLook('fb'); btn.classList.remove('sent'); }, 1600); }
-      } catch (err) { say('Could not save the feedback: ' + (err.message || err), 5000); paint(); }
+      } catch (err) { say('Could not save the feedback: ' + (err.message || err), 5000); paint(); notes.forEach(function (n) { n.el.style.visibility = ''; }); }
       busy = false; if (btn) btn.classList.remove('busy');
     };
   }

@@ -85,6 +85,7 @@
         if (it.o != null && it.o !== 1) x.o = Math.round(it.o * 100) / 100;
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
+        if (it.lk) x.lk = it.lk; // locked: 'e' can't be erased, 's' can't be selected
         if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; }
         else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
         else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; if (it.mk) { x.mk = it.mk; if (it.ttl) x.ttl = it.ttl; if (it.pg) x.pg = it.pg; if (it.of) x.of = it.of; } }
@@ -201,11 +202,12 @@
   }
   // ---- Media on the page (3.20): a video, a sound, a link card or a live web page, placed like an image ----
   // mk: 'video' | 'audio' | 'link' | 'web' (a PDF's pages are images with mk 'pdf'). Files are fetched like images.
+  function noteEmbed(it) { return window.QNInk && window.QNInk.noteView ? window.QNInk.noteView(it.src) : ''; }
   function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return u; } }
   function embedSvg(it, plain) {
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, w = it.w.toFixed(1), h = it.h.toFixed(1);
     var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
-    var web = it.mk === 'link' || it.mk === 'web', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
+    var web = it.mk === 'link' || it.mk === 'web' || it.mk === 'note', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
     var head = '<g data-i="' + it.id + '" transform="' + tr + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>';
     if (plain || (!web && !url)) { // a little picture (or the file not here yet): a card with its name
       return head + '<rect width="' + w + '" height="' + h + '" rx="10" fill="var(--surface, #fff)" stroke="var(--rule, #8886)"' + (url || web ? '' : ' stroke-dasharray="6 5"') + '/>' +
@@ -215,6 +217,8 @@
     var u = xmlEsc(url), dom = xmlEsc(hostOf(it.src));
     if (it.mk === 'video') return head + X + '<video class="emb-live" src="' + u + '" controls="" playsinline="" preload="metadata"></video>' + Y;
     if (it.mk === 'audio') return head + X + '<div class="emb-title">♪ ' + ttl + '</div><audio class="emb-live" src="' + u + '" controls="" preload="metadata"></audio>' + Y;
+    if (it.mk === 'file') return head + X + '<a class="emb-live emb-card" href="' + u + '" download="' + ttl + '" target="_blank" rel="noopener"><span class="emb-ico">⎙</span><span><b>' + ttl + '</b><small>File · tap to open</small></span></a>' + Y;
+    if (it.mk === 'note') return head + X + noteEmbed(it) + Y;
     if (it.mk === 'web') return head + X + '<div class="emb-bar"><span>' + dom + '</span><a class="emb-live" href="' + u + '" target="_blank" rel="noopener">Open ↗</a></div>' +
       '<iframe class="emb-live" src="' + u + '" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>' + Y;
     return head + X + '<a class="emb-live emb-card" href="' + u + '" target="_blank" rel="noopener"><img alt="" src="https://www.google.com/s2/favicons?sz=64&amp;domain=' + encodeURIComponent(hostOf(it.src)) + '"/>' +
@@ -788,6 +792,34 @@
     // and drawings stack by what was put in front, not text always on top (3.18.2). The drawing is drawn as one or
     // more SVG slices, with text boxes between them.
     var slices = [svg], plan = null;
+    // ---- Lock signs: a small sign at the corner of each locked thing; tapping it unlocks (3.21) ----
+    var lockHost = document.createElement('div'); lockHost.className = 'ink-locks'; stage.appendChild(lockHost);
+    var LOCKI = { e: '<path d="M8 17l-4-4 8-8 6 6-6 6z"/><path d="M4 21h16"/>', s: '<path d="M6 3l12 8-6 1-2 6z"/>' };
+    function drawLocks() {
+      var h = '', k = 1 / Math.max(0.05, Z());
+      layers.forEach(function (l) {
+        if (!l.vis) return;
+        l.items.forEach(function (it) {
+          if (!it.lk) return;
+          var b = itemBox(it), x = b.x + b.w + M;
+          it.lk.split('').forEach(function (c, j) {
+            h += '<button type="button" class="lk-sign" data-lki="' + it.id + '" data-lkc="' + c + '" title="' + (c === 'e' ? 'Can\'t be erased' : 'Can\'t be selected') + ': tap to unlock" ' +
+              'style="left:' + (x - (j + 1) * 24 * k).toFixed(1) + 'px;top:' + (b.y + M - 10 * k).toFixed(1) + 'px;transform:scale(' + k.toFixed(3) + ')">' +
+              '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round">' + LOCKI[c] + '</svg></button>';
+          });
+        });
+      });
+      lockHost.innerHTML = h;
+    }
+    lockHost.addEventListener('pointerdown', function (e) { if (e.target.closest('.lk-sign')) e.stopPropagation(); });
+    lockHost.addEventListener('click', function (e) {
+      var b = e.target.closest('.lk-sign'); if (!b) return;
+      layers.forEach(function (l) { l.items.forEach(function (it, i) {
+        if (it.id !== b.dataset.lki) return;
+        var t = JSON.parse(JSON.stringify(it)); t.lk = (t.lk || '').replace(b.dataset.lkc, ''); if (!t.lk) delete t.lk; l.items[i] = t;
+      }); });
+      render(); commit(); o.notice(b.dataset.lkc === 'e' ? 'It can be erased again.' : 'It can be selected again.');
+    });
     function seqAll() { var q = []; layers.forEach(function (l) { l.items.forEach(function (it) { q.push({ it: it, l: l }); }); }); return q; }
     function topAnchor() { for (var i = layers.length - 1; i >= 0; i--) { var its = layers[i].items; if (its.length) return its[its.length - 1].id; } return ''; }
     function boxLayer(b) { return layers.filter(function (l) { return l.id === b.l; })[0] || layers[0]; }
@@ -865,7 +897,7 @@
         e.style.display = ''; e.style.zIndex = sl.z; e.innerHTML = sliceMarkup(sl, k);
       });
       if (BX && BX.setZ) Object.keys(plan.boxZ).forEach(function (id) { BX.setZ(id, plan.boxZ[id]); });
-      drawUi();
+      drawLocks(); drawUi();
     }
     function soon() { if (!raf) raf = requestAnimationFrame(render); }
     // Undo keeps earlier versions of the drawing by reference (no copies), so an item is never changed in place once
@@ -1010,7 +1042,11 @@
         if (drag.fillShape) {
           var fpt = opt.fill.pt && DEFS[opt.fill.pt];
           if (fpt) h += '<defs>' + patternDef(fpt, 'ui-fpt', opt.fill.ps, opt.fill.pd).replace('<pattern ', '<pattern patternTransform="translate(' + M + ' ' + M + ')" ') + '</defs>';
-          h += '<path d="' + lp + 'Z" fill="' + (fpt ? 'url(#ui-fpt)' : opt.fill.c === 'ink' ? 'var(--ink)' : opt.fill.c) + '" fill-rule="evenodd" fill-opacity="' + (opt.fill.o == null ? 1 : opt.fill.o) + '" stroke="none"/>';
+          var fcol = opt.fill.c === 'ink' ? 'var(--ink)' : opt.fill.c, fo = opt.fill.o == null ? 1 : opt.fill.o;
+          // With a pattern: the shape shows in its colour, faintly, with the pattern over it and a fine edge, so it is
+          // always visible while drawing (3.21: in 3.18–3.20 a sparse pattern could leave it looking blank).
+          if (fpt) h += '<path d="' + lp + 'Z" fill="' + fcol + '" fill-rule="evenodd" fill-opacity="' + (0.25 * fo) + '" stroke="' + fcol + '" stroke-opacity=".7" stroke-width="' + (1.5 / Z()) + '" stroke-dasharray="' + (6 / Z()) + ' ' + (4 / Z()) + '"/>';
+          h += '<path d="' + lp + 'Z" fill="' + (fpt ? 'url(#ui-fpt)' : fcol) + '" fill-rule="evenodd" fill-opacity="' + fo + '" stroke="none"/>';
         }
         else h += '<path d="' + lp + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
       }
@@ -1052,7 +1088,7 @@
       return b;
     }
     function setSel(items, bids) {
-      items = items || []; bids = BX ? (bids || []) : [];
+      items = (items || []).filter(function (it) { return !lockedS(it); }); bids = BX ? (bids || []) : [];
       if (!items.length && !bids.length) { sel = null; bar.classList.add('hidden'); hideTip(); drawUi(); return; }
       // A collective (items grouped across layers, text boxes too) comes along as one.
       var gs = {}, any = false; items.forEach(function (it) { if (it.g) { gs[it.g] = 1; any = true; } });
@@ -1122,6 +1158,10 @@
         h = T('Arrange') + I2('front', 'To the front', '<rect x="8" y="8" width="10" height="10" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') + I2('fwd', 'Forward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M13 11v4M11 13h4"/><path d="M5 15V5h10"/>') +
           I2('bwd', 'Backward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M11 13h4"/><path d="M5 15V5h10"/>') + I2('back', 'To the back', '<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/><path d="M18 9v9H9"/>') +
           '<button type="button" data-act="back">Done</button>';
+      } else if (mode === 'lock') { // two locks: can't be rubbed out, can't be selected (a small sign shows on each)
+        var hasE = sel.items.length && sel.items.every(lockedE);
+        h = T('Lock') + '<button type="button" data-lk="e" aria-pressed="' + hasE + '">Can\'t be erased</button>' +
+          '<button type="button" data-lk="s" title="It stops being selectable; tap its little sign to unlock it">Can\'t be selected</button><button type="button" data-act="back">Done</button>';
       } else if (mode === 'layer') {
         h = T('Move to layer') + layers.slice().reverse().map(function (l) { return '<button type="button" data-tol="' + l.id + '">' + esc(l.name) + '</button>'; }).join('') + '<button type="button" data-act="back">Cancel</button>';
       } else {
@@ -1145,6 +1185,8 @@
           (layers.length > 1 ? B('layer', 'Move to layer', '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>') : '') +
           (sel.items.length === 1 && /^(link|web)$/.test(sel.items[0].mk || '') ? B('webmode', sel.items[0].mk === 'link' ? 'Show the page in a window' : 'Show as a card',
             sel.items[0].mk === 'link' ? '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>' : '<rect x="3" y="8" width="18" height="8" rx="2"/><path d="M7 12h6"/>') : '') +
+          (sel.items.length ? B('lock', 'Lock (can\'t be erased, can\'t be selected)', '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>') : '') +
+          (o.copyLink ? B('copylink', 'Copy a link to this part (paste it into another note: hold the Add button)', '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>') : '') +
           (o.zoomTo ? B('zoom', 'Zoom to', '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/>') : '') +
           ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? B('straight', 'Straighten', '<path d="M3 18h18"/><path d="M5 13l14-5" stroke-dasharray="2 2.5"/>') : '');
       }
@@ -1209,6 +1251,16 @@
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
+      if (b.dataset.lk) {
+        var on = b.dataset.lk === 's' || !sel.items.every(lockedE);
+        sel.items.slice().forEach(function (it) {
+          var t = own(it), set = (t.lk || '').replace(b.dataset.lk, '');
+          if (on) set += b.dataset.lk; if (set) t.lk = set.split('').sort().join(''); else delete t.lk;
+        });
+        commit(); drawLocks();
+        if (b.dataset.lk === 's') { o.notice('Locked: it can\'t be selected now. Tap its little sign to unlock it.'); setSel(null); return; }
+        renderBar('lock'); return;
+      }
       if (b.dataset.c) {
         var paint = function (it) { it.c = b.dataset.c; if (it.t === 'b') it.k.forEach(function (p) { if (p.t !== 'i') paint(p); }); };
         sel.items.slice().forEach(function (it) { paint(own(it)); }); done(); renderBar('color'); return;
@@ -1231,7 +1283,8 @@
         refreshBox(); render(); commit(); renderBar(); return;
       }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
-      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'align' || act === 'bool' || act === 'newnote') return renderBar(act);
+      if (act === 'copylink') { o.copyLink(sel.box); return; }
+      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'align' || act === 'bool' || act === 'newnote' || act === 'lock') return renderBar(act);
       if (act === 'nn-copy' || act === 'nn-move') {
         // What is picked, with the layers it is on (their look kept), its text boxes, and where it all sits.
         var out = [], bb = selBox(sel.items, sel.boxes);
@@ -1434,10 +1487,21 @@
       return l === A;
     }
     function scopeId(id) { if (!id) return true; var l = layers.filter(function (x) { return x.id === id; })[0]; return !l || inScope(l); }
+    function lockedS(it) { return !!(it.lk && it.lk.indexOf('s') > -1); }
+    function lockedE(it) { return !!(it.lk && it.lk.indexOf('e') > -1); }
+    // New selection, add to it, or take away from it (3.21): the lasso's choice in its corner.
+    function combineSel(prev, items, boxes) {
+      var op = opt.lasso.op || 'new';
+      if (op === 'new' || !prev) { setSel(op === 'sub' ? null : items, op === 'sub' ? [] : boxes); return; }
+      var I = prev.items.slice(), Bx = prev.boxes.slice();
+      if (op === 'add') { items.forEach(function (it) { if (I.indexOf(it) < 0) I.push(it); }); boxes.forEach(function (b) { if (Bx.indexOf(b) < 0) Bx.push(b); }); }
+      else { I = I.filter(function (it) { return items.indexOf(it) < 0; }); Bx = Bx.filter(function (b) { return boxes.indexOf(b) < 0; }); }
+      setSel(I, Bx);
+    }
     function pickAt(p) { // the top thing under a tap: an item, or else a text box
       for (var li = layers.length - 1; li >= 0; li--) {
         if (!inScope(layers[li])) continue;
-        for (var j = layers[li].items.length - 1; j >= 0; j--) if (hits(layers[li].items[j], p[0], p[1], 8 / Z())) return { it: layers[li].items[j] };
+        for (var j = layers[li].items.length - 1; j >= 0; j--) if (!lockedS(layers[li].items[j]) && hits(layers[li].items[j], p[0], p[1], 8 / Z())) return { it: layers[li].items[j] };
       }
       var bh = BX && BX.at(p[0], p[1], scopeId); return bh ? { box: bh } : null;
     }
@@ -1560,7 +1624,8 @@
         var hnd = handleAt(p);
         if (hnd) { startTransform(hnd, p); return true; }
         if (opt.lasso.how === 'tap') { drag = { pick: p }; return true; } // the item selector: tap to add or take away; a drag still moves
-        drag = { lasso: [p], t: Date.now() }; setSel(null); return true;
+        drag = { lasso: [p], t: Date.now(), prev: sel ? { items: sel.items.slice(), boxes: sel.boxes.slice() } : null };
+        if ((opt.lasso.op || 'new') === 'new') setSel(null); return true;
       }
       if (tool === 'pen') {
         var L = active();
@@ -1710,7 +1775,8 @@
         }
         if (len < 12 / Z()) { // a tap: pick what is under it
           var hit = pickAt(p);
-          setSel(hit ? hit.it ? [hit.it] : [] : null, hit && hit.box ? [hit.box] : []); return;
+          if ((opt.lasso.op || 'new') === 'new') { setSel(hit ? hit.it ? [hit.it] : [] : null, hit && hit.box ? [hit.box] : []); return; }
+          return combineSel(d.prev, hit && hit.it ? [hit.it] : [], hit && hit.box ? [hit.box] : []);
         }
         var picked = [];
         layers.forEach(function (l) {
@@ -1720,10 +1786,10 @@
             eachPoint(it, function (q) { n++; if (inPoly(q[0], q[1], poly)) inside++; });
             // Partly: any of it inside the loop; Fully: all of it; Mostly (standard): at least half.
             var need = opt.lasso.m === 'part' ? 1 : opt.lasso.m === 'full' ? n : n / 2;
-            if (n && inside >= need) picked.push(it);
+            if (n && inside >= need && !lockedS(it)) picked.push(it);
           });
         });
-        setSel(picked, BX ? BX.pick(poly, inPoly, opt.lasso.m, scopeId) : []);
+        combineSel(d.prev, picked, BX ? BX.pick(poly, inPoly, opt.lasso.m, scopeId) : []);
       }
     };
     self.cancel = function () {
@@ -1740,7 +1806,7 @@
         if (!editable(l)) return;
         for (var i = l.items.length - 1; i >= 0; i--) {
           var it = l.items[i];
-          if (it.t === 'i' || it.t === 'b' || !hits(it, p[0], p[1], r)) continue; // images and shapes are removed with Select › Delete, never rubbed out by accident
+          if (it.t === 'i' || it.t === 'b' || lockedE(it) || !hits(it, p[0], p[1], r)) continue; // locked things, images and shapes are removed with Select › Delete, never rubbed out by accident
           var e = elOf(it);
           if (opt.erase.m === 'slice' && it.t !== 'f' && it.t !== 'x') {
             var parts = slice(it, p[0], p[1], r);
@@ -1770,7 +1836,7 @@
 
     // ---- What the canvas and the app can ask ----
     self.render = render;
-    self.viewChanged = function () { drawUi(); };
+    self.viewChanged = function () { drawUi(); if (lockHost.firstChild) drawLocks(); };
     self.redraw = function () { layers.forEach(function (l) { l.items.forEach(invalidate); }); render(); }; // a tip, line style or pattern changed
     self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
