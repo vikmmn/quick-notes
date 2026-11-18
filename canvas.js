@@ -179,13 +179,16 @@
       return { r: r, b: b };
     }
     function autoWidth() { return Math.max(240, host.clientWidth - 2 * M); }
+    var TEXT_W = 620;
     function layout() {
       boxes.forEach(function (b) {
         var e = editors[b.id];
         if (!e) return;
         e.el.style.left = (b.x + M) + 'px'; e.el.style.top = (b.y + M) + 'px';
         e.el.style.transform = b.r ? 'rotate(' + b.r + 'rad)' : ''; // text written on a turned page stays straight to how it was written
-        e.el.style.width = (b.w || Math.max(160, autoWidth() - b.x)) + 'px';
+        // A text box without its own width: a comfortable reading width, not the whole screen (3.18.1), so in
+        // landscape the rest of the page stays free for a quick scribble with the pen.
+        e.el.style.width = (b.w || Math.max(160, Math.min(TEXT_W, autoWidth() - b.x))) + 'px';
       });
       var c = contentRight();
       var W = Math.max(host.clientWidth, c.r + 2 * M + 160);
