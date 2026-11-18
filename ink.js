@@ -85,7 +85,7 @@
         if (it.o != null && it.o !== 1) x.o = Math.round(it.o * 100) / 100;
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
-        if (it.t === 'f') x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); });
+        if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; }
         else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
         else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
@@ -199,6 +199,36 @@
     if (!u) return '<rect data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" rx="6" fill="var(--field, #8882)" stroke="var(--rule, #8886)" stroke-dasharray="6 5"/>';
     return '<image data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '/>';
   }
+  // ---- Pencil grain: a tile of speckled holes, as a pattern in the pencil's colour ----
+  // (Before 3.18 an SVG filter made the grain. A filter is redrawn over the whole stroke at every zoom and move, so long
+  // or scribbled pencil lines lagged, and very big ones vanished when the filter got too big to draw.)
+  var GRAIN_U = 64, grainImg = null, grainIds = {}, grainHost = null;
+  function grainTile() { // white speckles, about one page unit each, with see-through holes
+    if (grainImg) return grainImg;
+    var N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N;
+    var g = cv.getContext('2d'), im = g.createImageData(N, N), seed = 7;
+    var rnd = function () { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (var i = 0; i < N * N; i++) {
+      var a = Math.max(0, Math.min(1, 1.35 - 1.6 * rnd()));
+      im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = 255; im.data[i * 4 + 3] = Math.round(a * 255);
+    }
+    g.putImageData(im, 0, 0);
+    grainImg = { canvas: cv, url: cv.toDataURL('image/png') };
+    return grainImg;
+  }
+  function grainFill(col) { // the id of a pattern of grain in this colour (made once, kept in one hidden SVG for the page)
+    var c = colorOf(col), id = grainIds[c];
+    if (id) return 'url(#' + id + ')';
+    if (!grainHost) {
+      grainHost = document.createElementNS(NS, 'svg'); grainHost.setAttribute('width', '0'); grainHost.setAttribute('height', '0');
+      grainHost.setAttribute('aria-hidden', 'true'); grainHost.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+      grainHost.innerHTML = '<defs><mask id="qn-gm" maskUnits="userSpaceOnUse" x="0" y="0" width="' + GRAIN_U + '" height="' + GRAIN_U + '"><image href="' + grainTile().url + '" width="' + GRAIN_U + '" height="' + GRAIN_U + '"/></mask></defs>';
+      document.body.appendChild(grainHost);
+    }
+    id = grainIds[c] = 'qn-g' + Object.keys(grainIds).length;
+    grainHost.firstChild.insertAdjacentHTML('beforeend', '<pattern id="' + id + '" patternUnits="userSpaceOnUse" width="' + GRAIN_U + '" height="' + GRAIN_U + '"><rect width="' + GRAIN_U + '" height="' + GRAIN_U + '" fill="' + xmlEsc(c) + '" mask="url(#qn-gm)"/></pattern>');
+    return 'url(#' + id + ')';
+  }
   // ---- Home-made pen tips, line styles and fill patterns ----
   function defItems(d, col) { // the def's own strokes, in the colour given (or their own)
     return d.items.map(function (p) { return bare(itemSvg(col ? Object.assign({}, p, { c: col }) : p, true)); }).join('');
@@ -246,10 +276,12 @@
     });
     return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + out + '</g>';
   }
-  function patternDef(d, pid) { // a tile, with its edges wrapped round so the pattern runs on without seams
-    var sz = d.sz || 48, inner = defItems(d), nine = '';
+  // ps: how big the pattern is drawn (1: the tile's own size); pd: spacing, the room between repeats (1: none).
+  function patternDef(d, pid, ps, pd) { // a tile, with its edges wrapped round so the pattern runs on without seams
+    var sz = (d.sz || 48) * (ps || 1), per = sz * Math.max(1, pd || 1), inner = defItems(d), nine = '';
     [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
-    return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + sz + '" height="' + sz + '"><g transform="scale(' + (sz / 100) + ')">' + nine + '</g></pattern>';
+    var body = per > sz ? '<clipPath id="' + pid + '-c"><rect width="100" height="100"/></clipPath><g clip-path="url(#' + pid + '-c)">' + nine + '</g>' : nine;
+    return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + per.toFixed(2) + '" height="' + per.toFixed(2) + '"><g transform="scale(' + (sz / 100) + ')">' + body + '</g></pattern>';
   }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
@@ -258,13 +290,13 @@
     if (it.cs && DEFS[it.cs] && it.p && it.p.length) return DEFS[it.cs].k === 'line' ? lineSvg(it, DEFS[it.cs]) : tipSvg(it, DEFS[it.cs]);
     if (it.pt && DEFS[it.pt] && it.t === 'f') {
       var pid = 'pt-' + it.id, po = (it.o == null ? 1 : it.o) * (it.co || 1);
-      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
+      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid, it.ps, it.pd) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
     }
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
-    var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + colorOf(it.c) + '"' +
+    var path = '<path' + (fade ? '' : ' data-i="' + it.id + '"') + ' d="' + itemD(it) + '" fill="' + (B.grain ? grainFill(it.c) : colorOf(it.c)) + '"' +
       (it.t === 'f' ? ' fill-rule="evenodd"' : '') + (o !== 1 ? ' fill-opacity="' + o + '"' : '') + (fade ? ' mask="url(#pm-' + it.id + ')"' : '') +
-      (B.grain ? ' filter="url(#qn-grain)"' : '') + (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
+      (B.blend ? ' style="mix-blend-mode:' + B.blend + '"' : '') + '/>';
     return fade ? '<g data-i="' + it.id + '">' + fadeMask(it) + path + '</g>' : path;
   }
   // ---- Shapes (booleans), drawn live with masks, so the parts stay as they are ----
@@ -304,8 +336,7 @@
       var below = layers[i - 1];
       if (l.clip && below) masks += '<mask id="' + prefix + 'm-' + l.id + '" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000"><use href="#' + prefix + 'L-' + below.id + '"/></mask>';
     });
-    return '<defs><filter id="qn-grain" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="1" seed="3" result="n"/>' +
-      '<feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.6 1.35" result="a"/><feComposite in="SourceGraphic" in2="a" operator="in"/></filter>' + masks + '</defs>';
+    return '<defs>' + masks + '</defs>';
   }
   function markup(layers, prefix, dx, dy, plain) {
     return defsSvg(layers, prefix) + '<g transform="translate(' + dx + ' ' + dy + ')">' +
@@ -372,12 +403,31 @@
   }
   // The slicer: removes the part of a stroke under the eraser, leaving the rest as separate strokes.
   function slice(it, x, y, r) {
-    var R = r + widthOf(it) * 0.25;
-    var p = densify(it.p, x, y, R + 4, 1.5), pieces = [], cur = [], cut = false;
-    p.forEach(function (q) {
-      if (Math.hypot(q[0] - x, q[1] - y) <= R) { cut = true; if (cur.length) pieces.push(cur); cur = []; }
-      else cur.push(q);
-    });
+    // The line keeps its own points; only where it crosses the edge of the eraser's circle is a point added. (Before 3.18
+    // many points were added all round the cut, and the smoothing then followed them differently, so the rest of the
+    // line changed shape too.)
+    var R = r + widthOf(it) * 0.25, P = it.p, pieces = [], cur = [], cut = false;
+    var inside = function (q) { return Math.hypot(q[0] - x, q[1] - y) <= R; };
+    var lerp = function (a, b, t) { var o2 = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, (a[2] == null ? 0.5 : a[2]) + ((b[2] == null ? 0.5 : b[2]) - (a[2] == null ? 0.5 : a[2])) * t]; if (a[3] != null) o2.push(a[3] + ((b[3] == null ? a[3] : b[3]) - a[3]) * t); return o2; };
+    var cross = function (a, b) { // where the segment a→b meets the circle, as fractions along it
+      var dx = b[0] - a[0], dy = b[1] - a[1], fx = a[0] - x, fy = a[1] - y, A2 = dx * dx + dy * dy;
+      if (!A2) return [];
+      var B2 = 2 * (fx * dx + fy * dy), C2 = fx * fx + fy * fy - R * R, D = B2 * B2 - 4 * A2 * C2;
+      if (D < 0) return [];
+      var sq = Math.sqrt(D);
+      return [(-B2 - sq) / (2 * A2), (-B2 + sq) / (2 * A2)].filter(function (t) { return t > 0 && t < 1; });
+    };
+    if (inside(P[0])) cut = true; else cur.push(P[0]);
+    for (var i = 1; i < P.length; i++) {
+      var a = P[i - 1], b = P[i], ts = cross(a, b), wasIn = inside(a);
+      ts.forEach(function (t) {
+        var m = lerp(a, b, t);
+        if (wasIn) cur = [m]; else { cur.push(m); pieces.push(cur); cur = []; cut = true; }
+        wasIn = !wasIn;
+      });
+      if (inside(b)) { cut = true; if (cur.length && !wasIn) { pieces.push(cur); } cur = []; }
+      else cur.push(b);
+    }
     if (cur.length) pieces.push(cur);
     if (!cut) return null;
     return pieces.filter(function (pp) { return pp.length > 1; }).map(function (pp) {
@@ -727,12 +777,49 @@
       d.m = [dpr * (bx[0] - a[0]), dpr * (bx[1] - a[1]), dpr * (by[0] - a[0]), dpr * (by[1] - a[1]), dpr * a[0], dpr * a[1]];
       var B = BRUSH[d.stroke.b] || {};
       d.color = inkColor(d.stroke.c);
-      d.alpha = (d.stroke.o == null ? 1 : d.stroke.o) * (d.layer.op == null ? 1 : d.layer.op) * (B.grain ? 0.88 : 1);
+      d.alpha = (d.stroke.o == null ? 1 : d.stroke.o) * (d.layer.op == null ? 1 : d.layer.op);
       live.style.mixBlendMode = B.blend || d.layer.blend !== 'normal' && d.layer.blend || '';
-      // A home-made tip or line style, pencil grain, a blend, or ink that fades with pressure/tilt: drawn as it will
-      // look, straight into its layer, while drawing (a plain line that changes on lifting the pen looked wrong).
-      d.svgLive = !!(d.stroke.cs && DEFS[d.stroke.cs]) || !!B.grain || !!B.blend || !!(opt.pen.po || opt.pen.to);
+      live.style.opacity = '';
+      // Pencil grain: the same speckled tile as the saved line, as a canvas pattern in the pencil's colour.
+      d.grain = B.grain ? grainPattern(d.color) : null;
+      // A home-made tip: stamped onto the canvas as the pen moves, only the new stamps each frame (3.17 rebuilt the
+      // whole line as SVG every frame, which lagged more the longer the line got).
+      var def = d.stroke.cs && DEFS[d.stroke.cs];
+      d.tip = def && def.k !== 'line' ? tipStamp(def, d.color) : null;
+      if (d.tip) { d.tipAt = 0; d.tipN = 0; live.style.opacity = d.alpha; }
+      // A line style, or ink that fades with pressure/tilt: drawn as it will look, straight into its layer.
+      d.svgLive = !!(def && def.k === 'line') || !!(opt.pen.po || opt.pen.to);
       clearLive();
+    }
+    function grainPattern(color) {
+      var t = grainTile(), N = t.canvas.width, cv = document.createElement('canvas'); cv.width = cv.height = N;
+      var g = cv.getContext('2d'); g.drawImage(t.canvas, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = color; g.fillRect(0, 0, N, N);
+      var pat = lctx.createPattern(cv, 'repeat');
+      if (pat.setTransform && window.DOMMatrix) pat.setTransform(new DOMMatrix().scale(GRAIN_U / N));
+      return pat;
+    }
+    var stampCache = {};
+    function tipStamp(def, color) { // the tip drawn once into a small picture, in the pen's colour
+      var key = def.id + '|' + (def.u || '') + '|' + color;
+      if (stampCache[key]) return stampCache[key];
+      var N = 256, cv = document.createElement('canvas'); cv.width = cv.height = N;
+      var g = cv.getContext('2d'); g.setTransform(N / 100, 0, 0, N / 100, N / 2, N / 2); g.fillStyle = color;
+      def.items.forEach(function (p) { var dd = itemD(p); if (!dd) return; g.globalAlpha = p.o == null ? 1 : p.o; g.fill(new Path2D(dd), p.t === 'f' ? 'evenodd' : 'nonzero'); });
+      return (stampCache[key] = { cv: cv, def: def });
+    }
+    function stampTips(d, from) { // stamps along the line from distance `from`, as tipSvg places them
+      var it = d.stroke, def = d.tip.def, w = widthOf(it), sp = Math.max(0.05, def.sp || 0.25) * w, A = along(it.p), pm = def.pm || 'size', LV = 10;
+      lctx.setTransform(d.m[0], d.m[1], d.m[2], d.m[3], d.m[4], d.m[5]);
+      var s = from;
+      for (; s <= A.len + 0.01; s += sp) {
+        var q = A.at(s), pr = it.f ? q[4] : 0.5, ang = def.rot ? Math.atan2(q[3], q[2]) : 0;
+        var k = w * (pm !== 'reveal' && it.f ? 0.45 + 1.1 * pr : 1);
+        lctx.save(); lctx.translate(q[0], q[1]); if (ang) lctx.rotate(ang); lctx.scale(k / 100, k / 100);
+        if (pm !== 'size') { var lv = Math.max(1, Math.min(LV, Math.round((0.15 + 0.85 * (it.f ? pr : 1)) * LV))); lctx.beginPath(); lctx.arc(0, 0, 50 * lv / LV, 0, Math.PI * 2); lctx.clip(); }
+        lctx.drawImage(d.tip.cv, -50, -50, 100, 100); lctx.restore();
+        if (A.len === 0) { s += sp; break; }
+      }
+      return s;
     }
     function dropLiveSvg(d) { if (d && d.liveEl) { d.liveEl.remove(); d.liveEl = null; } }
     function clearLive() { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); live.style.display = 'none'; }
@@ -746,6 +833,13 @@
         d.liveEl.innerHTML = itemSvg(Object.assign({}, it, { id: 'live' + it.id, p: pts.length > 1 ? pts : pts.concat([[pts[0][0] + 0.4, pts[0][1] + 0.4].concat(pts[0].slice(2))]) }));
         return;
       }
+      if (d.tip) {
+        if (d.snap || it.p.length < d.tipN) { lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height); d.tipAt = 0; } // a clean shape: stamp it afresh
+        d.tipN = it.p.length;
+        d.tipAt = stampTips(d, d.tipAt);
+        live.style.display = '';
+        return;
+      }
       var out = outline(it, pts, false);
       clearLive();
       if (!out.length) return;
@@ -753,7 +847,7 @@
       lctx.beginPath(); lctx.moveTo(out[0][0], out[0][1]);
       for (var i = 1; i < out.length; i++) lctx.lineTo(out[i][0], out[i][1]);
       lctx.closePath();
-      lctx.globalAlpha = d.alpha; lctx.fillStyle = d.color; lctx.fill();
+      lctx.globalAlpha = d.alpha; lctx.fillStyle = d.grain || d.color; lctx.fill();
       live.style.display = '';
     }
     function liveSoon() { if (!liveRaf) liveRaf = requestAnimationFrame(drawLive); }
@@ -765,7 +859,12 @@
       if (drag && drag.lasso && drag.lasso.length > 1) {
         var lp = 'M' + drag.lasso.map(function (q) { return (q[0] + M) + ' ' + (q[1] + M); }).join('L');
         // Drawing a filled shape (like Concepts): the colour fills in as the outline is drawn.
-        if (drag.fillShape) h += '<path d="' + lp + 'Z" fill="' + (opt.fill.c === 'ink' ? 'var(--ink)' : opt.fill.c) + '" fill-opacity="' + (opt.fill.o == null ? 1 : opt.fill.o) + '" stroke="none"/>';
+        // With a pattern, the pattern shows as the shape is drawn (before 3.18 only once the pen was lifted).
+        if (drag.fillShape) {
+          var fpt = opt.fill.pt && DEFS[opt.fill.pt];
+          if (fpt) h += '<defs>' + patternDef(fpt, 'ui-fpt', opt.fill.ps, opt.fill.pd).replace('<pattern ', '<pattern patternTransform="translate(' + M + ' ' + M + ')" ') + '</defs>';
+          h += '<path d="' + lp + 'Z" fill="' + (fpt ? 'url(#ui-fpt)' : opt.fill.c === 'ink' ? 'var(--ink)' : opt.fill.c) + '" fill-rule="evenodd" fill-opacity="' + (opt.fill.o == null ? 1 : opt.fill.o) + '" stroke="none"/>';
+        }
         else h += '<path d="' + lp + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
       }
       if (cursor) h += '<circle cx="' + (cursor[0] + M) + '" cy="' + (cursor[1] + M) + '" r="' + cursor[2] + '" fill="none" stroke="var(--muted)" stroke-width="' + k + '" stroke-dasharray="' + 3 * k + ' ' + 3 * k + '"/>';
@@ -780,6 +879,11 @@
           '<line x1="' + (x + w / 2) + '" y1="' + y + '" x2="' + (x + w / 2) + '" y2="' + (y - 22 * k) + '" stroke="var(--accent)" stroke-width="' + 1.5 * k + '"/>' +
           '<circle cx="' + (x + w / 2) + '" cy="' + (y - 28 * k) + '" r="' + 8 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>' +
           '<rect x="' + (x + w - 9 * k) + '" y="' + (y + hh - 9 * k) + '" width="' + 18 * k + '" height="' + 18 * k + '" rx="' + 4 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>';
+        // Side handles: stretch or squash in one direction (the corner keeps the proportions).
+        [[x, y + hh / 2, 1], [x + w, y + hh / 2, 1], [x + w / 2, y, 0], [x + w / 2, y + hh, 0]].forEach(function (q) {
+          var a = q[2] ? 6 * k : 14 * k, bb = q[2] ? 14 * k : 6 * k;
+          h += '<rect x="' + (q[0] - a / 2) + '" y="' + (q[1] - bb / 2) + '" width="' + a + '" height="' + bb + '" rx="' + 3 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 1.6 * k + '"/>';
+        });
       }
       ui.innerHTML = h;
       placeBar();
@@ -801,7 +905,7 @@
     }
     function setSel(items, bids) {
       items = items || []; bids = BX ? (bids || []) : [];
-      if (!items.length && !bids.length) { sel = null; bar.classList.add('hidden'); drawUi(); return; }
+      if (!items.length && !bids.length) { sel = null; bar.classList.add('hidden'); hideTip(); drawUi(); return; }
       // A collective (items grouped across layers, text boxes too) comes along as one.
       var gs = {}, any = false; items.forEach(function (it) { if (it.g) { gs[it.g] = 1; any = true; } });
       bids.forEach(function (id) { var g = BX.groupOf(id); if (g) { gs[g] = 1; any = true; } });
@@ -822,21 +926,30 @@
     var SW = ['ink', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#ffffff'];
     function renderBar(mode) {
       if (!sel) return;
+      hideTip();
       var g0 = sel.items.length ? sel.items[0].g : sel.boxes.length ? BX.groupOf(sel.boxes[0]) : null;
       var grouped = !!g0 && sel.items.every(function (it) { return it.g === g0; }) && sel.boxes.every(function (id) { return BX.groupOf(id) === g0; });
       var count = sel.items.length + sel.boxes.length;
       var inkSel = sel.items.length > 0, h;
       var hasArt = sel.items.some(function (it) { return it.t === 'x'; });
       var isShape = sel.items.length === 1 && sel.items[0].t === 'b';
+      var T = function (name) { return '<b class="bt">' + name + '</b>'; }; // the name of the part that is open
+      if (mode === 'color') sel.lw0 = null;
       if (mode === 'color') {
         var onlyImg = sel.items.every(function (it) { return it.t === 'i'; });
-        h = (onlyImg ? '' : SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('')) +
-          '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label><button type="button" data-act="back">Done</button>';
+        var strokes = sel.items.filter(function (it) { return it.t === 's'; }), pfills = sel.items.filter(function (it) { return it.t === 'f' && it.pt; });
+        h = T(onlyImg ? 'Opacity' : 'Colour') + (onlyImg ? '' : SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('')) +
+          '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label>' +
+          // Lines (outlines from Text art too): thinner or thicker, all by the same amount.
+          (strokes.length ? '<label class="op">Line width <input type="range" min="10" max="400" value="100" data-lw></label>' : '') +
+          (pfills.length ? '<label class="op">Pattern size <input type="range" min="20" max="400" value="' + Math.round((pfills[0].ps || 1) * 100) + '" data-ps></label>' +
+            '<label class="op">Spacing <input type="range" min="100" max="400" value="' + Math.round((pfills[0].pd || 1) * 100) + '" data-pd></label>' : '') +
+          '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
-        h = '<label class="op">Collective opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
+        h = T('Collective') + '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
       } else if (mode === 'newnote') {
-        h = '<button type="button" data-act="nn-copy" title="This note stays as it is">Copy to new note</button>' +
+        h = T('To new note') + '<button type="button" data-act="nn-copy" title="This note stays as it is">Copy to new note</button>' +
           '<button type="button" data-act="nn-move" title="It leaves this note">Extract to new note</button><button type="button" data-act="back">Cancel</button>';
       } else if (mode === 'bool') {
         var cur = isShape ? sel.items[0].op : '';
@@ -844,37 +957,46 @@
           return '<button type="button" class="bop" data-bop="' + op + '"' + (cur === op ? ' aria-pressed="true"' : '') + '><svg viewBox="0 0 24 24" width="22" height="22">' + d + '</svg>' + label + '</button>';
         };
         var A1 = 'M3 6h11v11H3z', A2 = 'M9 9h12v12H9z', S = 'fill="currentColor"', E = 'fill="none" stroke="currentColor" stroke-width="1.5"';
-        h = BI('union', 'Join', '<path d="' + A1 + 'M9 9h12v12H9z" ' + S + '/>') +
+        h = T('Combine shapes') + BI('union', 'Join', '<path d="' + A1 + 'M9 9h12v12H9z" ' + S + '/>') +
           BI('subtract', 'Cut out', '<path d="M3 6h11v3H9v8H3z" ' + S + '/><path d="' + A2 + '" ' + E + ' stroke-dasharray="2 2"/>') +
           BI('intersect', 'Overlap', '<path d="' + A1 + '" ' + E + '/><path d="' + A2 + '" ' + E + '/><path d="M9 9h5v8H9z" ' + S + '/>') +
           BI('exclude', 'Exclude', '<path d="M3 6h11v3H9v8H3z" ' + S + '/><path d="M14 9h7v12H9v-4h5z" ' + S + '/>') +
           (isShape ? '<button type="button" data-act="release" title="Back to separate parts, each in its own layer">Release</button>' : '') +
           '<button type="button" data-act="back">Done</button>';
-      } else if (mode === 'arrange') {
-        var I = function (act, label, d) { return '<button type="button" class="ic" data-arr="' + act + '" title="' + label + '" aria-label="' + label + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg></button>'; };
-        h = I('l', 'Align left', '<path d="M4 3v18M8 7h10M8 15h6"/>') + I('cx', 'Align centres', '<path d="M12 3v18M6 7h12M8 15h8"/>') + I('r', 'Align right', '<path d="M20 3v18M6 7h10M10 15h6"/>') +
+      } else if (mode === 'align') { // where things sit, next to each other
+        var I = function (act, label, d) { return '<button type="button" class="ic" data-arr="' + act + '" data-tip="' + label + '" aria-label="' + label + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg></button>'; };
+        h = T('Align') + I('l', 'Align left', '<path d="M4 3v18M8 7h10M8 15h6"/>') + I('cx', 'Align centres', '<path d="M12 3v18M6 7h12M8 15h8"/>') + I('r', 'Align right', '<path d="M20 3v18M6 7h10M10 15h6"/>') +
           I('t', 'Align top', '<path d="M3 4h18M7 8v10M15 8v6"/>') + I('cy', 'Align middles', '<path d="M3 12h18M7 6v12M15 8v8"/>') + I('b', 'Align bottom', '<path d="M3 20h18M7 6v10M15 10v6"/>') +
           (count > 2 ? I('dx', 'Spread evenly across', '<path d="M4 4v16M20 4v16M10 8v8M14 8v8"/>') + I('dy', 'Spread evenly down', '<path d="M4 4h16M4 20h16M8 10h8M8 14h8"/>') : '') +
-          (inkSel ? I('front', 'To the front', '<rect x="8" y="8" width="10" height="10" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') + I('fwd', 'Forward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M13 11v4M11 13h4"/><path d="M5 15V5h10"/>') +
-            I('bwd', 'Backward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M11 13h4"/><path d="M5 15V5h10"/>') + I('back', 'To the back', '<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/><path d="M18 9v9H9"/>') : '') +
+          '<button type="button" data-act="back">Done</button>';
+      } else if (mode === 'arrange') { // in front of or behind other things
+        var I2 = function (act, label, d) { return '<button type="button" class="ic" data-arr="' + act + '" data-tip="' + label + '" aria-label="' + label + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg></button>'; };
+        h = T('Arrange') + I2('front', 'To the front', '<rect x="8" y="8" width="10" height="10" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') + I2('fwd', 'Forward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M13 11v4M11 13h4"/><path d="M5 15V5h10"/>') +
+          I2('bwd', 'Backward', '<rect x="8" y="8" width="10" height="10" rx="1"/><path d="M11 13h4"/><path d="M5 15V5h10"/>') + I2('back', 'To the back', '<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/><path d="M18 9v9H9"/>') +
           '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'layer') {
-        h = layers.slice().reverse().map(function (l) { return '<button type="button" data-tol="' + l.id + '">' + esc(l.name) + '</button>'; }).join('') + '<button type="button" data-act="back">Cancel</button>';
+        h = T('Move to layer') + layers.slice().reverse().map(function (l) { return '<button type="button" data-tol="' + l.id + '">' + esc(l.name) + '</button>'; }).join('') + '<button type="button" data-act="back">Cancel</button>';
       } else {
-        h = '<button type="button" data-act="dup">Duplicate</button><button type="button" data-act="del">Delete</button>' +
-          (grouped ? '<button type="button" data-act="ungroup" title="The items go back to being separate">Break up</button><button type="button" data-act="cop">Opacity</button>'
-            : count > 1 ? '<button type="button" data-act="group" title="Move, turn and fade these together, whatever layer each is on">Collective</button>' : '') +
-          (inkSel ? '<button type="button" data-act="color">' + (sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour') + '</button>' : '') +
-          (count > 1 || inkSel ? '<button type="button" data-act="arrange">Arrange</button>' : '') +
-          (sel.items.length > 1 || isShape ? '<button type="button" data-act="bool" title="Join, cut out, overlap or exclude: the parts stay as they are">' + (isShape ? 'Shape' : 'Combine shapes') + '</button>' : '') +
-          (sel.boxes.length && BX.hasImages(sel.boxes) ? '<button type="button" data-act="imgout" title="Each image becomes its own object on the page">Take images out</button>' : '') +
-          (sel.items.length ? '<button type="button" data-act="warp" title="Drag the corners for perspective, the sides to skew">' + (sel.warp ? 'Done distorting' : 'Distort') + '</button>' : '') +
-          (o.toNewNote ? '<button type="button" data-act="newnote" title="Copy or move this into a note of its own">To new note</button>' : '') +
-          (sel.boxes.length ? '<button type="button" data-act="toart" title="Make this text part of the drawing">To Text art</button>' : '') +
-          (hasArt ? '<button type="button" data-act="outline" title="Each letter becomes pen lines you can erase, nudge, fill or redraw">To outlines</button>' : '') +
-          (hasArt ? '<button type="button" data-act="tobox" title="Make this normal, editable text">To text box</button>' : '') + (layers.length > 1 ? '<button type="button" data-act="layer">Layer</button>' : '') +
-          (o.zoomTo ? '<button type="button" data-act="zoom">Zoom to</button>' : '') +
-          ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? '<button type="button" data-act="straight">Straighten</button>' : '');
+        // Symbols; the name shows when the pen hovers over one, or on a long press.
+        var B = function (act, name, d) { return '<button type="button" class="ib" data-act="' + act + '" data-tip="' + name + '" aria-label="' + name + '"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg></button>'; };
+        h = B('dup', 'Duplicate', '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>') +
+          B('del', 'Delete', '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>') +
+          (grouped ? B('ungroup', 'Break collective (back to separate things)', '<path d="M2 8V2h6M16 2h6v6M22 16v6h-6M8 22H2v-6"/><circle cx="8.5" cy="8.5" r="3"/><rect x="13" y="13" width="6" height="6" rx="1"/>') +
+              B('cop', 'Collective opacity', '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>')
+            : count > 1 ? B('group', 'Make collective (move, turn and fade these together, whatever layer each is on)', '<rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 3"/><circle cx="8.5" cy="8.5" r="3"/><rect x="13" y="13" width="6" height="6" rx="1"/>') : '') +
+          (inkSel ? B('color', sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour, opacity, line width', '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>') : '') +
+          (count > 1 ? B('align', 'Align', '<path d="M4 3v18M8 7h12M8 15h7"/>') : '') +
+          (inkSel ? B('arrange', 'Arrange (to the front, to the back)', '<rect x="9" y="9" width="11" height="11" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') : '') +
+          (sel.items.length > 1 || isShape ? B('bool', isShape ? 'Shape: join, cut out, overlap, exclude' : 'Combine shapes: join, cut out, overlap, exclude', '<path d="M3 6h11v11H3z"/><path d="M9 9h12v12H9z"/>') : '') +
+          (sel.boxes.length && BX.hasImages(sel.boxes) ? B('imgout', 'Take images out (each becomes its own object)', '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M3 15l4-4 4 4M15 3h6v6M21 3l-7 7"/>') : '') +
+          (sel.items.length ? B('warp', sel.warp ? 'Done distorting' : 'Distort (corners: perspective, sides: skew)', sel.warp ? '<path d="M5 12l5 5 9-10"/>' : '<path d="M4 6l16-2-2 16-14-3z"/><path d="M4 6l6 6M20 4l-8 8"/>') : '') +
+          (o.toNewNote ? B('newnote', 'To new note', '<path d="M6 3h8l4 4v14H6z"/><path d="M12 11v6M9 14h6"/>') : '') +
+          (sel.boxes.length ? B('toart', 'To Text art (part of the drawing)', '<path d="M4 20l6-16 6 16M7 14h6"/><path d="M19 3v5M16.5 5.5h5"/>') : '') +
+          (hasArt ? B('outline', 'To outlines (each letter becomes lines you can erase, nudge, fill)', '<path d="M5 20l7-16 7 16h-3l-1.6-4H9.6L8 20z"/><path d="M10.6 13h2.8L12 9.5z"/>') : '') +
+          (hasArt ? B('tobox', 'To text box (normal, editable text)', '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10M7 13h7"/>') : '') +
+          (layers.length > 1 ? B('layer', 'Move to layer', '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>') : '') +
+          (o.zoomTo ? B('zoom', 'Zoom to', '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/>') : '') +
+          ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? B('straight', 'Straighten', '<path d="M3 18h18"/><path d="M5 13l14-5" stroke-dasharray="2 2.5"/>') : '');
       }
       bar.innerHTML = h; bar.classList.remove('hidden'); placeBar();
     }
@@ -894,6 +1016,25 @@
       bar.style.top = (b.y + b.h + M + 14) + 'px';
     }
     bar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    // A symbol's name: shown while the pen (or mouse) hovers over it, or after a long press with a finger.
+    var tipEl = document.createElement('div'); tipEl.className = 'inktip hidden'; (o.uiHost || stage).appendChild(tipEl);
+    var tipTimer = 0, swallow = false;
+    function showTip(b) {
+      var hr = (o.uiHost || stage).getBoundingClientRect(), r = b.getBoundingClientRect();
+      tipEl.textContent = b.dataset.tip; tipEl.classList.remove('hidden');
+      var W = (o.uiHost || stage).clientWidth, w = tipEl.offsetWidth;
+      tipEl.style.left = Math.max(6, Math.min(W - w - 6, r.left - hr.left + r.width / 2 - w / 2)) + 'px';
+      tipEl.style.top = Math.max(4, r.top - hr.top - tipEl.offsetHeight - 8) + 'px';
+    }
+    function hideTip() { clearTimeout(tipTimer); if (tipEl) tipEl.classList.add('hidden'); }
+    bar.addEventListener('pointerover', function (e) { var b = e.target.closest('[data-tip]'); if (b && e.pointerType !== 'touch') showTip(b); });
+    bar.addEventListener('pointerout', function (e) { if (e.pointerType !== 'touch') hideTip(); });
+    bar.addEventListener('pointerdown', function (e) {
+      var b = e.target.closest('[data-tip]'); swallow = false; hideTip();
+      if (b && e.pointerType === 'touch') tipTimer = setTimeout(function () { swallow = true; showTip(b); }, 450);
+    });
+    bar.addEventListener('pointerup', function (e) { if (e.pointerType === 'touch') { clearTimeout(tipTimer); if (swallow) setTimeout(hideTip, 1200); } });
+    bar.addEventListener('click', function (e) { if (swallow) { swallow = false; e.stopImmediatePropagation(); } }, true);
     bar.addEventListener('input', function (e) {
       if (e.target.dataset.op == null || !sel) return;
       var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { own(it).o = v; }); render();
@@ -905,7 +1046,16 @@
       if (sel.boxes.length) BX.setGroup(sel.boxes, BX.groupOf(sel.boxes[0]), v);
       render();
     });
-    bar.addEventListener('change', function (e) { if (e.target.dataset.op != null) o.changed('ink'); if (e.target.dataset.cop != null) commit(); });
+    bar.addEventListener('input', function (e) { // line width (from what it was when Colour opened), pattern size and spacing
+      var ds = e.target.dataset; if (!sel || (ds.lw == null && ds.ps == null && ds.pd == null)) return;
+      var v = +e.target.value / 100;
+      sel.items.slice().forEach(function (it) {
+        if (ds.lw != null && it.t === 's') { if (!sel.lw0) sel.lw0 = {}; if (sel.lw0[it.id] == null) sel.lw0[it.id] = it.s; var t = own(it); t.s = Math.max(0.05, sel.lw0[it.id] * v); invalidate(t); }
+        if ((ds.ps != null || ds.pd != null) && it.t === 'f' && it.pt) { var f = own(it); if (ds.ps != null) f.ps = v; else f.pd = v; if (f.ps === 1) delete f.ps; if (f.pd === 1) delete f.pd; invalidate(f); }
+      });
+      render(); refreshBox(); drawUi();
+    });
+    bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.lw != null || ds.ps != null || ds.pd != null) commit(); if (ds.cop != null) commit(); });
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
@@ -926,7 +1076,7 @@
         refreshBox(); render(); commit(); renderBar(); return;
       }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
-      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'bool' || act === 'newnote') return renderBar(act);
+      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'align' || act === 'bool' || act === 'newnote') return renderBar(act);
       if (act === 'nn-copy' || act === 'nn-move') {
         // What is picked, with the layers it is on (their look kept), its text boxes, and where it all sits.
         var out = [], bb = selBox(sel.items, sel.boxes);
@@ -976,7 +1126,7 @@
             var g = it.g || uid('g'), w = Math.max(0.8, it.fs * 0.035), at = l.items.indexOf(it);
             var lines = textOutlines(it).map(function (ring) {
               var p = ring.concat([ring[0]]).map(function (q) { return [q[0], q[1], 0.5]; });
-              var s = { id: uid('s'), t: 's', b: 'marker', c: it.c, s: Math.round(w / BRUSH.marker.size * 100) / 100, o: it.o == null ? 1 : it.o, g: g, p: p };
+              var s = { id: uid('s'), t: 's', b: 'marker', c: it.c, s: Math.round(w / BRUSH.marker.size * 100) / 100, o: it.o == null ? 1 : it.o, g: g, st: 0, p: p }; // no smoothing: the line follows the letter exactly
               if (it.co) s.co = it.co;
               return s;
             });
@@ -1091,7 +1241,7 @@
         if (a === 'b') move(u, 0, B.y + B.h - r0.y - r0.h);
         if (a === 'cy') move(u, 0, B.y + B.h / 2 - r0.y - r0.h / 2);
       });
-      refreshBox(); render(); commit(); renderBar('arrange');
+      refreshBox(); render(); commit(); renderBar('align');
     }
 
     // ---- What the selection tools reach: all layers, the layer being worked on, or its group ----
@@ -1134,13 +1284,17 @@
       var k = 1 / Z(), b = sel.box, x = b.x - 6 * k, y = b.y - 6 * k, w = b.w + 12 * k, h = b.h + 12 * k;
       if (Math.hypot(p[0] - (x + w / 2), p[1] - (y - 28 * k)) < 20 * k) return 'rotate';
       if (Math.hypot(p[0] - (x + w), p[1] - (y + h)) < 22 * k) return 'scale';
+      if (Math.hypot(p[0] - x, p[1] - (y + h / 2)) < 16 * k) return 'sx0';
+      if (Math.hypot(p[0] - (x + w), p[1] - (y + h / 2)) < 16 * k) return 'sx1';
+      if (Math.hypot(p[0] - (x + w / 2), p[1] - (y + h)) < 16 * k) return 'sy1';
+      if (Math.hypot(p[0] - (x + w / 2), p[1] - y) < 14 * k) return 'sy0';
       if (p[0] >= x && p[0] <= x + w && p[1] >= y && p[1] <= y + h) return 'move';
       return null;
     }
     function startTransform(kind, p) {
       sel.items.slice().forEach(own);
       var b = sel.box;
-      drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }),
+      drag = { kind: kind, start: p, c: [b.x + b.w / 2, b.y + b.h / 2], tl: [b.x, b.y], b: { x: b.x, y: b.y, w: b.w, h: b.h }, orig: sel.items.map(function (it) { return JSON.parse(JSON.stringify(it)); }),
         borig: sel.boxes.map(function (id) { return BX.rect(id); }), q0: sel.quad ? sel.quad.map(function (q) { return q.slice(); }) : null };
     }
     function applyTransform(p) {
@@ -1149,6 +1303,12 @@
       if (d.kind === 'scale') {
         var a0 = (d.start[0] - d.tl[0]) + (d.start[1] - d.tl[1]), a1 = (p[0] - d.tl[0]) + (p[1] - d.tl[1]);
         s = Math.max(0.05, a0 > 1 ? a1 / a0 : 1);
+      }
+      var sx = 1, sy = 1, ax = 0, ay = 0, side = /^s[xy][01]$/.test(d.kind); // stretching one way, from the opposite side
+      if (side) {
+        var B0 = d.b, X = d.kind[1] === 'x', far = d.kind[2] === '1';
+        if (X) { ax = far ? B0.x : B0.x + B0.w; var den = d.start[0] - ax; sx = Math.abs(den) > 1e-6 ? (p[0] - ax) / den : 1; if (Math.abs(sx) < 0.02) sx = sx < 0 ? -0.02 : 0.02; }
+        else { ay = far ? B0.y : B0.y + B0.h; var den2 = d.start[1] - ay; sy = Math.abs(den2) > 1e-6 ? (p[1] - ay) / den2 : 1; if (Math.abs(sy) < 0.02) sy = sy < 0 ? -0.02 : 0.02; }
       }
       var cos = Math.cos(ang), sin = Math.sin(ang), dx = p[0] - d.start[0], dy = p[1] - d.start[1];
       var H = null;
@@ -1161,6 +1321,7 @@
       } else if (d.q0) sel.quad = d.q0.map(function (q) { return [q[0] + dx, q[1] + dy]; }); // moving keeps the frame with it
       var map = H || function (q) {
         if (d.kind === 'move') return [q[0] + dx, q[1] + dy];
+        if (side) return [ax + (q[0] - ax) * sx, ay + (q[1] - ay) * sy];
         if (d.kind === 'scale') return [d.tl[0] + (q[0] - d.tl[0]) * s, d.tl[1] + (q[1] - d.tl[1]) * s];
         var x = q[0] - d.c[0], y = q[1] - d.c[1];
         return [d.c[0] + x * cos - y * sin, d.c[1] + x * sin + y * cos];
@@ -1171,6 +1332,10 @@
         else if (boxy(it) && H) { // text art and images go where their middle goes (they do not bend)
           var cs0 = textCorners(src), cx0 = (cs0[0][0] + cs0[2][0]) / 2, cy0 = (cs0[0][1] + cs0[2][1]) / 2, mc = H([cx0, cy0]);
           it.x = src.x + mc[0] - cx0; it.y = src.y + mc[1] - cy0;
+        }
+        else if (boxy(it) && side) { // images stretch; Text art keeps its letters and moves with its middle
+          if (it.t === 'i' && !src.r) { var c1 = map([src.x, src.y]), c2 = map([src.x + src.w, src.y + src.h]); it.x = Math.min(c1[0], c2[0]); it.y = Math.min(c1[1], c2[1]); it.w = Math.max(4, Math.abs(c2[0] - c1[0])); it.h = Math.max(4, Math.abs(c2[1] - c1[1])); }
+          else { var cs1 = textCorners(src), mx0 = (cs1[0][0] + cs1[2][0]) / 2, my0 = (cs1[0][1] + cs1[2][1]) / 2, mm = map([mx0, my0]); it.x = src.x + mm[0] - mx0; it.y = src.y + mm[1] - my0; }
         }
         else if (boxy(it)) {
           var a0 = map([src.x, src.y]); it.x = a0[0]; it.y = a0[1];
@@ -1185,6 +1350,11 @@
       sel.boxes.forEach(function (id, i) {
         var r0 = d.borig[i]; if (!r0) return;
         if (d.kind === 'rotate' || H) { var c0 = map([r0.x + r0.w / 2, r0.y + r0.h / 2]); BX.place(id, c0[0] - r0.w / 2, c0[1] - r0.h / 2); }
+        else if (side) { // a text box gets wider or narrower (its height follows its text); up and down it just moves
+          var e1 = map([r0.x, r0.y]), e2 = map([r0.x + r0.w, r0.y + r0.h]);
+          if (sx !== 1) BX.place(id, Math.min(e1[0], e2[0]), r0.y, Math.max(60, Math.abs(e2[0] - e1[0])));
+          else { var cy1 = map([0, r0.y + r0.h / 2])[1]; BX.place(id, r0.x, cy1 - r0.h / 2); }
+        }
         else { var q = map([r0.x, r0.y]); BX.place(id, q[0], q[1], d.kind === 'scale' ? Math.max(60, r0.w * s) : null); }
       });
       refreshBox(); patch(sel.items); if (H) drawUi();
@@ -1267,7 +1437,21 @@
         liveSoon();
         return;
       }
-      if (drag.lasso) { drag.lasso.push(p); drawUi(); return; }
+      if (drag.lasso && drag.fsnap) { // a clean filled shape: the pen now sizes and turns it
+        var F = drag.fsnap, u0 = [F.at[0] - F.c[0], F.at[1] - F.c[1]], u1 = [p[0] - F.c[0], p[1] - F.c[1]];
+        var fsc = Math.max(0.05, Math.hypot(u1[0], u1[1]) / Math.max(1e-6, Math.hypot(u0[0], u0[1]))), fan = Math.atan2(u1[1], u1[0]) - Math.atan2(u0[1], u0[0]);
+        var fc = Math.cos(fan) * fsc, fs = Math.sin(fan) * fsc;
+        drag.lasso = F.base.map(function (q) { var ex = q[0] - F.c[0], ey = q[1] - F.c[1]; return [F.c[0] + ex * fc - ey * fs, F.c[1] + ex * fs + ey * fc]; });
+        drawUi(); return;
+      }
+      if (drag.lasso) {
+        drag.lasso.push(p);
+        if (drag.fillShape && opt.pen.snap !== false) { // hold still at the end: a clean filled shape, like the pen's shapes
+          var fh = drag.fhold;
+          if (!fh || Math.hypot(p[0] - fh.x, p[1] - fh.y) > 5 / Z()) { clearTimeout(fh && fh.t); drag.fhold = { x: p[0], y: p[1], t: setTimeout(snapFill, 550) }; }
+        }
+        drawUi(); return;
+      }
       if (drag.erase) { cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); drawUi(); return; }
       if (drag.nudge) {
         cursor = [p[0], p[1], opt.nudge.r / Z()];
@@ -1285,6 +1469,15 @@
         drag.last = p; drawUi(); return;
       }
     };
+    function snapFill() {
+      var d = drag; if (!d || !d.fillShape || d.fsnap) return;
+      var sh = recognize(d.lasso); if (!sh || !sh.closed) return;
+      var last = d.lasso[d.lasso.length - 1];
+      d.fsnap = { base: sh.pts, c: sh.c || sh.pts[0], at: [last[0], last[1]] };
+      d.lasso = sh.pts.slice();
+      if (navigator.vibrate) navigator.vibrate(15);
+      drawUi();
+    }
     function snapShape() {
       var d = drag; if (!d || !d.stroke || d.snap) return;
       var it = d.stroke, len = 0;
@@ -1306,6 +1499,7 @@
       var d = drag; drag = null;
       if (!d) return;
       if (d.hold) clearTimeout(d.hold.t);
+      if (d.fhold) clearTimeout(d.fhold.t);
       if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { toggleAt(d.start); return; } // a tap on the selection: in or out
       if (d.kind) { if (!d.far) return; refreshBox(); flushPatch(); commit(); return; }
       if (d.pick) { toggleAt(d.pick); return; }
@@ -1379,7 +1573,7 @@
     }
     function addFill(L, rings) {
       var f = { id: uid('f'), t: 'f', c: opt.fill.c, o: opt.fill.o, d: rings };
-      if (opt.fill.pt && DEFS[opt.fill.pt]) f.pt = opt.fill.pt; // a home-made pattern
+      if (opt.fill.pt && DEFS[opt.fill.pt]) { f.pt = opt.fill.pt; if (opt.fill.ps && opt.fill.ps !== 1) f.ps = opt.fill.ps; if (opt.fill.pd && opt.fill.pd !== 1) f.pd = opt.fill.pd; } // a home-made pattern
       var at = L.items.findIndex(function (it) { return it.t !== 'f'; });
       if (at < 0) L.items.push(f); else L.items.splice(at, 0, f); // colour goes under the lines
       done();
@@ -1400,7 +1594,8 @@
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
     self.opts = function (k, v) {
-      if (v) Object.assign(opt[k], v);
+      // A setting the app has taken away (no home-made tip any more: plain) goes here too; before 3.18 it stayed.
+      if (v) { Object.keys(opt[k]).forEach(function (key) { if (!(key in v)) delete opt[k][key]; }); Object.assign(opt[k], v); }
       if (k === 'text' && v && editing) styleEdit(); // the text being written takes the new look at once
       return opt[k];
     };

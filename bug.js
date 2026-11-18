@@ -173,7 +173,7 @@
   }
 
   // ---- The feedback screen: the picture lies exactly over the app. Draw on it (pen or finger), Text or a
-  // finger double-tap writes a note there; two fingers tap to undo, three to redo; the button sends. ----
+  // finger double-tap writes a note there; two fingers double-tap to undo, three to redo; the button sends. ----
   var view = null, sendFn = null;
   async function open(p) {
     if (view) return;
@@ -196,13 +196,13 @@
     if (!view) return; // cancelled while waiting
     wait.remove(); if (btn) btn.classList.remove('busy');
     say(failed ? 'Couldn’t take a picture of the screen (' + String(failed.message || failed) + '). You can still draw and write what happened.' :
-      'Draw to point at things. Text (or a finger double-tap) writes a note. Two fingers tap: undo · three: redo.<br>Tap the round button again to send.' +
+      'Draw to point at things. Text (or a finger double-tap) writes a note. Two fingers double-tap: undo · three: redo.<br>Tap the round button again to send.' +
       '<br><small style="opacity:.75">The picture and app details (version, device, recent taps and errors) go to the developer.</small>', failed ? 7000 : 5000);
     var cv = view.querySelector('canvas'), g = cv.getContext('2d');
     var w = shot ? shot.width : innerWidth, h = shot ? shot.height : innerHeight;
     cv.width = w; cv.height = h; cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; // exactly over the app, even when the keyboard opens
     var k = w / innerWidth;
-    var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 4, lastTap = null;
+    var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 4, lastTap = null, lastMulti = null;
     function paint(withNotes) {
       g.clearRect(0, 0, w, h);
       if (shot) g.drawImage(shot, 0, 0); else { g.fillStyle = '#202124'; g.fillRect(0, 0, w, h); }
@@ -262,7 +262,7 @@
       if (it.kind === 'note') { view.appendChild(it.el); notes.push(it); } else marks.push(it);
       done.push(it); paint();
     }
-    // Fingers: one draws (or double-taps for a note), two tap to undo, three to redo.
+    // Fingers: one draws (or double-taps for a note), two double-tap to undo, three to redo.
     var touches = {}, multi = null;
     function nTouch() { return Object.keys(touches).length; }
     cv.addEventListener('pointerdown', function (e) {
@@ -298,7 +298,11 @@
       if (touches[e.pointerId]) delete touches[e.pointerId];
       if (multi) {
         if (!nTouch()) {
-          if (!multi.moved && Date.now() - multi.t < 450) { if (multi.n === 2) { undo(); say('Undone', 900); } else if (multi.n >= 3) { redo(); say('Redone', 900); } }
+          if (!multi.moved && Date.now() - multi.t < 450) { // a double tap: two fingers undo, three redo
+            var tn = Math.min(3, multi.n), tnow = Date.now();
+            if (lastMulti && lastMulti.n === tn && tnow - lastMulti.t < 500) { lastMulti = null; if (tn === 2) { undo(); say('Undone', 900); } else { redo(); say('Redone', 900); } }
+            else lastMulti = { n: tn, t: tnow };
+          }
           multi = null;
         }
         return;
