@@ -250,6 +250,28 @@
     var html = taskify(LIB.md.render(md)).replace(/<img src="(?!https?:|data:|blob:)([^"]*)"/g, '<img class="qn-img" data-src="$1"');
     return '<div class="prev' + (n.body.length > 500 || n.body.split('\n').length > 12 ? ' long' : '') + '">' + html + '</div>';
   }
+  // A note with drawings shows a small picture of its page (text where it sits, drawings over it), so it can be
+  // recognised while scrolling (3.18; before, the text came first and a little drawing under it).
+  function pagePreview(n) {
+    var I = window.QNInk, layers = I.normalize(n.ink), ib = I.boundsOf(layers.filter(function (l) { return l.vis; })), parts = [];
+    var bx = (n.boxes || []).filter(function (b) { return b.md && b.md.trim(); }).map(function (b) {
+      var w = b.w || 560, per = Math.max(10, w / 8.6), h = 8;
+      String(b.md).split('\n').forEach(function (l) { h += Math.max(1, Math.ceil(l.length / per)) * (/^#/.test(l) ? 30 : 24); });
+      return { b: b, x: b.x, y: b.y, w: w, h: Math.min(h, 1400) };
+    });
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    bx.concat(ib ? [ib] : []).forEach(function (r) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); });
+    if (x0 === Infinity) return '';
+    var pad = 12; x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+    var W = x1 - x0, H = Math.min(y1 - y0, W * 1.4); // very tall pages: the top of them
+    bx.forEach(function (r) {
+      parts.push('<foreignObject x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '"><div xmlns="http://www.w3.org/1999/xhtml" class="mp-box">' +
+        LIB.md.render(String(r.b.md).slice(0, 1500).replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '')).replace(/<img[^>]*>/g, '') + '</div></foreignObject>');
+    });
+    return '<svg class="mini-page" viewBox="' + x0 + ' ' + y0 + ' ' + W + ' ' + H + '" preserveAspectRatio="xMidYMin meet">' + parts.join('') +
+      I.svgFor(layers, 'mp' + (++pagePreview.n) + '-', 0, 0, true) + '</svg>';
+  }
+  pagePreview.n = 0;
   function card(n, extra, where) {
     var inner = '';
     if (n.pinned) inner += '<span class="pin">' + icon('pin-fill') + '</span>';
@@ -257,8 +279,9 @@
     if (where) inner += '<div class="where">' + esc(where) + '</div>';
     if (extra) inner += extra;
     else {
-      if (n.body) inner += preview(n);
-      if (N.hasInk(n)) inner += window.QNInk.thumb(n.ink, 320, 170);
+      var mini = N.hasInk(n) ? pagePreview(n) : '';
+      if (mini) inner += mini;
+      else if (n.body) inner += preview(n);
     }
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
@@ -1138,6 +1161,18 @@
     return '<label class="oslider">' + label + '<input type="range" data-k="' + key + '" data-f="' + field + '" data-scale="' + (scale || 1) + '" min="' + min + '" max="' + max + '" value="' + Math.round(val * (scale || 1)) + '"></label>';
   }
   var HINT = function (t) { return '<span class="where" style="padding:0 8px;white-space:nowrap">' + t + '</span>'; };
+  // Each kind of pen (Pen, Pencil, Marker…) and each home-made tip remembers its own size, colour and opacity.
+  function penKey() { return INKOPT.pen.cs ? 'cs:' + INKOPT.pen.cs : INKOPT.pen.b; }
+  function switchPen(change) {
+    var P = INKOPT.pen, m = P.mem || (P.mem = {});
+    m[penKey()] = { s: P.s, c: P.c, o: P.o };
+    change();
+    var r = m[penKey()];
+    if (r) { P.s = r.s; P.c = r.c; P.o = r.o == null ? 1 : r.o; }
+    else if (P.b === 'highlighter' && !P.cs && P.c === 'ink') P.c = '#f2c94c';
+    applyInk(); savePref();
+  }
+  var SIZE_MAX = function () { return PREF.bigSize || INKOPT.pen.s > 24 ? 120 : 24; };
   function setTool(t) {
     if (t === 'highlighter') { INKOPT.pen.b = 'highlighter'; t = 'pen'; }
     PREF.tool = t; savePref();
@@ -1148,7 +1183,7 @@
       var fm = PREF.finger || 'auto';
       html = G(Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('')) +
         G(swatches(o.pen.c, 'pen')) + '<div class="osec">My tips &amp; lines</div>' + G(styleChips('pen', o.pen.cs, 'data-cs')) +
-        G(slider('Size', 'pen', 's', 1, 24, o.pen.s) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
+        G(slider('Size', 'pen', 's', 1, SIZE_MAX(), o.pen.s) + chip('Bigger sizes', 'data-big title="Sizes up to 120 (or double-tap the size slider on the page)"', SIZE_MAX() > 24) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
           slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
         G(chip('Hold to make shapes', 'data-snap title="Draw a rough circle, box, triangle, star, line… and keep the pen still at the end: it becomes a clean shape. Keep holding and move to size or turn it."', o.pen.snap !== false)) +
         G(HINT('Finger') + chip('Auto', 'data-finger="auto" title="Draws until a pen is used, then moves the page"', fm === 'auto') +
@@ -1181,6 +1216,8 @@
     } else if (t === 'fill') {
       html = G(chip('Draw a shape', 'data-k="fill" data-m="lasso"', o.fill.m === 'lasso') + chip('Tap an area', 'data-k="fill" data-m="tap"', o.fill.m === 'tap')) +
         G(swatches(o.fill.c, 'fill')) + '<div class="osec">Pattern</div>' + G(styleChips('fill', o.fill.pt, 'data-pt')) +
+        (o.fill.pt ? G(slider('Pattern size', 'fill', 'ps', 20, 400, o.fill.ps || 1, 100) + slider('Spacing', 'fill', 'pd', 100, 400, o.fill.pd || 1, 100)) +
+          G(HINT('Hold the pen still at the end of a shape for a clean circle, box, star…')) : G(HINT('Hold the pen still at the end of a shape for a clean circle, box, star…'))) +
         G(slider('Opacity', 'fill', 'o', 5, 100, o.fill.o, 100));
     } else if (t === 'text') {
       // Artistic text: part of the drawing, in the current layer. (Double-tap still makes a normal text box.)
@@ -1233,7 +1270,7 @@
       return;
     }
     var pen = INKOPT.pen, wpx = Math.max(2, Math.min(22, pen.s * ((window.QNInk.BRUSH[pen.b] || {}).size || 1.6)));
-    inp.min = 1; inp.max = 24; inp.step = 0.5; inp.setAttribute('aria-label', 'Pen size'); q.title = 'Pen size';
+    inp.min = 1; inp.max = SIZE_MAX(); inp.step = 0.5; inp.setAttribute('aria-label', 'Pen size'); q.title = 'Pen size and colour: tap the dot for colours, double-tap the slider for bigger sizes';
     if (document.activeElement !== inp) inp.value = pen.s;
     dot.className = 'pq-dot';
     dot.innerHTML = '<i style="width:' + wpx + 'px;height:' + wpx + 'px;background:' + (pen.c === 'ink' ? 'var(--ink)' : pen.c) + '"></i>';
@@ -1247,7 +1284,38 @@
     INKOPT.pen.s = +e.target.value; applyInk(); savePref(); updatePenQuick();
     var s = $('penOpts').querySelector('[data-k=pen][data-f=s]'); if (s) s.value = Math.round(INKOPT.pen.s);
   });
+  // Tap the pen's dot for its colours (3.18): a small card beside it.
+  function penColours() {
+    var pop = $('penColPop');
+    if (!pop) { pop = document.createElement('div'); pop.id = 'penColPop'; pop.className = 'pop hidden'; pop.setAttribute('data-keeps-text', ''); document.body.appendChild(pop);
+      pop.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      pop.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-sw]'); if (!b) return;
+        INKOPT.pen.c = b.dataset.c; applyInk(); savePref(); updatePenQuick(); pop.classList.add('hidden');
+        if (!$('penOpts').classList.contains('hidden') && PREF.tool === 'pen') setTool('pen');
+      });
+      pop.addEventListener('input', function (e) { if (e.target.dataset.cc) { INKOPT.pen.c = e.target.value; applyInk(); savePref(); updatePenQuick(); } });
+      document.addEventListener('pointerdown', function (e) { if (!pop.classList.contains('hidden') && !e.target.closest('#penColPop, #penQuick')) pop.classList.add('hidden'); }, true);
+    }
+    if (!pop.classList.contains('hidden')) { pop.classList.add('hidden'); return; }
+    pop.innerHTML = swatches(INKOPT.pen.c, 'pen');
+    var r = $('penQuick').getBoundingClientRect();
+    pop.style.left = (r.right + 10) + 'px'; pop.style.top = ''; pop.style.bottom = (innerHeight - r.bottom) + 'px';
+    pop.classList.remove('hidden');
+  }
+  var pqTap = 0;
+  $('penQuick').querySelector('input').addEventListener('pointerdown', function () { // double-tap: sizes up to 120, or back to 24
+    if ($('penQuick').dataset.mode === 'text') return;
+    var now = Date.now();
+    if (now - pqTap < 330) {
+      PREF.bigSize = SIZE_MAX() <= 24; if (!PREF.bigSize && INKOPT.pen.s > 24) INKOPT.pen.s = 24;
+      applyInk(); savePref(); updatePenQuick(); pqTap = 0;
+      toast(PREF.bigSize ? 'Bigger sizes: up to 120' : 'Sizes up to 24', null, null, 1800); return;
+    }
+    pqTap = now;
+  });
   $('penQuick').addEventListener('click', function (e) {
+    if ($('penQuick').dataset.mode !== 'text' && e.target.closest('.pq-dot')) { penColours(); return; }
     if ($('penQuick').dataset.mode !== 'text' || !e.target.closest('.pq-dot')) return;
     var i = TFONTS.indexOf(INKOPT.text.font);
     INKOPT.text.font = TFONTS[(i + 1) % TFONTS.length]; applyInk(); savePref(); updatePenQuick();
@@ -1326,11 +1394,12 @@
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.act === 'image') { imgWhere = 'page'; imgInput.value = ''; imgInput.click(); return; } // straight onto the page
     if (b.dataset.snap != null) { INKOPT.pen.snap = INKOPT.pen.snap === false; applyInk(); savePref(); return setTool('pen'); }
-    if (b.dataset.cs != null) { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; applyInk(); savePref(); return setTool('pen'); }
+    if (b.dataset.cs != null) { switchPen(function () { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; }); return setTool('pen'); }
+    if (b.dataset.big != null) { PREF.bigSize = SIZE_MAX() <= 24; if (!PREF.bigSize && INKOPT.pen.s > 24) INKOPT.pen.s = 24; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.pt != null) { if (b.dataset.pt) INKOPT.fill.pt = b.dataset.pt; else delete INKOPT.fill.pt; applyInk(); savePref(); return setTool('fill'); }
     if (b.dataset.newdef) return editStyle(b.dataset.newdef, null);
     if (b.dataset.editdef) { var dd = MYSTYLES.filter(function (d) { return d.id === b.dataset.editdef; })[0]; if (dd) editStyle(dd.k, dd); return; }
-    if (b.dataset.brush) { INKOPT.pen.b = b.dataset.brush; if (b.dataset.brush === 'highlighter' && INKOPT.pen.c === 'ink') INKOPT.pen.c = '#f2c94c'; return setTool('pen'); }
+    if (b.dataset.brush) { switchPen(function () { INKOPT.pen.b = b.dataset.brush; }); return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
@@ -1676,10 +1745,24 @@
         });
         return;
       case 'size':
-        popAt(b, '<button data-v="14px" style="font-size:13px">Small</button><button data-v="">Normal</button><button data-v="21px" style="font-size:18px">Large</button><button data-v="28px" style="font-size:22px">Huge</button>', function (p) {
-          if (p.dataset.v) ed.chain().focus().setFontSize(p.dataset.v).run(); else ed.chain().focus().unsetFontSize().run();
+        // Any size too (3.18): type a number and Set. With nothing selected, the size goes on the whole text box.
+        var curFs = parseInt(ed.getAttributes('textStyle').fontSize, 10) || 16;
+        popAt(b, '<button data-v="14px" style="font-size:13px">Small</button><button data-v="">Normal</button><button data-v="21px" style="font-size:18px">Large</button><button data-v="28px" style="font-size:22px">Huge</button>' +
+          '<span style="display:inline-flex;align-items:center;gap:6px;width:100%"><button data-v="dn" aria-label="Smaller">−</button><input type="number" id="fsIn" min="6" max="400" value="' + curFs + '" style="width:64px" aria-label="Text size">' +
+          '<button data-v="up" aria-label="Bigger">+</button><button data-v="set" class="primary">Set</button></span>', function (p) {
+          var v = p.dataset.v, inp = $('fsIn');
+          if (v === 'up' || v === 'dn') { inp.value = Math.max(6, Math.min(400, (+inp.value || 16) + (v === 'up' ? 2 : -2))); v = 'set'; }
+          var chain = ed.chain().focus();
+          if (v === 'set') {
+            if (ed.state.selection.empty) chain = chain.selectAll();
+            chain.setFontSize(Math.max(6, Math.min(400, +inp.value || 16)) + 'px').run();
+            if (p.dataset.v === 'set') $('pop').classList.add('hidden');
+            return;
+          }
+          if (v) chain.setFontSize(v).run(); else chain.unsetFontSize().run();
           $('pop').classList.add('hidden');
         });
+        $('pop').onpointerdown = null;
         return;
       case 'link':
         var prev = ed.getAttributes('link').href || '';
@@ -2004,6 +2087,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Faster drawing, and your feedback fixed', d: 'Pencil and your own pen tips no longer lag, and big pencil scribbles no longer vanish. Plain really is plain again. Drawings now show above text. Undo and redo are a two- or three-finger double tap. Zoom out down to 1%, and draw across the top of the page. Tap the dot on the size slider for colours; double-tap the slider for sizes up to 120. Each pen remembers its own size and colour. Select now shows symbols (hover or hold for names), with Align apart from Arrange, side handles to stretch, and line width under Colour. Fill: hold for a clean shape; patterns show while you draw and can be bigger or spaced out. Any text size in the Aa menu. Notes with drawings show a picture of the page in the list.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M40 92c20-40 40-40 60 0s40 40 60 0" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>' +
+        '<rect x="150" y="30" width="22" height="22" rx="5" fill="none" stroke="' + A + '" stroke-width="2"/><rect x="178" y="30" width="22" height="22" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><circle cx="56" cy="40" r="9" fill="' + Y + '"/>') },
     { t: 'A brighter look', d: 'Warm paper, a coral accent and a sunny new-note button, in the colours of Motley, the studio behind Serendipity. The icon is now just the petals, with a pen nib at the centre.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(0 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#e8553d"/></g><g transform="rotate(45 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#f2b134"/></g><g transform="rotate(90 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#2a9d8f"/></g><g transform="rotate(135 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#3d5a98"/></g><g transform="rotate(180 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#ef8fa0"/></g><g transform="rotate(225 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#f2b134"/></g><g transform="rotate(270 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#2a9d8f"/></g><g transform="rotate(315 120 70)"><path d="M120 70 C 113 50, 113 35, 120 22 C 127 35, 127 50, 120 70 Z" fill="#3d5a98"/></g><circle cx="120" cy="70" r="15" fill="#1b1b1f"/><path d="M120 84 L112 70 C 112 64, 115 59, 120 57 C 125 59, 128 64, 128 70 Z" fill="#f4efe6"/><circle cx="120" cy="68" r="2" fill="#1b1b1f"/>') },
     { t: 'Hold a note, like in Keep', d: 'In the notes list, hold a note: it is picked, and a bar offers Pin, Labels, Move to folder, Make a copy, Combine and Delete. Tap other notes to pick them too. Hold a note and, without lifting, drag it to put it somewhere else in the list; it stays there on every device.',

@@ -6,7 +6,7 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 
 - Opens on the notes grid. Folders (nested, real Drive folders inside Notes) and labels.
 - Each note is an endless page: pinch to zoom, two fingers to move, twist to turn (snaps straight; the compass
-  straightens it), two-finger tap to undo, three-finger tap to redo; Fit everything, Zoom into an area, zoom to a
+  straightens it), two-finger double tap to undo, three-finger double tap to redo; Fit everything, Zoom into an area, zoom to a
   lasso selection, and a Navigator map. Mouse wheel moves, Ctrl + wheel zooms.
 - Each note is a canvas: a text box at the top left like Keep; double-tap anywhere for another text box;
   write or draw with a pen (an S Pen draws without switching tools; the finger scrolls); move text and drawings

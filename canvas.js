@@ -80,7 +80,7 @@
       var sv = JSON.parse(localStorage.getItem(VKEY) || 'null');
       if (sv && isFinite(sv.z)) { view = sv; if (!sv.h) { view.y += headH; view.h = 1; } } // saved before the title moved onto the page
     } catch (e) {}
-    var ZMIN = 0.05, ZMAX = 12, viewTimer = null, navRaf = 0;
+    var ZMIN = 0.01, ZMAX = 12, viewTimer = null, navRaf = 0;
     function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
     function toWorld(sx, sy) { var dx = sx - view.x, dy = sy - view.y, c = Math.cos(-view.r), s = Math.sin(-view.r); return [(dx * c - dy * s) / view.z, (dx * s + dy * c) / view.z]; }
     function toScreen(wx, wy) { var c = Math.cos(view.r), s = Math.sin(view.r); return [view.x + (wx * c - wy * s) * view.z, view.y + (wx * s + wy * c) * view.z]; }
@@ -137,7 +137,7 @@
       hooks.history(hist.length > 1, false);
     }
     // Text boxes belong to a drawing layer (the bottom one unless placed on another): hidden, locked and faded
-    // with it. (Text always shows above drawings.)
+    // with it. (Since 3.18 drawings show above text, so what is drawn later is never hidden behind older text.)
     function layerOfBox(b) {
       for (var i = 0; i < ink.length; i++) if (ink[i].id === b.l) return ink[i];
       // Text without a layer (or whose layer was deleted) goes on the bottom one, and stays there once there are
@@ -430,7 +430,12 @@
     // ---- Pointer handling ----
     var drag = null, taps = [], panV = null, panMoved = false;
     on(host, 'pointerdown', function (ev) {
-      if (head && head.contains(ev.target)) return; // the title and labels work as usual
+      // The title and labels work as usual, except with a drawing tool: the title's strip runs right across the top of
+      // the page, and before 3.18 nothing could be drawn over any of it.
+      if (head && head.contains(ev.target)) {
+        var drawsHere = INK[tool] ? !ev.target.closest('button, .chip, a') : tool === 'type' && ev.pointerType === 'pen' && !ev.target.closest('input, button, .chip, a');
+        if (!drawsHere) return;
+      }
       if (ev.pointerType === 'pen' && !penSeen) { penSeen = true; hooks.penSeen(); }
       if (ev.button && ev.button !== 0 && ev.pointerType === 'mouse') return;
       var p = point(ev);
@@ -585,8 +590,8 @@
     on(host, 'pointercancel', function (ev) { if (drag && drag.type === 'ink') { eng.cancel(); drag = null; } else endPointer(ev); });
     on(host, 'pointerleave', function () { eng.leave(); });
 
-    // ---- Fingers: two to move, zoom and turn the page; a quick two-finger tap undoes, three-finger tap redoes ----
-    var touches = {}, gest = null, rotateOn = true, areaMode = false;
+    // ---- Fingers: two to move, zoom and turn the page; a quick two-finger double tap undoes, three-finger double tap redoes ----
+    var touches = {}, gest = null, rotateOn = true, areaMode = false, lastTap = null;
     function tcount() { return Object.keys(touches).length; }
     function pairNow() {
       var ids = Object.keys(touches).slice(0, 2), r = host.getBoundingClientRect();
@@ -606,6 +611,9 @@
       if (panV) { cancelAnimationFrame(panV.raf); panV = null; }
       drag = null; taps = []; clearTimeout(self._tapTimer); cancelAnimationFrame(anim);
       gest = { t: Date.now(), max: tcount(), moved: false, transformed: false };
+      // While two fingers move and zoom, the page is drawn once and the picture moved and scaled (it sharpens again
+      // when the fingers lift), so big drawings don't have to be redrawn at every step of a pinch.
+      stage.style.willChange = 'transform';
       startPair();
     }
     function moveGesture() {
@@ -632,9 +640,16 @@
     }
     function endGesture() {
       var g = gest; gest = null;
+      stage.style.willChange = '';
+      // A double tap: two fingers undo, three redo. (A single tap did it before 3.18, and a resting hand or a slip
+      // undid things by accident.)
       if (!g.moved && Date.now() - g.t < 450) {
-        if (g.max === 2) { self.undo(); if (hooks.gesture) hooks.gesture('undo'); }
-        else if (g.max >= 3) { self.redo(); if (hooks.gesture) hooks.gesture('redo'); }
+        var n = Math.min(3, g.max), now = Date.now(), prev = lastTap; lastTap = { n: n, t: now };
+        if (prev && prev.n === n && now - prev.t < 500) {
+          lastTap = null;
+          if (n === 2) { self.undo(); if (hooks.gesture) hooks.gesture('undo'); }
+          else { self.redo(); if (hooks.gesture) hooks.gesture('redo'); }
+        }
         return;
       }
       if (g.transformed) {
@@ -815,7 +830,7 @@
       zoomOut: function () { animateView(view.z / 1.5, view.r, toWorld(host.clientWidth / 2, host.clientHeight / 2)); },
       area: function () { areaMode = true; host.classList.add('picking'); },
       navigator: function (on) { navOn = !!on; navEl.classList.toggle('hidden', !navOn); navContent = null; drawNavSoon(); },
-      gestures: function () { return 'pinch to zoom, two fingers to move, twist to turn, two-finger tap to undo, three-finger tap to redo'; },
+      gestures: function () { return 'pinch to zoom, two fingers to move, twist to turn, two-finger double tap to undo, three-finger double tap to redo'; },
       rotate: function (on) { rotateOn = !!on; },
       info: function () { return { z: view.z, r: view.r }; }
     };
