@@ -263,7 +263,7 @@
     bx.concat(ib ? [ib] : []).forEach(function (r) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); });
     if (x0 === Infinity) return '';
     var pad = 12; x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
-    var W = x1 - x0, H = Math.min(y1 - y0, W * 1.4); // very tall pages: the top of them
+    var W = x1 - x0, H = y1 - y0; // the whole page; two fingers zoom into it and move it (3.19)
     bx.forEach(function (r) {
       parts.push('<foreignObject x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '"><div xmlns="http://www.w3.org/1999/xhtml" class="mp-box">' +
         LIB.md.render(String(r.b.md).slice(0, 1500).replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '')).replace(/<img[^>]*>/g, '') + '</div></foreignObject>');
@@ -272,6 +272,39 @@
       I.svgFor(layers, 'mp' + (++pagePreview.n) + '-', 0, 0, true) + '</svg>';
   }
   pagePreview.n = 0;
+  // Two fingers on a page picture: pinch to zoom, move to look around (one finger still scrolls the list).
+  (function () {
+    var pz = null, swallowTap = 0;
+    function vb(svg) { return svg.getAttribute('viewBox').split(/\s+/).map(Number); }
+    function mid(t) { return [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2]; }
+    function dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+    document.addEventListener('touchstart', function (e) {
+      var svg = e.target.closest && e.target.closest('.mini-page');
+      if (!svg || e.touches.length !== 2) return;
+      if (!svg.dataset.vb0) svg.dataset.vb0 = svg.getAttribute('viewBox');
+      pz = { svg: svg, v: vb(svg), m: mid(e.touches), d: dist(e.touches), r: svg.getBoundingClientRect() };
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', function (e) {
+      if (!pz || e.touches.length !== 2) return;
+      e.preventDefault();
+      var v = pz.v, r = pz.r, k = v[2] / r.width; // page units per screen pixel (the picture keeps its proportions)
+      var s = Math.max(0.05, Math.min(20, dist(e.touches) / pz.d)), m = mid(e.touches);
+      var px = v[0] + (pz.m[0] - r.left) * k, py = v[1] + (pz.m[1] - r.top) * (v[3] / r.height); // the page point under the fingers
+      var w = v[2] / s, h = v[3] / s;
+      var nx = px - (m[0] - r.left) * (w / r.width), ny = py - (m[1] - r.top) * (h / r.height);
+      pz.svg.setAttribute('viewBox', nx + ' ' + ny + ' ' + w + ' ' + h);
+      swallowTap = Date.now();
+    }, { passive: false });
+    document.addEventListener('touchend', function (e) { if (pz && e.touches.length < 2) pz = null; });
+    // The page picture just pinched: don't open the note when the fingers lift; a double tap puts it back.
+    document.addEventListener('click', function (e) {
+      if (Date.now() - swallowTap < 450 && e.target.closest && e.target.closest('.mini-page')) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+    document.addEventListener('dblclick', function (e) {
+      var svg = e.target.closest && e.target.closest('.mini-page'); if (svg && svg.dataset.vb0) { svg.setAttribute('viewBox', svg.dataset.vb0); e.stopPropagation(); }
+    }, true);
+  })();
   function card(n, extra, where) {
     var inner = '';
     if (n.pinned) inner += '<span class="pin">' + icon('pin-fill') + '</span>';
@@ -1845,10 +1878,16 @@
   }
 
   // ---------- The note menu (bottom-left) ----------
+  function markPage() { // which pattern and paper are on
+    var t = String((S.cur && S.cur.page) || '').split(/\s+/), st = t.filter(function (x) { return /^(grid|dots|lines)$/.test(x); })[0] || '', pp = t.filter(function (x) { return !/^(grid|dots|lines)$/.test(x); })[0] || '';
+    document.querySelectorAll('#pageRow [data-pg]').forEach(function (x) { x.setAttribute('aria-pressed', x.dataset.pg === st); });
+    document.querySelectorAll('#pageRow [data-pp]').forEach(function (x) { x.setAttribute('aria-pressed', x.dataset.pp === pp); });
+  }
   function closeMenu() { $('noteMenu').classList.add('hidden'); $('menuFab').setAttribute('aria-expanded', 'false'); }
   $('menuFab').onclick = function () {
     var open = $('noteMenu').classList.contains('hidden');
     $('noteMenu').classList.toggle('hidden', !open);
+    if (open) markPage();
     $('menuFab').setAttribute('aria-expanded', open ? 'true' : 'false');
   };
   document.addEventListener('pointerdown', function (e) {
@@ -1860,6 +1899,12 @@
     if (!b) return;
     var n = S.cur;
     if (b.dataset.space) { S.canvas.addSpace(b.dataset.space); return; }
+    if (b.dataset.pg != null || b.dataset.pp != null) { // the page: its pattern and paper, kept with the note
+      var t = String(n.page || '').split(/\s+/).filter(Boolean), st = t.filter(function (x) { return /^(grid|dots|lines)$/.test(x); })[0] || '', pp = t.filter(function (x) { return !/^(grid|dots|lines)$/.test(x); })[0] || '';
+      if (b.dataset.pg != null) st = b.dataset.pg; else pp = b.dataset.pp;
+      n.page = [st, pp].filter(Boolean).join(' ');
+      S.canvas.setPage(n.page); touchNote(n); markPage(); return;
+    }
     closeMenu();
     if (b.dataset.m === 'labels') labelsSheet(n);
     if (b.dataset.m === 'image') pickImage();
@@ -2087,6 +2132,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Page backgrounds, clean curves, names on hover', d: 'In a note, the ••• menu now has Page: plain, grid, dots or lines, on the theme or a paper colour (white, cream, kraft, grey, slate, black). Holding the pen at the end of an arc now makes a clean arc, and a wave a smooth curve, instead of straight pieces. Hover the pen over any tool or option to see its name. In the notes list, pinch a page picture with two fingers to zoom in and move around; double-tap to put it back.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M40 30v80M72 30v80M104 30v80M136 30v80M168 30v80M200 30v80M30 46h180M30 78h180M30 110h180" stroke="' + RULE + '"/><path d="M60 96a40 40 0 0 1 80 0" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/>') },
     { t: 'Faster drawing, and your feedback fixed', d: 'Pencil and your own pen tips no longer lag, and big pencil scribbles no longer vanish. Plain really is plain again. Text and drawings now stack by what is in front: new drawings go over older text, and Select › Arrange moves text boxes to the front or back too. Undo and redo are a two- or three-finger double tap. Zoom out down to 1%, and draw across the top of the page. Tap the dot on the size slider for colours; double-tap the slider for sizes up to 120. Each pen remembers its own size and colour. Select now shows symbols (hover or hold for names), with Align apart from Arrange, side handles to stretch, and line width under Colour. Fill: hold for a clean shape; patterns show while you draw and can be bigger or spaced out. Any text size in the Aa menu. Notes with drawings show a picture of the page in the list.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M40 92c20-40 40-40 60 0s40 40 60 0" fill="none" stroke="' + INKC + '" stroke-width="4" stroke-linecap="round"/>' +
         '<rect x="150" y="30" width="22" height="22" rx="5" fill="none" stroke="' + A + '" stroke-width="2"/><rect x="178" y="30" width="22" height="22" rx="5" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><circle cx="56" cy="40" r="9" fill="' + Y + '"/>') },
@@ -2371,5 +2418,38 @@
     renderStatus();
     sync.run({ pull: true });
     setTimeout(function () { if (S.view === 'list') whatsNew(false); }, 700);
+  })();
+
+  // ---- Names of tools: shown while the pen hovers over a tool or any of its options (3.19) ----
+  // (Android shows no tooltip for the pen, so the name of a symbol was nowhere to be seen.)
+  (function () {
+    var tip = document.createElement('div'); tip.className = 'apptip hidden'; document.body.appendChild(tip);
+    var cur = null;
+    function nameOf(el) {
+      if (el.dataset.tip) return null; // the selection bar shows its own
+      var t = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+      if (!t && el.classList.contains('swatch')) t = 'Colour';
+      return t.trim();
+    }
+    function show(el) {
+      var t = nameOf(el); if (!t) return hide();
+      cur = el; tip.textContent = t; tip.classList.remove('hidden');
+      var r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight, x, y;
+      if (el.closest('#tools')) { x = r.left - w - 10; y = r.top + r.height / 2 - h / 2; } // beside the rail
+      else if (el.closest('#penQuick, #toolQuick')) { x = r.right + 10; y = r.top + r.height / 2 - h / 2; }
+      else { x = r.left + r.width / 2 - w / 2; y = r.top - h - 8; if (y < 4) y = r.bottom + 8; }
+      tip.style.left = Math.max(4, Math.min(innerWidth - w - 4, x)) + 'px'; tip.style.top = Math.max(4, Math.min(innerHeight - h - 4, y)) + 'px';
+    }
+    function hide() { cur = null; tip.classList.add('hidden'); }
+    var SCOPE = '#tools, #penOpts, #penQuick, #toolQuick, #layersPanel, #noteMenu, #fmtBar, #topBar, .qn-bugview, #editorView header';
+    document.addEventListener('pointerover', function (e) {
+      if (e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
+      var el = e.target.closest && e.target.closest('button, [role="button"], input[type="range"], .swatch');
+      if (!el || !el.closest(SCOPE)) { if (cur) hide(); return; }
+      if (el !== cur) show(el);
+    }, true);
+    document.addEventListener('pointerout', function (e) { if (cur && (!e.relatedTarget || !cur.contains(e.relatedTarget))) hide(); }, true);
+    document.addEventListener('pointerdown', hide, true);
+    document.addEventListener('scroll', hide, true);
   })();
 })();
