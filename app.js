@@ -1274,7 +1274,7 @@
     } else if (t === 'lasso') {
       var lm = (o.lasso && o.lasso.m) || 'most', how = o.lasso.how || 'loop', sc = o.lasso.sc || 'all';
       html = G(chip('Lasso', 'data-set="lasso.how" data-v="loop" title="Draw a loop round things"', how === 'loop') +
-          chip('Tap to pick', 'data-set="lasso.how" data-v="tap" title="Tap things to add them; tap again to take them out"', how === 'tap')) +
+          chip('Tap to pick', 'data-set="lasso.how" data-v="tap" title="A quick tap picks just that (empty space: nothing); tap and hold adds it, or takes it out if already picked"', how === 'tap')) +
         G(HINT('From') + chip('All layers', 'data-set="lasso.sc" data-v="all"', sc === 'all') + chip('This layer', 'data-set="lasso.sc" data-v="layer"', sc === 'layer') +
           chip('This group', 'data-set="lasso.sc" data-v="group" title="The layer group the current layer is in"', sc === 'group')) +
         G(HINT('Picks what is') + chip('Partly in', 'data-k="lasso" data-m="part" title="Anything the loop touches"', lm === 'part') +
