@@ -288,10 +288,11 @@
     S.copiedLink = t;
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done); else done();
   }
-  async function placeNoteLink(t) {
+  async function placeNoteLink(t, kind) {
     var L = noteLinkOf(t), n = L && noteById(L.id);
     if (!n) { toast('That note isn\'t here (deleted, or not synced yet).'); return; }
     if (S.cur && n.id === S.cur.id && !L.r) { toast('That is a link to this same note.'); return; }
+    if (kind === 'card') { S.canvas.placeMedia({ src: t, mk: 'notecard', ttl: n.title || 'Untitled' }, 320, 76); return; }
     var r = L.r || { w: 520, h: 360 }, k = Math.min(1, 560 / Math.max(r.w, r.h * 1.2));
     S.canvas.placeMedia({ src: t, mk: 'note', ttl: n.title || 'Untitled' }, Math.max(220, r.w * k), Math.max(140, r.h * k + 34));
   }
@@ -969,6 +970,8 @@
     if (isNew) setTimeout(function () { S.canvas.focusStart(); }, 50);
   }
   function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyViewPrefs(); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
+  var openNote0 = openNote, showList0 = null;
+  openNote = function () { var r = openNote0.apply(this, arguments); renderImportBar(); return r; };
   function closeNote() {
     var n = S.cur;
     if (!n) return;
@@ -981,7 +984,7 @@
     sync.run();
   }
   function showList() {
-    S.view = 'list'; dockFeedback(); if (S.pick) endPick();
+    S.view = 'list'; dockFeedback(); if (S.pick) endPick(); setTimeout(renderImportBar, 0);
     $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden');
     renderList();
   }
@@ -1928,7 +1931,58 @@
     addTimer = setTimeout(function () { addHeld = true; if (navigator.vibrate) navigator.vibrate(15); pasteLink(); }, 550);
   }, true);
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) { document.addEventListener(t, function () { clearTimeout(addTimer); }, true); });
-  function addToPage() { if (!S.canvas) return; mediaInput.value = ''; mediaInput.click(); }
+  // The Add button (3.22): files from the device, or Serendipity notes (a whole note, or a part of one).
+  function addToPage() {
+    if (!S.canvas) return;
+    popAt(document.querySelector('#tools [data-act="image"]'), '<button data-v="files">Files from the device</button><button data-v="notes">Serendipity notes</button>', function (b) {
+      $('pop').classList.add('hidden');
+      if (b.dataset.v === 'files') { mediaInput.value = ''; mediaInput.click(); }
+      else startImport();
+    });
+  }
+  // ---- Bringing a note, or part of one, into this note: choose it in the list, open it, select a part or not ----
+  function startImport() {
+    if (!S.cur) return;
+    S.importTo = { id: S.cur.id, title: S.cur.title || 'Untitled' };
+    closeNote(); showList(); renderImportBar();
+  }
+  function renderImportBar() {
+    var bar = $('importBar');
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'importBar'; document.body.appendChild(bar);
+      bar.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-imp]'); if (!b) return;
+        if (b.dataset.imp === 'cancel') return endImport(null);
+        var box = S.canvas && S.canvas.ink && S.canvas.ink().selBox ? S.canvas.ink().selBox() : null;
+        var t = 'qn://note/' + encodeURIComponent(S.cur.id) + (box ? '#' + [box.x, box.y, box.w, box.h].map(function (v) { return Math.round(v); }).join(',') : '');
+        endImport({ link: t, kind: b.dataset.imp });
+      });
+    }
+    var I = S.importTo;
+    if (!I) { bar.classList.add('hidden'); bar.dataset.mode = ''; return; }
+    bar.classList.remove('hidden');
+    if (S.view === 'note' && S.cur && !(S.cur.id === I.id)) {
+      bar.dataset.mode = '';
+      bar.innerHTML = '<span>Bring <b>' + (S.canvas && S.canvas.ink().selBox() ? 'the part selected' : 'this whole note') + '</b> into “' + esc(I.title) + '” <small>(use Select to pick a part)</small></span>' +
+        '<button type="button" data-imp="note" class="primary">As a live picture</button><button type="button" data-imp="card">As a link</button><button type="button" data-imp="cancel">Cancel</button>';
+    } else {
+      // Searching right here (3.22): it searches the notes list underneath, titles and text.
+      if (bar.dataset.mode !== 'list') {
+        bar.innerHTML = '<span>Choose a note to bring into “' + esc(I.title) + '”</span><input type="search" id="impQ" placeholder="Search notes" aria-label="Search notes"><button type="button" data-imp="cancel">Cancel</button>';
+        $('impQ').value = S.q || '';
+        $('impQ').addEventListener('input', function () { $('q').value = S.q = this.value; renderList(); });
+      }
+    }
+    bar.dataset.mode = S.view === 'note' && S.cur && S.cur.id !== I.id ? 'note' : 'list';
+  }
+  setInterval(function () { if (S.importTo && S.view === 'note') { var t = $('importBar') && $('importBar').querySelector('b'); var now = S.canvas && S.canvas.ink().selBox() ? 'the part selected' : 'this whole note'; if (t && t.textContent !== now) renderImportBar(); } }, 400);
+  function endImport(res) {
+    var I = S.importTo; S.importTo = null; renderImportBar();
+    if (S.q) { $('q').value = S.q = ''; }
+    var target = I && noteById(I.id); if (!target) return;
+    if (S.cur !== target) openNote(target);
+    if (res) setTimeout(function () { placeNoteLink(res.link, res.kind); }, 350);
+  }
   async function pasteLink() {
     if (!S.canvas) return;
     var t = '';
@@ -2272,6 +2326,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Bring in another note, or part of one', d: 'The Add button now asks: Files from the device, or Serendipity notes. Choose notes, search or browse for one, and open it. Select a part of it if you like (or nothing, for the whole note), then tap As a live picture or As a link: it goes into the note you came from. Open ↗ on it takes you there.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="32" width="64" height="76" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="52" y="48" width="36" height="22" rx="3" fill="none" stroke="' + A + '" stroke-dasharray="4 3"/><path d="M110 70h24" stroke="' + A + '" stroke-width="3"/><path d="M128 62l8 8-8 8" fill="none" stroke="' + A + '" stroke-width="3"/><rect x="142" y="40" width="60" height="60" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="152" y="54" width="40" height="26" rx="3" fill="' + A + '" opacity=".35"/>') },
     { t: 'Links between notes, locks, and adding made simple', d: 'The Add button opens your files straight away: pick several of any kind. Hold it to add the link you copied. Select a part of a note and tap the link symbol, then hold Add in another note: that part shows there, live, with Open to jump to it (••• › Copy a link to this note does the whole note). Select › Lock: can\'t be erased, or can\'t be selected; tap the little sign to unlock. The lasso corner now has New, + Add and − Remove. Feedback notes can be dragged by their corner, and show in the picture exactly as typed.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="136" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><path d="M104 70h32" stroke="' + A + '" stroke-width="3" stroke-dasharray="5 4"/><circle cx="196" cy="34" r="10" fill="' + A + '"/>') },
     { t: 'Videos, sounds, PDFs and links on the page', d: 'The picture button in the tools (and Add image in the ••• menu) now adds any file: a picture, a video, a sound or a PDF. A PDF\'s pages go on the page one under another, ready to write on. Every file is saved once in Attachments in your Drive, named by what is in it, so adding the same file again (in this note or another) reuses it. Links go on as a card or as a window showing the page; switch between them from Select. With the Hand, videos play and links open.',

@@ -207,7 +207,7 @@
   function embedSvg(it, plain) {
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, w = it.w.toFixed(1), h = it.h.toFixed(1);
     var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
-    var web = it.mk === 'link' || it.mk === 'web' || it.mk === 'note', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
+    var web = it.mk === 'link' || it.mk === 'web' || it.mk === 'note' || it.mk === 'notecard', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
     var head = '<g data-i="' + it.id + '" transform="' + tr + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>';
     if (plain || (!web && !url)) { // a little picture (or the file not here yet): a card with its name
       return head + '<rect width="' + w + '" height="' + h + '" rx="10" fill="var(--surface, #fff)" stroke="var(--rule, #8886)"' + (url || web ? '' : ' stroke-dasharray="6 5"') + '/>' +
@@ -219,6 +219,7 @@
     if (it.mk === 'audio') return head + X + '<div class="emb-title">♪ ' + ttl + '</div><audio class="emb-live" src="' + u + '" controls="" preload="metadata"></audio>' + Y;
     if (it.mk === 'file') return head + X + '<a class="emb-live emb-card" href="' + u + '" download="' + ttl + '" target="_blank" rel="noopener"><span class="emb-ico">⎙</span><span><b>' + ttl + '</b><small>File · tap to open</small></span></a>' + Y;
     if (it.mk === 'note') return head + X + noteEmbed(it) + Y;
+    if (it.mk === 'notecard') return head + X + '<a class="emb-live emb-card emb-open" data-qn="' + xmlEsc(it.src) + '"><span class="emb-ico">✎</span><span><b>' + ttl + '</b><small>' + (/#/.test(it.src) ? 'Part of a note' : 'Note') + ' · Open ↗</small></span></a>' + Y;
     if (it.mk === 'web') return head + X + '<div class="emb-bar"><span>' + dom + '</span><a class="emb-live" href="' + u + '" target="_blank" rel="noopener">Open ↗</a></div>' +
       '<iframe class="emb-live" src="' + u + '" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>' + Y;
     return head + X + '<a class="emb-live emb-card" href="' + u + '" target="_blank" rel="noopener"><img alt="" src="https://www.google.com/s2/favicons?sz=64&amp;domain=' + encodeURIComponent(hostOf(it.src)) + '"/>' +
@@ -1952,6 +1953,7 @@
       render(); owned = new WeakSet();
     };
     self.clearSelection = function () { setSel(null); };
+    self.selBox = function () { return sel && sel.box ? { x: sel.box.x, y: sel.box.y, w: sel.box.w, h: sel.box.h } : null; };
     self.selection = function () { return sel ? { items: sel.items.length, boxes: sel.boxes.length } : null; };
     self.reset = function () { // after undo/redo replaced the layers
       if (!layers.length) layers.push(newLayer());
