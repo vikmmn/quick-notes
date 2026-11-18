@@ -87,7 +87,7 @@
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
         if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; }
         else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
-        else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; }
+        else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; if (it.mk) { x.mk = it.mk; if (it.ttl) x.ttl = it.ttl; if (it.pg) x.pg = it.pg; if (it.of) x.of = it.of; } }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
         else {
           x.b = it.b; x.s = r1(it.s);
@@ -199,6 +199,27 @@
     if (!u) return '<rect data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" rx="6" fill="var(--field, #8882)" stroke="var(--rule, #8886)" stroke-dasharray="6 5"/>';
     return '<image data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '/>';
   }
+  // ---- Media on the page (3.20): a video, a sound, a link card or a live web page, placed like an image ----
+  // mk: 'video' | 'audio' | 'link' | 'web' (a PDF's pages are images with mk 'pdf'). Files are fetched like images.
+  function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return u; } }
+  function embedSvg(it, plain) {
+    var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, w = it.w.toFixed(1), h = it.h.toFixed(1);
+    var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
+    var web = it.mk === 'link' || it.mk === 'web', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
+    var head = '<g data-i="' + it.id + '" transform="' + tr + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>';
+    if (plain || (!web && !url)) { // a little picture (or the file not here yet): a card with its name
+      return head + '<rect width="' + w + '" height="' + h + '" rx="10" fill="var(--surface, #fff)" stroke="var(--rule, #8886)"' + (url || web ? '' : ' stroke-dasharray="6 5"') + '/>' +
+        '<text x="14" y="' + Math.min(30, it.h / 2 + 6) + '" font-size="16" fill="var(--ink, #222)" font-family="sans-serif">' + (it.mk === 'audio' ? '♪ ' : it.mk === 'video' ? '▶ ' : '↗ ') + ttl + '</text></g>';
+    }
+    var X = '<foreignObject width="' + w + '" height="' + h + '"><div xmlns="http://www.w3.org/1999/xhtml" class="emb emb-' + it.mk + '">', Y = '</div></foreignObject></g>';
+    var u = xmlEsc(url), dom = xmlEsc(hostOf(it.src));
+    if (it.mk === 'video') return head + X + '<video class="emb-live" src="' + u + '" controls="" playsinline="" preload="metadata"></video>' + Y;
+    if (it.mk === 'audio') return head + X + '<div class="emb-title">♪ ' + ttl + '</div><audio class="emb-live" src="' + u + '" controls="" preload="metadata"></audio>' + Y;
+    if (it.mk === 'web') return head + X + '<div class="emb-bar"><span>' + dom + '</span><a class="emb-live" href="' + u + '" target="_blank" rel="noopener">Open ↗</a></div>' +
+      '<iframe class="emb-live" src="' + u + '" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>' + Y;
+    return head + X + '<a class="emb-live emb-card" href="' + u + '" target="_blank" rel="noopener"><img alt="" src="https://www.google.com/s2/favicons?sz=64&amp;domain=' + encodeURIComponent(hostOf(it.src)) + '"/>' +
+      '<span><b>' + ttl + '</b><small>' + dom + '</small></span></a>' + Y;
+  }
   // ---- Pencil grain: a tile of speckled holes, as a pattern in the pencil's colour ----
   // (Before 3.18 an SVG filter made the grain. A filter is redrawn over the whole stroke at every zoom and move, so long
   // or scribbled pencil lines lagged, and very big ones vanished when the filter got too big to draw.)
@@ -285,7 +306,7 @@
   }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
-    if (it.t === 'i') return imageSvg(it);
+    if (it.t === 'i') return it.mk && it.mk !== 'pdf' ? embedSvg(it, plain) : imageSvg(it);
     if (it.t === 'b') return boolSvg(it);
     if (it.cs && DEFS[it.cs] && it.p && it.p.length) return DEFS[it.cs].k === 'line' ? lineSvg(it, DEFS[it.cs]) : tipSvg(it, DEFS[it.cs]);
     if (it.pt && DEFS[it.pt] && it.t === 'f') {
@@ -1122,6 +1143,8 @@
           (hasArt ? B('outline', 'To outlines (each letter becomes lines you can erase, nudge, fill)', '<path d="M5 20l7-16 7 16h-3l-1.6-4H9.6L8 20z"/><path d="M10.6 13h2.8L12 9.5z"/>') : '') +
           (hasArt ? B('tobox', 'To text box (normal, editable text)', '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10M7 13h7"/>') : '') +
           (layers.length > 1 ? B('layer', 'Move to layer', '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>') : '') +
+          (sel.items.length === 1 && /^(link|web)$/.test(sel.items[0].mk || '') ? B('webmode', sel.items[0].mk === 'link' ? 'Show the page in a window' : 'Show as a card',
+            sel.items[0].mk === 'link' ? '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>' : '<rect x="3" y="8" width="18" height="8" rx="2"/><path d="M7 12h6"/>') : '') +
           (o.zoomTo ? B('zoom', 'Zoom to', '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/>') : '') +
           ((sel.items.some(function (it) { return boxy(it) && it.r; }) || (sel.boxes.length && BX.turned(sel.boxes))) ? B('straight', 'Straighten', '<path d="M3 18h18"/><path d="M5 13l14-5" stroke-dasharray="2 2.5"/>') : '');
       }
@@ -1197,6 +1220,11 @@
         done(); renderBar(); return;
       }
       if (act === 'back') return renderBar();
+      if (act === 'webmode') { // a link: a small card, or the page itself in a window
+        var wi = own(sel.items[0]), cx0 = wi.x, cy0 = wi.y;
+        if (wi.mk === 'link') { wi.mk = 'web'; wi.w = Math.max(wi.w, 640); wi.h = Math.max(wi.h, 440); } else { wi.mk = 'link'; wi.w = 360; wi.h = 84; }
+        wi.x = cx0; wi.y = cy0; invalidate(wi); render(); refreshBox(); commit(); renderBar(); drawUi(); return;
+      }
       if (act === 'straight') { // text lines up with the page again
         sel.items.slice().forEach(function (it) { if (boxy(it) && it.r) { var t = own(it); t.r = 0; invalidate(t); } });
         if (sel.boxes.length) BX.straighten(sel.boxes);
@@ -1825,6 +1853,12 @@
     };
     self.finishText = finishText;
     // A new image on the page: in the layer being worked on, straight to the screen (angle), selected.
+    self.addMedia = function (spec, x, y, w, h, angle) { // a video, a sound, a link or a live page
+      var L = active(); if (!editable(L)) { o.notice('This layer is locked or hidden.'); return null; }
+      var it = { id: uid('i'), t: 'i', src: spec.src, mk: spec.mk, x: x, y: y, w: w, h: h, r: Math.abs(angle || 0) > 0.01 ? Math.round(angle * 1000) / 1000 : 0, c: 'ink', o: 1 };
+      if (spec.ttl) it.ttl = spec.ttl; if (spec.pg) it.pg = spec.pg; if (spec.of) it.of = spec.of;
+      L.items.push(it); render(); commit(); setSel([it], []); return it.id;
+    };
     self.addImage = function (src, x, y, w, h, angle) {
       var L = active(); if (!editable(L)) { o.notice('This layer is locked or hidden.'); return null; }
       var it = { id: uid('i'), t: 'i', src: src, x: x, y: y, w: w, h: h, r: Math.abs(angle || 0) > 0.01 ? Math.round(angle * 1000) / 1000 : 0, c: 'ink', o: 1 };

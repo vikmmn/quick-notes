@@ -1425,7 +1425,7 @@
       return setTool(PREF.tool);
     }
     if (b.dataset.act === 'layers') return toggleLayers();
-    if (b.dataset.act === 'image') { imgWhere = 'page'; imgInput.value = ''; imgInput.click(); return; } // straight onto the page
+    if (b.dataset.act === 'image') { addToPage(); return; } // a picture, video, sound, PDF or link, onto the page
     if (b.dataset.snap != null) { INKOPT.pen.snap = INKOPT.pen.snap === false; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.cs != null) { switchPen(function () { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; }); return setTool('pen'); }
     if (b.dataset.big != null) { PREF.bigSize = SIZE_MAX() <= 24; if (!PREF.bigSize && INKOPT.pen.s > 24) INKOPT.pen.s = 24; applyInk(); savePref(); return setTool('pen'); }
@@ -1824,15 +1824,17 @@
       '<button type="button" data-act="page"><b>On the page</b>: move, resize and turn it freely, in front of or behind drawings</button>' +
       (hasCaret ? '<button type="button" data-act="caret">At the cursor</button>' : '') +
       '<button type="button" data-act="beside">Beside the text (side by side)</button>' +
-      '<button type="button" data-act="below">Below everything</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
+      '<button type="button" data-act="below">Below everything</button>' +
+      '<button type="button" data-act="more"><b>A video, sound, PDF or link</b> on the page</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
     function (act) {
+      if (act === 'more') { addToPage(); return; }
       if (act !== 'caret' && act !== 'beside' && act !== 'below' && act !== 'page') return;
       imgWhere = act; closeSheet();
       imgInput.value = ''; imgInput.click();
     });
   }
   imgInput.onchange = async function () {
-    var f = imgInput.files && imgInput.files[0];
+    var f = (this && this.files && this.files[0]) || (imgInput.files && imgInput.files[0]); // also called with a file from Add to the page
     if (!f || !S.canvas) return;
     if (!navigator.onLine || (Drive.isOffline && Drive.isOffline())) { toast('Images can be added while online (they are saved in Drive).'); return; }
     if (!Drive.signedIn()) { toast('Sign in to Google first (tap the sync button at the top).'); return; }
@@ -1840,12 +1842,7 @@
     try {
       var blob = await shrinkImage(f);
       var ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/gif' ? 'gif' : blob.type === 'image/webp' ? 'webp' : 'jpg';
-      var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
-      var name = 'image-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + N.shortId() + '.' + ext;
-      var folder = await attachmentsFolder();
-      var made = await Drive.upload(name, folder, blob, blob.type);
-      var map = await attachments(); map[name] = made.id;
-      imgCache[name] = URL.createObjectURL(blob);
+      var name = await saveMedia(blob, ext);
       if (imgWhere === 'page') {
         var dims = await new Promise(function (res) { var im = new Image(); im.onload = function () { res([im.naturalWidth || 400, im.naturalHeight || 300]); }; im.onerror = function () { res([400, 300]); }; im.src = imgCache[name]; });
         S.canvas.placeImage('Attachments/' + encodeURIComponent(name), dims[0], dims[1]);
@@ -1862,6 +1859,82 @@
     return sync.createFolder('Attachments', root);
   }
   // Photos from a phone camera are huge: keep them sharp on screen but small in Drive (longest side 2000 px).
+  // ---------- Files on the page: saved once in Attachments, named by what is in them (3.20) ----------
+  // The same picture, video or PDF added to several notes (or twice to one) is one file in Drive; notes only point to it.
+  async function saveMedia(blob, ext) {
+    var buf = await blob.arrayBuffer(), dig = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    var name = Array.prototype.map.call(dig.slice(0, 12), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('') + '.' + ext;
+    var map = await attachments();
+    if (!map[name]) { var made = await Drive.upload(name, await attachmentsFolder(), blob, blob.type || 'application/octet-stream'); map[name] = made.id; }
+    if (!imgCache[name]) imgCache[name] = URL.createObjectURL(blob);
+    return name;
+  }
+  var mediaInput = document.createElement('input');
+  mediaInput.type = 'file'; mediaInput.accept = 'image/*,video/*,audio/*,application/pdf'; mediaInput.className = 'hidden';
+  document.body.appendChild(mediaInput);
+  function addToPage() {
+    if (!S.canvas) return;
+    openSheet('<h2>Add to the page</h2><div class="pick">' +
+      '<button type="button" data-act="file"><b>A file</b>: picture, video, sound or PDF (saved once in your Drive, in Attachments)</button>' +
+      '<button type="button" data-act="link"><b>A link</b> to a web page</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
+    function (act) {
+      if (act === 'file') { closeSheet(); mediaInput.value = ''; mediaInput.click(); }
+      if (act === 'link') linkSheet();
+    });
+  }
+  function linkSheet() {
+    openSheet('<h2>A link</h2><form><label>Web address<input name="u" type="text" inputmode="url" autocapitalize="off" placeholder="https://…" autofocus required></label>' +
+      '<label>Name (optional)<input name="t" placeholder="Shown on the card"></label><p class="err"></p>' +
+      '<div class="row"><button type="button" data-act="close">Cancel</button><button type="submit" name="m" value="web">As a window</button><button type="submit" name="m" value="link" class="primary">As a card</button></div></form>' +
+      '<p class="where">A window shows the page itself; some sites (Google, GitHub and others) don\'t allow that, and then only the card works. Tap Open ↗ on it to see the page.</p>',
+    null, function (e) {
+      var fm = e.target, u = String(fm.u.value || '').trim(), mk = (e.submitter && e.submitter.value) || 'link';
+      if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+      try { new URL(u); } catch (er) { return sheetError('That doesn\'t look like a web address.'); }
+      closeSheet();
+      S.canvas.placeMedia({ src: u, mk: mk, ttl: String(fm.t.value || '').trim() }, mk === 'web' ? 640 : 360, mk === 'web' ? 440 : 84);
+    });
+  }
+  mediaInput.onchange = async function () {
+    var f = mediaInput.files && mediaInput.files[0];
+    if (!f || !S.canvas) return;
+    if (/^image\//.test(f.type)) { imgWhere = 'page'; imgInput.onchange.call({ files: [f] }, f); return; }
+    if (!navigator.onLine || (Drive.isOffline && Drive.isOffline())) { toast('Files can be added while online (they are saved in Drive).'); return; }
+    if (!Drive.signedIn()) { toast('Sign in to Google first (tap the sync button at the top).'); return; }
+    var ext = (f.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5), ttl = f.name.replace(/\.[^.]+$/, '');
+    try {
+      if (f.type === 'application/pdf' || ext === 'pdf') return await addPdf(f, ttl);
+      toast('Saving ' + f.name + ' in Drive…', null, null, 600000);
+      var name = await saveMedia(f, ext), src = 'Attachments/' + encodeURIComponent(name);
+      if (/^video\//.test(f.type)) {
+        var dims = await new Promise(function (res) { var v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = function () { res([v.videoWidth || 640, v.videoHeight || 360]); }; v.onerror = function () { res([640, 360]); }; v.src = imgCache[name]; });
+        S.canvas.placeMedia({ src: src, mk: 'video', ttl: ttl }, dims[0], dims[1]);
+      } else S.canvas.placeMedia({ src: src, mk: 'audio', ttl: ttl }, 360, 96);
+      hideToast();
+    } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : 'That could not be added: ' + (e.message || e)); }
+  };
+  // A PDF: kept once as it is, and each page shown on the page as a sheet to write on (one under another).
+  var PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/';
+  async function addPdf(f, ttl) {
+    toast('Opening the PDF…', null, null, 600000);
+    var lib = await import(PDFJS + 'pdf.min.mjs');
+    lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
+    var pdfName = await saveMedia(f, 'pdf'), doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    var n = Math.min(doc.numPages, 40), dy = 0;
+    for (var i = 1; i <= n; i++) {
+      toast('Page ' + i + ' of ' + n + '…', null, null, 600000);
+      var pg = await doc.getPage(i), vp0 = pg.getViewport({ scale: 1 }), sc = Math.min(2.2, 1400 / vp0.width), vp = pg.getViewport({ scale: sc });
+      var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+      var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+      await pg.render({ canvasContext: g, viewport: vp }).promise;
+      var jpg = await new Promise(function (r) { cv.toBlob(r, 'image/jpeg', 0.86); });
+      var name = await saveMedia(jpg, 'jpg');
+      var h = S.canvas.placeMedia({ src: 'Attachments/' + encodeURIComponent(name), mk: 'pdf', pg: i, of: 'Attachments/' + encodeURIComponent(pdfName), ttl: ttl }, vp0.width, vp0.height, dy);
+      dy += h + 24;
+    }
+    hideToast();
+    if (doc.numPages > n) toast('The first ' + n + ' pages are on the page (the PDF has ' + doc.numPages + ').');
+  }
   async function shrinkImage(file) {
     if (/gif|svg/.test(file.type) || !window.createImageBitmap) return file;
     try {
@@ -2132,6 +2205,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Videos, sounds, PDFs and links on the page', d: 'The picture button in the tools (and Add image in the ••• menu) now adds any file: a picture, a video, a sound or a PDF. A PDF\'s pages go on the page one under another, ready to write on. Every file is saved once in Attachments in your Drive, named by what is in it, so adding the same file again (in this note or another) reuses it. Links go on as a card or as a window showing the page; switch between them from Select. With the Hand, videos play and links open.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="36" y="30" width="80" height="54" rx="6" fill="' + INKC + '"/><path d="M68 46l18 11-18 11z" fill="' + SURF + '"/><rect x="128" y="30" width="76" height="30" rx="6" fill="' + SOFT + '" stroke="' + A + '"/><rect x="128" y="68" width="40" height="46" rx="3" fill="#fff" stroke="' + RULE + '"/><rect x="172" y="68" width="40" height="46" rx="3" fill="#fff" stroke="' + RULE + '"/>') },
     { t: 'Page backgrounds, clean curves, names on hover', d: 'In a note, the ••• menu now has Page: plain, grid, dots or lines, on the theme or a paper colour (white, cream, kraft, grey, slate, black). Holding the pen at the end of an arc now makes a clean arc, and a wave a smooth curve, instead of straight pieces. Hover the pen over any tool or option to see its name. In the notes list, pinch a page picture with two fingers to zoom in and move around; double-tap to put it back.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M40 30v80M72 30v80M104 30v80M136 30v80M168 30v80M200 30v80M30 46h180M30 78h180M30 110h180" stroke="' + RULE + '"/><path d="M60 96a40 40 0 0 1 80 0" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/>') },
     { t: 'Faster drawing, and your feedback fixed', d: 'Pencil and your own pen tips no longer lag, and big pencil scribbles no longer vanish. Plain really is plain again. Text and drawings now stack by what is in front: new drawings go over older text, and Select › Arrange moves text boxes to the front or back too. Undo and redo are a two- or three-finger double tap. Zoom out down to 1%, and draw across the top of the page. Tap the dot on the size slider for colours; double-tap the slider for sizes up to 120. Each pen remembers its own size and colour. Select now shows symbols (hover or hold for names), with Align apart from Arrange, side handles to stretch, and line width under Colour. Fill: hold for a clean shape; patterns show while you draw and can be bigger or spaced out. Any text size in the Aa menu. Notes with drawings show a picture of the page in the list.',
