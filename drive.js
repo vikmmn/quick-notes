@@ -247,6 +247,17 @@
       },
       // For the Keep import: any file (images, audio), part of a big file, and finding Takeout zips.
       upload: async function (name, parentId, blob, mime) {
+        if (blob.size > 4 * 1024 * 1024) { // big files (videos, long recordings): a resumable upload, as Drive asks for over 5 MB
+          var init = await api(UPLOAD + '/files?uploadType=resumable&fields=' + FIELDS, {
+            method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime || 'application/octet-stream' },
+            body: JSON.stringify({ name: name, parents: [parentId] })
+          });
+          var loc = init.headers.get('Location');
+          if (!loc) throw fail('http', 'Drive did not start the upload.');
+          var put = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': mime || 'application/octet-stream' }, body: blob });
+          if (!put.ok) throw fail(put.status >= 500 ? 'busy' : 'http', 'The upload to Drive stopped (' + put.status + ').');
+          return put.json();
+        }
         var b = 'bnd' + Math.random().toString(36).slice(2);
         var body = new Blob(['--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
           JSON.stringify({ name: name, parents: [parentId] }) + '\r\n--' + b + '\r\nContent-Type: ' + (mime || 'application/octet-stream') + '\r\n\r\n',

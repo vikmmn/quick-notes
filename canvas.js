@@ -459,6 +459,8 @@
     // ---- Pointer handling ----
     var drag = null, taps = [], panV = null, panMoved = false;
     on(host, 'pointerdown', function (ev) {
+      // With the Hand, a video's buttons, a sound's player, a link and a live page work as themselves.
+      if (tool === 'type' && ev.target.closest && ev.target.closest('.emb-live')) return;
       // The title and labels work as usual, except with a drawing tool: the title's strip runs right across the top of
       // the page, and before 3.18 nothing could be drawn over any of it.
       if (head && head.contains(ev.target)) {
@@ -916,6 +918,15 @@
       a = Math.atan2(Math.sin(a), Math.cos(a));
       if (hooks.autoTool) hooks.autoTool('lasso');
       eng.addImage(src, cx - (w / 2 * Math.cos(a) - h / 2 * Math.sin(a)), cy - (w / 2 * Math.sin(a) + h / 2 * Math.cos(a)), w, h, a);
+    };
+    // A video, sound, link or live page (3.20), in the middle of the screen; several PDF pages go one under another.
+    self.placeMedia = function (spec, nw, nh, dy) {
+      var c = toWorld(host.clientWidth / 2, host.clientHeight / 2), cx = c[0] - M, cy = c[1] - M + (dy || 0);
+      var k = Math.min(host.clientWidth * 0.7 / view.z / nw, 1 / view.z), w = Math.max(40, nw * k), h = Math.max(30, nh * k), a = -(view.r || 0);
+      a = Math.atan2(Math.sin(a), Math.cos(a));
+      if (hooks.autoTool) hooks.autoTool('lasso');
+      eng.addMedia(spec, cx - (w / 2 * Math.cos(a) - h / 2 * Math.sin(a)), cy - (w / 2 * Math.sin(a) + h / 2 * Math.cos(a)), w, h, a);
+      return h;
     };
     self.insertImage = function (src, where) {
       var a = self.active() ? active : null;
