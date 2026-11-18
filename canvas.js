@@ -46,7 +46,7 @@
     selBar.innerHTML = '<button type="button" data-act="delete">Delete</button>';
 
     var boxes = note.boxes;
-    var zPos = {}, zIdx = {}; // each text box's depth and place in the stack (worked out by ink.js)
+    var zPos = {}, zIdx = {}, zTie = {}; // each text box's depth and place in the stack (worked out by ink.js)
     if (!Array.isArray(note.ink) || !note.ink.length) note.ink = [window.QNInk.newLayer()];
     var ink = note.ink;
     var editors = {};          // box id -> { el, ed }
@@ -256,7 +256,8 @@
       return {
         // What is in front (3.18.2): each box sits just above one drawing item (z), at a depth (zp) kept for when
         // that item goes; the engine works out the order and gives each box its place in the stack (zIndex).
-        list: function () { return boxes.map(function (b) { return { id: b.id, l: b.l || null, z: b.z, zp: zPos[b.id] }; }); },
+        list: function () { return boxes.map(function (b) { return { id: b.id, l: b.l || null, z: b.z, zp: zPos[b.id], zt: zTie[b.id] }; }); },
+        setTie: function (id, t) { zTie[id] = t; },
         setAnchor: function (id, z) { var b = byId(id); if (b) b.z = z || ''; },
         setPos: function (id, pos) { zPos[id] = pos; },
         setZ: function (id, z) { zIdx[id] = z; var e = editors[id]; if (e) e.el.style.zIndex = z; },

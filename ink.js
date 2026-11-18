@@ -745,7 +745,7 @@
     }
     function makePlan() {
       var list = resolveAnchors(), byPos = {};
-      list.slice().sort(function (a, b) { return a.pos - b.pos; }).forEach(function (b) { (byPos[b.pos] = byPos[b.pos] || []).push(b.id); });
+      list.map(function (b, i) { b.ix = i; return b; }).sort(function (a, b) { return a.pos - b.pos || (a.zt || 0) - (b.zt || 0) || a.ix - b.ix; }).forEach(function (b) { (byPos[b.pos] = byPos[b.pos] || []).push(b.id); });
       var out = [], cur = { parts: [] }, n = 0, zi = 1, boxZ = {}, endBox = {}, lastPart = {};
       out.push(cur);
       var flush = function (pos) {
@@ -1288,8 +1288,13 @@
       if (!sel) return;
       if (a === 'front' || a === 'back' || a === 'fwd' || a === 'bwd') { // order within each item's own layer
         // Text boxes not picked stay at the same depth; picked ones move in the whole order.
-        var bl = BX && BX.list ? resolveAnchors() : [], keep = {};
-        bl.forEach(function (b) { if (sel.boxes.indexOf(b.id) < 0) keep[b.id] = b.pos; });
+        var bl = BX && BX.list ? resolveAnchors() : [], keep = {}, q0 = seqAll(), isSelIt = {}, after = {};
+        sel.items.forEach(function (it) { isSelIt[it.id] = 1; });
+        bl.forEach(function (b) {
+          if (sel.boxes.indexOf(b.id) < 0) { keep[b.id] = b.pos; return; }
+          // A picked text box keeps its place among the other picked things: just after the picked item before it.
+          for (var k = b.pos - 1; k >= 0; k--) if (isSelIt[q0[k].it.id]) { after[b.id] = q0[k].it.id; break; }
+        });
         layers.forEach(function (l) {
           var its = l.items, isSel = function (it) { return sel.items.indexOf(it) > -1; };
           if (!its.some(isSel)) return;
@@ -1300,9 +1305,16 @@
         });
         var q = seqAll();
         Object.keys(keep).forEach(function (id) { var ps = keep[id]; BX.setAnchor(id, ps > 0 && q[ps - 1] ? q[ps - 1].it.id : ''); });
-        bl.forEach(function (b) {
-          if (sel.boxes.indexOf(b.id) < 0) return;
+        var firstSel = -1; q.some(function (e, k) { if (isSelIt[e.it.id]) { firstSel = k; return true; } return false; });
+        var picked = bl.filter(function (b) { return sel.boxes.indexOf(b.id) > -1; }).sort(function (x, y) { return x.pos - y.pos || (x.zt || 0) - (y.zt || 0); });
+        picked.forEach(function (b, n) { BX.setTie(b.id, 1e6 + n); }); // boxes at the same place keep their order
+        picked.forEach(function (b) {
           var ps = b.pos;
+          if (firstSel > -1) { // moving together with picked drawings: nothing changes between the picked things
+            if (after[b.id]) BX.setAnchor(b.id, after[b.id]);
+            else BX.setAnchor(b.id, firstSel > 0 ? q[firstSel - 1].it.id : '');
+            BX.setPos(b.id, null); return;
+          }
           if (a === 'front') BX.setAnchor(b.id, topAnchor());
           else if (a === 'back') BX.setAnchor(b.id, '');
           else if (a === 'fwd') { ps = Math.min(q.length, ps + 1); BX.setAnchor(b.id, ps ? q[ps - 1].it.id : ''); }
