@@ -1505,6 +1505,7 @@
       }
       var bh = BX && BX.at(p[0], p[1], scopeId); return bh ? { box: bh } : null;
     }
+    function tapPick(p) { var h = pickAt(p); if (!h) { setSel(null); return; } setSel(h.it ? [h.it] : [], h.box ? [h.box] : []); }
     function toggleAt(p) { // the item selector: a tap adds to the selection, or takes away what is already in it
       var h = pickAt(p);
       if (!h) { setSel(null); return; }
@@ -1622,8 +1623,11 @@
     self.down = function (p, ev) {
       if (tool === 'lasso') {
         var hnd = handleAt(p);
-        if (hnd) { startTransform(hnd, p); return true; }
-        if (opt.lasso.how === 'tap') { drag = { pick: p }; return true; } // the item selector: tap to add or take away; a drag still moves
+        // Tap (3.21.1): a quick tap picks just that thing (or, on empty space, picks nothing); tap and hold adds it to
+        // what is picked, or takes it away if it is already in. A drag on the selection still moves it.
+        var holdTap = function (d) { d.holdT = setTimeout(function () { if (drag === d && !d.far) { d.held = true; toggleAt(p); if (navigator.vibrate) navigator.vibrate(15); } }, 450); };
+        if (hnd) { startTransform(hnd, p); if (opt.lasso.how === 'tap' && hnd === 'move') holdTap(drag); return true; }
+        if (opt.lasso.how === 'tap') { drag = { pick: p }; holdTap(drag); return true; }
         drag = { lasso: [p], t: Date.now(), prev: sel ? { items: sel.items.slice(), boxes: sel.boxes.slice() } : null };
         if ((opt.lasso.op || 'new') === 'new') setSel(null); return true;
       }
@@ -1653,8 +1657,9 @@
         if (ev.pointerType !== 'touch' && (tool === 'erase' || tool === 'nudge')) { cursor = [p[0], p[1], (tool === 'erase' ? opt.erase.s : opt.nudge.r) / Z()]; drawUi(); }
         return;
       }
-      if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) drag.far = true; if (drag.far) applyTransform(p); return; }
-      if (drag.pick) return;
+      if (drag.held) return;
+      if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } if (drag.far) applyTransform(p); return; }
+      if (drag.pick) { if (Math.hypot(p[0] - drag.pick[0], p[1] - drag.pick[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } return; }
       if (drag.stroke && drag.snap) { // a clean shape: the pen now sizes and turns it (a line: moves its end)
         var S0 = drag.snap, it0 = drag.stroke;
         if (S0.name === 'line') { var e0 = S0.base[0]; it0.p = dense([e0, p], Math.max(1, 2 / Z())).map(function (q) { return [q[0], q[1], S0.pr].concat(S0.q3 != null ? [S0.q3] : []); }); }
@@ -1747,9 +1752,11 @@
       if (!d) return;
       if (d.hold) clearTimeout(d.hold.t);
       if (d.fhold) clearTimeout(d.fhold.t);
-      if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { toggleAt(d.start); return; } // a tap on the selection: in or out
+      clearTimeout(d.holdT);
+      if (d.held) return; // tap and hold: already added or taken away
+      if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { tapPick(d.start); return; } // a quick tap: just that
       if (d.kind) { if (!d.far) return; refreshBox(); flushPatch(); commit(); return; }
-      if (d.pick) { toggleAt(d.pick); return; }
+      if (d.pick) { if (!d.far) tapPick(d.pick); return; }
       if (d.stroke) {
         cancelAnimationFrame(liveRaf); liveRaf = 0;
         if (d.stroke.p.length === 1) { var p0 = d.stroke.p[0]; d.stroke.p.push([p0[0] + 0.4, p0[1] + 0.4].concat(p0.slice(2))); }
