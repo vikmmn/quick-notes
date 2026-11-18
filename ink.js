@@ -719,7 +719,90 @@
 
     function active() { return layers.filter(function (l) { return l.id === activeId; })[0] || layers[layers.length - 1]; }
     function editable(l) { return l.vis && !l.lock; }
-    function render() { cancelAnimationFrame(raf); raf = 0; pending = []; svg.innerHTML = markup(layers, 'c-', M, M); drawUi(); }
+    // ---- What is in front: drawings and text boxes in one order, back to front ----
+    // A text box sits just above one drawing item (b.z: its id; '' = at the bottom of the text's own layer), so text
+    // and drawings stack by what was put in front, not text always on top (3.18.2). The drawing is drawn as one or
+    // more SVG slices, with text boxes between them.
+    var slices = [svg], plan = null;
+    function seqAll() { var q = []; layers.forEach(function (l) { l.items.forEach(function (it) { q.push({ it: it, l: l }); }); }); return q; }
+    function topAnchor() { for (var i = layers.length - 1; i >= 0; i--) { var its = layers[i].items; if (its.length) return its[its.length - 1].id; } return ''; }
+    function boxLayer(b) { return layers.filter(function (l) { return l.id === b.l; })[0] || layers[0]; }
+    // Each text box's place in the whole order: the number of drawing items behind it. A box whose item has gone
+    // (erased, sliced, joined into a shape) keeps its depth (zp) and takes the item now there.
+    function resolveAnchors() {
+      if (!BX || !BX.list) return [];
+      var q = seqAll(), at = {}, firstOf = {}, list = BX.list();
+      q.forEach(function (e, i) { at[e.it.id] = i; if (firstOf[e.l.id] == null) firstOf[e.l.id] = i; });
+      list.forEach(function (b) {
+        var L = boxLayer(b), pos;
+        if (b.z === '') { pos = firstOf[L.id]; if (pos == null) { pos = 0; for (var li = 0; li < layers.length && layers[li] !== L; li++) pos += layers[li].items.length; } }
+        else if (b.z != null && at[b.z] != null) pos = at[b.z] + 1;
+        else if (b.zp != null) { pos = Math.max(0, Math.min(q.length, b.zp)); BX.setAnchor(b.id, pos ? q[pos - 1].it.id : ''); }
+        else { pos = q.length; BX.setAnchor(b.id, topAnchor()); } // older notes: text on top, as it was
+        b.pos = pos; BX.setPos(b.id, pos);
+      });
+      return list;
+    }
+    function makePlan() {
+      var list = resolveAnchors(), byPos = {};
+      list.slice().sort(function (a, b) { return a.pos - b.pos; }).forEach(function (b) { (byPos[b.pos] = byPos[b.pos] || []).push(b.id); });
+      var out = [], cur = { parts: [] }, n = 0, zi = 1, boxZ = {}, endBox = {}, lastPart = {};
+      out.push(cur);
+      var flush = function (pos) {
+        var ids = byPos[pos]; if (!ids) return;
+        delete byPos[pos];
+        cur.z = zi++; ids.forEach(function (id) { boxZ[id] = zi++; });
+        cur = { parts: [] }; out.push(cur);
+      };
+      layers.forEach(function (l) {
+        var part = { l: l, items: [] }; cur.parts.push(part); lastPart[l.id] = out.length - 1;
+        l.items.forEach(function (it) {
+          flush(n);
+          if (cur.parts.indexOf(part) < 0) { part = { l: l, items: [] }; cur.parts.push(part); lastPart[l.id] = out.length - 1; }
+          part.items.push(it); n++;
+        });
+      });
+      // boxes after everything
+      Object.keys(byPos).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) { (byPos[pos] || []).forEach(function (id) { if (!cur.z) cur.z = zi++; boxZ[id] = zi++; }); });
+      if (!cur.z) cur.z = zi++;
+      // A box right at the end of a layer: a new stroke on that layer needs a slice of its own above the box.
+      var taken = {}, cnt = 0; list.forEach(function (b) { taken[b.pos] = 1; });
+      layers.forEach(function (l) { cnt += l.items.length; endBox[l.id] = !!taken[cnt]; });
+      return { slices: out, boxZ: boxZ, endBox: endBox };
+    }
+    function sliceMarkup(sl, k) {
+      var pre = 'c' + k + '-', masks = '';
+      sl.parts.forEach(function (pt) {
+        var li = layers.indexOf(pt.l), below = layers[li - 1];
+        if (!pt.l.clip || !below) return;
+        for (var j = k; j >= 0; j--) if (plan.slices[j].parts.some(function (x) { return x.l === below; })) {
+          masks += '<mask id="' + pre + 'm-' + pt.l.id + '" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000"><use href="#c' + j + '-L-' + below.id + '"/></mask>';
+          pt.mask = true; break;
+        }
+      });
+      return '<defs>' + masks + '</defs><g transform="translate(' + M + ' ' + M + ')">' + sl.parts.map(function (pt) {
+        var l = pt.l, st = 'opacity:' + l.op + ';' + (l.blend && l.blend !== 'normal' ? 'mix-blend-mode:' + l.blend + ';' : '') + 'isolation:isolate';
+        return '<g id="' + pre + 'L-' + l.id + '" data-l="' + l.id + '" style="' + st + '"' + (pt.mask ? ' mask="url(#' + pre + 'm-' + l.id + ')"' : '') + (l.vis ? '' : ' display="none"') + '>' +
+          pt.items.map(function (it) { return itemSvg(it); }).join('') + '</g>';
+      }).join('') + '</g>';
+    }
+    var sizeWH = null;
+    function render() {
+      cancelAnimationFrame(raf); raf = 0; pending = [];
+      plan = makePlan();
+      while (slices.length < plan.slices.length) {
+        var e = document.createElementNS(NS, 'svg'); e.setAttribute('class', 'ink-layer');
+        if (sizeWH) { e.setAttribute('width', sizeWH[0]); e.setAttribute('height', sizeWH[1]); }
+        stage.insertBefore(e, ui); slices.push(e);
+      }
+      slices.forEach(function (e, k) {
+        var sl = plan.slices[k];
+        if (!sl) { e.innerHTML = ''; e.style.display = 'none'; return; }
+        e.style.display = ''; e.style.zIndex = sl.z; e.innerHTML = sliceMarkup(sl, k);
+      });
+      if (BX && BX.setZ) Object.keys(plan.boxZ).forEach(function (id) { BX.setZ(id, plan.boxZ[id]); });
+      drawUi();
+    }
     function soon() { if (!raf) raf = requestAnimationFrame(render); }
     // Undo keeps earlier versions of the drawing by reference (no copies), so an item is never changed in place once
     // it has been saved in a version: the first change in a gesture swaps in a copy (own), and every change that is
@@ -733,13 +816,13 @@
       if (sel) { var k = sel.items.indexOf(it); if (k > -1) sel.items[k] = c; }
       return c;
     }
-    function commit(kind) { o.changed(kind || 'ink'); owned = new WeakSet(); }
+    function commit(kind) { resolveAnchors(); o.changed(kind || 'ink'); owned = new WeakSet(); }
     function done(kind) { render(); commit(kind); }
     function layerOf(it) { for (var i = 0; i < layers.length; i++) if (layers[i].items.indexOf(it) > -1) return layers[i]; return null; }
 
     // ---- Changing only what changed, instead of redrawing the whole drawing ----
-    function elOf(it) { return svg.querySelector('[data-i="' + it.id + '"]'); }
-    function groupOf(l) { return svg.querySelector('[data-l="' + l.id + '"]'); }
+    function elOf(it) { return stage.querySelector('svg.ink-layer [data-i="' + it.id + '"]'); }
+    function groupOf(l) { var all = stage.querySelectorAll('svg.ink-layer [data-l="' + l.id + '"]'); return all[all.length - 1] || null; } // its frontmost slice
     var pending = [], patchRaf = 0;
     function patch(items) { items.forEach(function (it) { if (pending.indexOf(it) < 0) pending.push(it); }); if (!patchRaf) patchRaf = requestAnimationFrame(flushPatch); }
     function flushPatch() {
@@ -753,7 +836,7 @@
       });
       drawUi();
     }
-    function addEl(l, it) { var g = groupOf(l); if (g) g.insertAdjacentHTML('beforeend', itemSvg(it)); else soon(); }
+    function addEl(l, it) { var g = !plan || plan.endBox[l.id] ? null : groupOf(l); if (g) g.insertAdjacentHTML('beforeend', itemSvg(it)); else soon(); }
 
     // ---- The stroke being drawn: painted on a low-latency canvas over the page, one frame at a time ----
     var host = o.uiHost || stage;
@@ -888,7 +971,8 @@
       ui.innerHTML = h;
       placeBar();
     }
-    self.size = function (W, H) { ui.setAttribute('width', W); ui.setAttribute('height', H); };
+    self.size = function (W, H) { sizeWH = [W, H]; ui.setAttribute('width', W); ui.setAttribute('height', H); slices.forEach(function (e) { e.setAttribute('width', W); e.setAttribute('height', H); }); };
+    self.topAnchor = topAnchor;
 
     // ---- Selection (Lasso tool) ----
     // Text boxes can be in the selection too (o.boxes is the page's way to find, move and change them).
@@ -986,7 +1070,7 @@
             : count > 1 ? B('group', 'Make collective (move, turn and fade these together, whatever layer each is on)', '<rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 3"/><circle cx="8.5" cy="8.5" r="3"/><rect x="13" y="13" width="6" height="6" rx="1"/>') : '') +
           (inkSel ? B('color', sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour, opacity, line width', '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>') : '') +
           (count > 1 ? B('align', 'Align', '<path d="M4 3v18M8 7h12M8 15h7"/>') : '') +
-          (inkSel ? B('arrange', 'Arrange (to the front, to the back)', '<rect x="9" y="9" width="11" height="11" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') : '') +
+          (inkSel || sel.boxes.length ? B('arrange', 'Arrange (to the front, to the back)', '<rect x="9" y="9" width="11" height="11" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') : '') +
           (sel.items.length > 1 || isShape ? B('bool', isShape ? 'Shape: join, cut out, overlap, exclude' : 'Combine shapes: join, cut out, overlap, exclude', '<path d="M3 6h11v11H3z"/><path d="M9 9h12v12H9z"/>') : '') +
           (sel.boxes.length && BX.hasImages(sel.boxes) ? B('imgout', 'Take images out (each becomes its own object)', '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M3 15l4-4 4 4M15 3h6v6M21 3l-7 7"/>') : '') +
           (sel.items.length ? B('warp', sel.warp ? 'Done distorting' : 'Distort (corners: perspective, sides: skew)', sel.warp ? '<path d="M5 12l5 5 9-10"/>' : '<path d="M4 6l16-2-2 16-14-3z"/><path d="M4 6l6 6M20 4l-8 8"/>') : '') +
@@ -1142,7 +1226,8 @@
         var arts = sel.items.filter(function (it) { return it.t === 'x'; }), nb = [];
         arts.forEach(function (it) {
           var l = layerOf(it); if (!l) return;
-          var id = BX.fromArt({ txt: it.txt, x: it.x, y: it.y, r: it.r, fs: it.fs, font: it.font, lid: l.id }, layers[0].id);
+          var ix = l.items.indexOf(it), under = ix > 0 ? l.items[ix - 1].id : '';
+          var id = BX.fromArt({ txt: it.txt, x: it.x, y: it.y, r: it.r, fs: it.fs, font: it.font, lid: l.id, z: under }, layers[0].id);
           if (it.g) BX.setGroup([id], it.g, it.co || 1); nb.push(id);
           l.items.splice(l.items.indexOf(it), 1);
         });
@@ -1202,6 +1287,9 @@
     function arrange(a) {
       if (!sel) return;
       if (a === 'front' || a === 'back' || a === 'fwd' || a === 'bwd') { // order within each item's own layer
+        // Text boxes not picked stay at the same depth; picked ones move in the whole order.
+        var bl = BX && BX.list ? resolveAnchors() : [], keep = {};
+        bl.forEach(function (b) { if (sel.boxes.indexOf(b.id) < 0) keep[b.id] = b.pos; });
         layers.forEach(function (l) {
           var its = l.items, isSel = function (it) { return sel.items.indexOf(it) > -1; };
           if (!its.some(isSel)) return;
@@ -1209,6 +1297,17 @@
           else if (a === 'back') l.items = its.filter(isSel).concat(its.filter(function (it) { return !isSel(it); }));
           else if (a === 'fwd') { for (var i = its.length - 2; i >= 0; i--) if (isSel(its[i]) && !isSel(its[i + 1])) { var t = its[i]; its[i] = its[i + 1]; its[i + 1] = t; } }
           else { for (var j = 1; j < its.length; j++) if (isSel(its[j]) && !isSel(its[j - 1])) { var u = its[j]; its[j] = its[j - 1]; its[j - 1] = u; } }
+        });
+        var q = seqAll();
+        Object.keys(keep).forEach(function (id) { var ps = keep[id]; BX.setAnchor(id, ps > 0 && q[ps - 1] ? q[ps - 1].it.id : ''); });
+        bl.forEach(function (b) {
+          if (sel.boxes.indexOf(b.id) < 0) return;
+          var ps = b.pos;
+          if (a === 'front') BX.setAnchor(b.id, topAnchor());
+          else if (a === 'back') BX.setAnchor(b.id, '');
+          else if (a === 'fwd') { ps = Math.min(q.length, ps + 1); BX.setAnchor(b.id, ps ? q[ps - 1].it.id : ''); }
+          else { ps = Math.max(0, ps - 1); BX.setAnchor(b.id, ps ? q[ps - 1].it.id : ''); }
+          BX.setPos(b.id, ps);
         });
         render(); commit(); renderBar('arrange'); return;
       }

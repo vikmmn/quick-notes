@@ -270,8 +270,8 @@
   .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; touch-action: none; }
   #noteHead.in-page { position: absolute; left: 0; box-sizing: border-box; z-index: 1; }
   .ink-live { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
-  .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 1; } /* drawings above text (3.18) */
-  .stage > .sel { z-index: 4; }
+  .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 1; } /* slices of the drawing, between text boxes by what is in front (3.18.2) */
+  .stage > .sel { z-index: 100002; }
   .inktip { position: absolute; z-index: 9; max-width: 260px; padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 500 12.5px/1.3 var(--font); pointer-events: none; box-shadow: var(--shadow); }
   .inkbar .ib { width: 38px; height: 38px; min-height: 0 !important; padding: 0 !important; display: inline-grid; place-items: center; border-radius: 10px; }
   .inkbar .bt { font: 600 11.5px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 6px 0 4px; width: 100%; }
@@ -282,8 +282,8 @@
   .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box, .stage[data-tool=text] .box { pointer-events: none; }
   .stage[data-tool=text] { cursor: text; }
   .ink-textedit { position: absolute; transform-origin: 0 0; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--accent); outline-offset: 3px;
-    background: transparent; resize: none; overflow: hidden; white-space: pre; z-index: 5; min-width: 12px; caret-color: var(--accent); }
-  .ink-ui { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 3; }
+    background: transparent; resize: none; overflow: hidden; white-space: pre; z-index: 100001; min-width: 12px; caret-color: var(--accent); }
+  .ink-ui { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 100000; }
   .inkbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(92vw, 520px); padding: 6px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); }
   .inkbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; }
   .inkbar .sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--rule); }
@@ -357,7 +357,7 @@
   .stage[data-tool=erase], .stage[data-tool=nudge] { cursor: none; }
   .stage[data-tool=lasso] { cursor: default; }
   .sel { position: absolute; border: 1.5px dashed var(--accent); border-radius: 8px; pointer-events: none; }
-  .selbar { position: absolute; z-index: 5; display: flex; gap: 6px; }
+  .selbar { position: absolute; z-index: 100003; display: flex; gap: 6px; }
   .selbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; box-shadow: var(--shadow); }
 
   /* The rich text inside a box */
