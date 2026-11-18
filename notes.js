@@ -56,6 +56,7 @@
         if (o.g) cur.g = String(o.g); // in a collective with drawings
         if (o.co) cur.co = +o.co;
         if (o.l) cur.l = String(o.l); // the drawing layer the text belongs to (hidden, locked and faded with it)
+        if (o.z != null) cur.z = String(o.z); // the drawing item it sits just in front of ('' = the back of its layer)
         boxes.push(cur);
       } else if (cur) cur.lines.push(line);
       else before.push(line);
@@ -85,6 +86,7 @@
       if (b.r) meta.r = Math.round(b.r * 1000) / 1000;
       if (b.g) meta.g = b.g;
       if (b.co) meta.co = Math.round(b.co * 100) / 100;
+      if (b.z != null) meta.z = b.z;
       return '<!-- qn:box ' + JSON.stringify(meta) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
     });

@@ -46,6 +46,7 @@
     selBar.innerHTML = '<button type="button" data-act="delete">Delete</button>';
 
     var boxes = note.boxes;
+    var zPos = {}, zIdx = {}; // each text box's depth and place in the stack (worked out by ink.js)
     if (!Array.isArray(note.ink) || !note.ink.length) note.ink = [window.QNInk.newLayer()];
     var ink = note.ink;
     var editors = {};          // box id -> { el, ed }
@@ -116,7 +117,7 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; return o; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; if (b.z != null) o.z = b.z; return o; })), ink: copyLayers(ink) }; }
     function sameAs(a, b) {
       if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
@@ -137,7 +138,7 @@
       hooks.history(hist.length > 1, false);
     }
     // Text boxes belong to a drawing layer (the bottom one unless placed on another): hidden, locked and faded
-    // with it. (Since 3.18 drawings show above text, so what is drawn later is never hidden behind older text.)
+    // with it. (Since 3.18.2 text and drawings stack by what is in front: see the order in ink.js.)
     function layerOfBox(b) {
       for (var i = 0; i < ink.length; i++) if (ink[i].id === b.l) return ink[i];
       // Text without a layer (or whose layer was deleted) goes on the bottom one, and stays there once there are
@@ -203,6 +204,7 @@
     function mountBox(b) {
       var e = el('div', 'box', stage);
       e.dataset.id = b.id;
+      if (zIdx[b.id] != null) e.style.zIndex = zIdx[b.id];
       var grip = el('div', 'grip', e); grip.title = 'Drag to move'; grip.innerHTML = '<svg viewBox="0 0 10 16" width="10" height="16"><circle cx="2" cy="3" r="1.4"/><circle cx="8" cy="3" r="1.4"/><circle cx="2" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="2" cy="13" r="1.4"/><circle cx="8" cy="13" r="1.4"/></svg>';
       var mount = el('div', 'ed', e);
       el('div', 'resize', e).title = 'Drag to change the width';
@@ -252,6 +254,12 @@
       function lid(b) { var L = layerOfBox(b); return L ? L.id : null; }
       function rect(b) { var e = editors[b.id]; return { x: b.x, y: b.y, w: e ? e.el.offsetWidth : (b.w || 160), h: e ? e.el.offsetHeight : 32 }; }
       return {
+        // What is in front (3.18.2): each box sits just above one drawing item (z), at a depth (zp) kept for when
+        // that item goes; the engine works out the order and gives each box its place in the stack (zIndex).
+        list: function () { return boxes.map(function (b) { return { id: b.id, l: b.l || null, z: b.z, zp: zPos[b.id] }; }); },
+        setAnchor: function (id, z) { var b = byId(id); if (b) b.z = z || ''; },
+        setPos: function (id, pos) { zPos[id] = pos; },
+        setZ: function (id, z) { zIdx[id] = z; var e = editors[id]; if (e) e.el.style.zIndex = z; },
         rect: function (id) { var b = byId(id); return b ? rect(b) : null; },
         at: function (x, y, okL) {
           for (var i = boxes.length - 1; i >= 0; i--) { var b = boxes[i]; if (!usable(b) || okL && !okL(lid(b))) continue; var r = rect(b); if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return b.id; }
@@ -285,7 +293,7 @@
         dup: function (ids, dx, dy) {
           return ids.map(function (id) {
             var b = byId(id); if (!b) return null;
-            var c = { id: 'b' + window.Notes.shortId(), x: b.x + dx, y: b.y + dy, w: b.w, md: b.md };
+            var c = { id: 'b' + window.Notes.shortId(), x: b.x + dx, y: b.y + dy, w: b.w, md: b.md, z: eng.topAnchor() };
             if (b.l) c.l = b.l;
             if (b.r) c.r = b.r;
             if (b.co) c.co = b.co;
@@ -349,6 +357,7 @@
           var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, s.x), y: Math.max(0, s.y - s.fs * 0.2), w: null, md: md };
           if (s.lid && s.lid !== bottomId) b.l = s.lid;
           if (s.r) b.r = s.r;
+          if (s.z != null) b.z = s.z; // where the Text art was in the order
           boxes.push(b);
           var e = mountBox(b); layout();
           var ch = e.ed.chain().selectAll();
@@ -373,6 +382,7 @@
     function addBox(x, y) {
       var w = Math.max(160, Math.min(320, autoWidth() - x));
       var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, x), y: Math.max(0, y), w: w, md: '' };
+      if (eng && eng.topAnchor) b.z = eng.topAnchor(); // new text goes in front
       var al = eng && eng.activeLayer ? eng.activeLayer() : null;
       if (al && al !== ink[0].id) b.l = al; // new text goes on the layer being worked on
       // On a turned page, new text starts straight to the screen; after that it belongs to the page and turns with it.
