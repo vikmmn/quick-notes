@@ -117,6 +117,7 @@
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
       textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
       toNewNote: hooks.toNewNote ? function (d, move) { return hooks.toNewNote(d, move); } : null,
+      copyLink: hooks.copyLink ? function (b) { return hooks.copyLink(b); } : null,
       imageUrl: function (src) { return hooks.imageUrl ? hooks.imageUrl(src) : null; },
       view: function () { // the part of the page on screen, as a box in page coordinates
         var W = host.clientWidth, H = host.clientHeight, pts = [toWorld(0, 0), toWorld(W, 0), toWorld(0, H), toWorld(W, H)];
@@ -945,6 +946,7 @@
       showPoint(b.x + 40, b.y + 40);
     };
     self.focusStart = function () { var f = editors[boxes[0].id]; if (f) f.ed.commands.focus('end'); };
+    self.showRect = function (b) { fitRect(b, false); }; // a part of the page, filling the screen
     self.setPage = function (page) { note.page = page || ''; setPage(note.page); };
     self.destroy = function () {
       flushAll();

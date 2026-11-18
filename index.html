@@ -303,6 +303,16 @@
   .emb-card span { display: flex; flex-direction: column; min-width: 0; }
   .emb-card b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .emb-card small { color: var(--muted); }
+  .emb-note { display: flex; flex-direction: column; }
+  .emb-note .emb-mini { flex: 1; width: 100%; height: auto; min-height: 0; max-height: none; background: var(--paper); }
+  .emb-empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
+  .emb-open { cursor: pointer; }
+  .emb-ico { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--soft, rgba(0,0,0,.06)); font-size: 18px; flex: none; }
+  .ink-locks { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 100004; }
+  .lk-sign { position: absolute; width: 22px; height: 22px; min-height: 0 !important; padding: 0 !important; border-radius: 50%; display: grid; place-items: center;
+    background: var(--accent); color: #fff; border: 2px solid var(--paper); transform-origin: top left; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  #toolQuick hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }
+  .wn-all { display: block; width: 100%; margin-top: 8px; background: transparent !important; border: 0 !important; color: var(--accent); font-weight: 600; }
   .apptip { position: fixed; z-index: 200; max-width: 240px; padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 500 12.5px/1.3 var(--font); pointer-events: none; box-shadow: var(--shadow); }
   #penColPop .swatch { width: 28px; height: 28px; margin: 0; }
   .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: none; }
@@ -598,7 +608,7 @@
     <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Select" aria-label="Select"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Select</span></button>
     <button class="tool" type="button" data-tool="nudge" aria-pressed="false" title="Nudge / Smooth" aria-label="Nudge / Smooth"><svg class="i"><use href="#i-nudge"/></svg><span class="tl">Nudge / Smooth</span></button>
     <button class="tool" type="button" data-tool="fill" aria-pressed="false" title="Fill" aria-label="Fill"><svg class="i"><use href="#i-fill"/></svg><span class="tl">Fill</span></button>
-    <button class="tool" type="button" data-act="image" title="Image" aria-label="Add an image on the page"><svg class="i"><use href="#i-image"/></svg><span class="tl">Image</span></button>
+    <button class="tool" type="button" data-act="image" title="Add: pictures, videos, sounds, PDFs, any file (hold: add the link you copied)" aria-label="Add files or a link"><svg class="i"><use href="#i-image"/></svg><span class="tl">Image</span></button>
     <button class="tool" type="button" data-act="layers" title="Layers" aria-label="Layers"><svg class="i"><use href="#i-layers"/></svg><span class="tl">Layers</span></button>
     </div>
     <div id="penOpts" class="tool-opts"></div>
@@ -638,6 +648,7 @@
   </div>
   <div id="noteMenu" class="hidden" role="menu">
     <button type="button" data-m="image"><svg class="i"><use href="#i-image"/></svg>Add image</button>
+    <button type="button" data-m="link"><svg class="i"><use href="#i-image"/></svg>Copy a link to this note</button>
     <button type="button" data-m="labels"><svg class="i"><use href="#i-label"/></svg>Labels</button>
     <button type="button" data-m="move"><svg class="i"><use href="#i-folder"/></svg>Move to folder</button>
     <button type="button" data-m="copy"><svg class="i"><use href="#i-copy"/></svg>Make a copy</button>

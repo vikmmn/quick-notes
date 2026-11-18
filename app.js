@@ -252,7 +252,7 @@
   }
   // A note with drawings shows a small picture of its page (text where it sits, drawings over it), so it can be
   // recognised while scrolling (3.18; before, the text came first and a little drawing under it).
-  function pagePreview(n) {
+  function pagePreview(n, region) {
     var I = window.QNInk, layers = I.normalize(n.ink), ib = I.boundsOf(layers.filter(function (l) { return l.vis; })), parts = [];
     var bx = (n.boxes || []).filter(function (b) { return b.md && b.md.trim(); }).map(function (b) {
       var w = b.w || 560, per = Math.max(10, w / 8.6), h = 8;
@@ -264,6 +264,7 @@
     if (x0 === Infinity) return '';
     var pad = 12; x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
     var W = x1 - x0, H = y1 - y0; // the whole page; two fingers zoom into it and move it (3.19)
+    if (region) { x0 = region.x; y0 = region.y; W = Math.max(1, region.w); H = Math.max(1, region.h); } // a part of it (a link)
     bx.forEach(function (r) {
       parts.push('<foreignObject x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '"><div xmlns="http://www.w3.org/1999/xhtml" class="mp-box">' +
         LIB.md.render(String(r.b.md).slice(0, 1500).replace(/<\/?(u|mark|span|s|sub|sup)[^>]*>/gi, '')).replace(/<img[^>]*>/g, '') + '</div></foreignObject>');
@@ -272,6 +273,42 @@
       I.svgFor(layers, 'mp' + (++pagePreview.n) + '-', 0, 0, true) + '</svg>';
   }
   pagePreview.n = 0;
+  // ---- Links between notes (3.21): a note, or a part of one, shown live inside another; tap Open to go there ----
+  // The link is plain text (qn://note/<id>#x,y,w,h), so it travels by copy and paste like any link.
+  function noteLinkOf(src) {
+    var m = /^qn:\/\/note\/([^#\s]+)(?:#(-?[\d.]+),(-?[\d.]+),([\d.]+),([\d.]+))?/.exec(src || '');
+    if (!m) return null;
+    return { id: decodeURIComponent(m[1]), r: m[2] != null ? { x: +m[2], y: +m[3], w: +m[4], h: +m[5] } : null };
+  }
+  function noteById(id) { return live().filter(function (x) { return x.id === id; })[0] || null; }
+  function copyNoteLink(n, b) {
+    if (!n) return;
+    var t = 'qn://note/' + encodeURIComponent(n.id) + (b ? '#' + [b.x, b.y, b.w, b.h].map(function (v) { return Math.round(v); }).join(',') : '');
+    var done = function () { toast((b ? 'Link to this part' : 'Link to this note') + ' copied. In another note, hold the Add button to put it there.', null, null, 4000); };
+    S.copiedLink = t;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done); else done();
+  }
+  async function placeNoteLink(t) {
+    var L = noteLinkOf(t), n = L && noteById(L.id);
+    if (!n) { toast('That note isn\'t here (deleted, or not synced yet).'); return; }
+    if (S.cur && n.id === S.cur.id && !L.r) { toast('That is a link to this same note.'); return; }
+    var r = L.r || { w: 520, h: 360 }, k = Math.min(1, 560 / Math.max(r.w, r.h * 1.2));
+    S.canvas.placeMedia({ src: t, mk: 'note', ttl: n.title || 'Untitled' }, Math.max(220, r.w * k), Math.max(140, r.h * k + 34));
+  }
+  window.QNInk.noteView = function (src) {
+    var L = noteLinkOf(src), n = L && noteById(L.id);
+    if (!n) return '<div class="emb-bar"><span>A note that isn\'t here (deleted, or not synced yet)</span></div>';
+    var pic = pagePreview(n, L.r) || '<div class="emb-empty">' + esc(n.title || 'Untitled') + '</div>';
+    return '<div class="emb-bar"><span>' + esc(n.title || 'Untitled') + (L.r ? ' · part' : '') + '</span><a class="emb-live emb-open" data-qn="' + esc(src) + '">Open ↗</a></div>' +
+      pic.replace('class="mini-page"', 'class="mini-page emb-mini"');
+  };
+  document.addEventListener('click', function (e) { // Open ↗ on a linked note: go there, to that part
+    var a = e.target.closest && e.target.closest('.emb-open'); if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    var L = noteLinkOf(a.dataset.qn), n = L && noteById(L.id); if (!n) return;
+    openNote(n);
+    if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
+  }, true);
   // Two fingers on a page picture: pinch to zoom, move to look around (one finger still scrolls the list).
   (function () {
     var pz = null, swallowTap = 0;
@@ -887,6 +924,7 @@
   }
   var canvasHooks = {
     toNewNote: toNewNote,
+    copyLink: function (b) { copyNoteLink(S.cur, b); },
     change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); if (kind === 'ink' || kind === 'restore') renderLayers(); },
     notice: function (t) { toast(t, null, null, 3500); },
     view: function (v) {
@@ -1282,6 +1320,9 @@
     nudge: ['nudge', 'm', [['nudge', 'Nudge'], ['smooth', 'Smooth']]],
     fill: ['fill', 'm', [['lasso', 'Shape'], ['tap', 'Tap area']]]
   };
+  var QUICK2 = { // a second choice under the first (3.21): what a new lasso does with what is already picked
+    lasso: ['lasso', 'op', [['new', 'New', 'A new selection'], ['add', '+ Add', 'Add to the selection'], ['sub', '− Remove', 'Take away from the selection']]]
+  };
   function updatePenQuick() {
     var on = S.view === 'note' && !!S.cur && !!PREF.showTools, t = PREF.tool;
     var q = $('penQuick'), sized = on && (t === 'pen' || t === 'text');
@@ -1291,6 +1332,8 @@
     if (Q) {
       var cur = INKOPT[Q[0]][Q[1]];
       tq.innerHTML = Q[2].map(function (v) { return '<button type="button" data-q="' + v[0] + '" aria-pressed="' + (cur === v[0]) + '">' + v[1] + '</button>'; }).join('');
+      var Q2 = QUICK2[t];
+      if (Q2) { var c2 = INKOPT[Q2[0]][Q2[1]] || Q2[2][0][0]; tq.innerHTML += '<hr>' + Q2[2].map(function (v) { return '<button type="button" data-q2="' + v[0] + '" aria-label="' + v[2] + '" aria-pressed="' + (c2 === v[0]) + '">' + v[1] + '</button>'; }).join(''); }
     }
     if (!sized) return;
     var inp = q.querySelector('input'), dot = q.querySelector('.pq-dot');
@@ -1356,6 +1399,8 @@
   });
   $('toolQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); if (e.target.closest('button')) e.preventDefault(); });
   $('toolQuick').addEventListener('click', function (e) {
+    var b2 = e.target.closest('[data-q2]'), Q2 = QUICK2[PREF.tool];
+    if (b2 && Q2) { INKOPT[Q2[0]][Q2[1]] = b2.dataset.q2; applyInk(); savePref(); updatePenQuick(); return; }
     var b = e.target.closest('[data-q]'), Q = QUICK[PREF.tool]; if (!b || !Q) return;
     INKOPT[Q[0]][Q[1]] = b.dataset.q; applyInk(); savePref();
     if (!$('penOpts').classList.contains('hidden')) setTool(PREF.tool); else updatePenQuick();
@@ -1425,7 +1470,7 @@
       return setTool(PREF.tool);
     }
     if (b.dataset.act === 'layers') return toggleLayers();
-    if (b.dataset.act === 'image') { addToPage(); return; } // a picture, video, sound, PDF or link, onto the page
+    if (b.dataset.act === 'image') { if (addHeld) { addHeld = false; return; } addToPage(); return; } // any files onto the page
     if (b.dataset.snap != null) { INKOPT.pen.snap = INKOPT.pen.snap === false; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.cs != null) { switchPen(function () { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; }); return setTool('pen'); }
     if (b.dataset.big != null) { PREF.bigSize = SIZE_MAX() <= 24; if (!PREF.bigSize && INKOPT.pen.s > 24) INKOPT.pen.s = 24; applyInk(); savePref(); return setTool('pen'); }
@@ -1825,9 +1870,10 @@
       (hasCaret ? '<button type="button" data-act="caret">At the cursor</button>' : '') +
       '<button type="button" data-act="beside">Beside the text (side by side)</button>' +
       '<button type="button" data-act="below">Below everything</button>' +
-      '<button type="button" data-act="more"><b>A video, sound, PDF or link</b> on the page</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
+      '<button type="button" data-act="more"><b>Any files</b> on the page (videos, sounds, PDFs…)</button><button type="button" data-act="link"><b>A link</b></button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
     function (act) {
-      if (act === 'more') { addToPage(); return; }
+      if (act === 'more') { closeSheet(); addToPage(); return; }
+      if (act === 'link') { pasteLink(); return; }
       if (act !== 'caret' && act !== 'beside' && act !== 'below' && act !== 'page') return;
       imgWhere = act; closeSheet();
       imgInput.value = ''; imgInput.click();
@@ -1870,57 +1916,77 @@
     return name;
   }
   var mediaInput = document.createElement('input');
-  mediaInput.type = 'file'; mediaInput.accept = 'image/*,video/*,audio/*,application/pdf'; mediaInput.className = 'hidden';
+  mediaInput.type = 'file'; mediaInput.multiple = true; mediaInput.className = 'hidden'; // any files, several at once (3.21)
   document.body.appendChild(mediaInput);
-  function addToPage() {
+  // The Add button: straight to choosing files; the app works out what each one is. A link: hold the button (or the
+  // ••• menu), and the link copied last goes on the page.
+  // Holding the Add button: the link copied last goes on the page.
+  var addHeld = false, addTimer = 0;
+  document.addEventListener('pointerdown', function (e) {
+    var b = e.target.closest && e.target.closest('#tools [data-act="image"]'); if (!b) return;
+    addHeld = false; clearTimeout(addTimer);
+    addTimer = setTimeout(function () { addHeld = true; if (navigator.vibrate) navigator.vibrate(15); pasteLink(); }, 550);
+  }, true);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) { document.addEventListener(t, function () { clearTimeout(addTimer); }, true); });
+  function addToPage() { if (!S.canvas) return; mediaInput.value = ''; mediaInput.click(); }
+  async function pasteLink() {
     if (!S.canvas) return;
-    openSheet('<h2>Add to the page</h2><div class="pick">' +
-      '<button type="button" data-act="file"><b>A file</b>: picture, video, sound or PDF (saved once in your Drive, in Attachments)</button>' +
-      '<button type="button" data-act="link"><b>A link</b> to a web page</button></div><div class="row"><button type="button" data-act="close">Cancel</button></div>',
-    function (act) {
-      if (act === 'file') { closeSheet(); mediaInput.value = ''; mediaInput.click(); }
-      if (act === 'link') linkSheet();
-    });
+    var t = '';
+    try { t = (await navigator.clipboard.readText()) || ''; } catch (e) {}
+    t = t.trim() || S.copiedLink || ''; // (the clipboard may be out of reach; a link copied in the app still works)
+    if (/^qn:\/\//.test(t)) return placeNoteLink(t);
+    if (!/^https?:\/\/\S+$/i.test(t) && !/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(t)) return linkSheet(t);
+    if (!/^https?:/i.test(t)) t = 'https://' + t;
+    S.canvas.placeMedia({ src: t, mk: 'link' }, 360, 84);
+    toast('Link added. Select it to show the page itself in a window.', null, null, 3000);
   }
-  function linkSheet() {
-    openSheet('<h2>A link</h2><form><label>Web address<input name="u" type="text" inputmode="url" autocapitalize="off" placeholder="https://…" autofocus required></label>' +
-      '<label>Name (optional)<input name="t" placeholder="Shown on the card"></label><p class="err"></p>' +
-      '<div class="row"><button type="button" data-act="close">Cancel</button><button type="submit" name="m" value="web">As a window</button><button type="submit" name="m" value="link" class="primary">As a card</button></div></form>' +
-      '<p class="where">A window shows the page itself; some sites (Google, GitHub and others) don\'t allow that, and then only the card works. Tap Open ↗ on it to see the page.</p>',
+  function linkSheet(pre) {
+    openSheet('<form><h2>Add a link</h2><input name="u" type="text" inputmode="url" autocapitalize="off" placeholder="https://…" autofocus required value="' + esc(pre && pre.length < 400 ? pre : '') + '">' +
+      '<p class="err"></p><div class="row"><button type="button" data-act="close">Cancel</button><button type="submit" class="primary">Add</button></div></form>',
     null, function (e) {
-      var fm = e.target, u = String(fm.u.value || '').trim(), mk = (e.submitter && e.submitter.value) || 'link';
+      var u = String(e.target.u.value || '').trim();
+      if (/^qn:\/\//.test(u)) { closeSheet(); return placeNoteLink(u); }
       if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
       try { new URL(u); } catch (er) { return sheetError('That doesn\'t look like a web address.'); }
-      closeSheet();
-      S.canvas.placeMedia({ src: u, mk: mk, ttl: String(fm.t.value || '').trim() }, mk === 'web' ? 640 : 360, mk === 'web' ? 440 : 84);
+      closeSheet(); S.canvas.placeMedia({ src: u, mk: 'link' }, 360, 84);
     });
   }
   mediaInput.onchange = async function () {
-    var f = mediaInput.files && mediaInput.files[0];
-    if (!f || !S.canvas) return;
-    if (/^image\//.test(f.type)) { imgWhere = 'page'; imgInput.onchange.call({ files: [f] }, f); return; }
+    var files = Array.prototype.slice.call(mediaInput.files || []);
+    if (!files.length || !S.canvas) return;
     if (!navigator.onLine || (Drive.isOffline && Drive.isOffline())) { toast('Files can be added while online (they are saved in Drive).'); return; }
     if (!Drive.signedIn()) { toast('Sign in to Google first (tap the sync button at the top).'); return; }
-    var ext = (f.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5), ttl = f.name.replace(/\.[^.]+$/, '');
-    try {
-      if (f.type === 'application/pdf' || ext === 'pdf') return await addPdf(f, ttl);
-      toast('Saving ' + f.name + ' in Drive…', null, null, 600000);
-      var name = await saveMedia(f, ext), src = 'Attachments/' + encodeURIComponent(name);
-      if (/^video\//.test(f.type)) {
-        var dims = await new Promise(function (res) { var v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = function () { res([v.videoWidth || 640, v.videoHeight || 360]); }; v.onerror = function () { res([640, 360]); }; v.src = imgCache[name]; });
-        S.canvas.placeMedia({ src: src, mk: 'video', ttl: ttl }, dims[0], dims[1]);
-      } else S.canvas.placeMedia({ src: src, mk: 'audio', ttl: ttl }, 360, 96);
-      hideToast();
-    } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : 'That could not be added: ' + (e.message || e)); }
+    var dy = 0, n = 0;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i], ext = (f.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5), ttl = f.name.replace(/\.[^.]+$/, '');
+      toast((files.length > 1 ? (i + 1) + ' of ' + files.length + ': ' : '') + 'saving ' + f.name + ' in Drive…', null, null, 600000);
+      try {
+        if (f.type === 'application/pdf' || ext === 'pdf') { dy += await addPdf(f, ttl, dy); n++; continue; }
+        if (/^image\//.test(f.type)) {
+          var blob = await shrinkImage(f), iext = blob.type === 'image/png' ? 'png' : blob.type === 'image/gif' ? 'gif' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+          var iname = await saveMedia(blob, iext), dim = [800, 600];
+          try { var bmp = await createImageBitmap(blob); dim = [bmp.width, bmp.height]; } catch (e) {}
+          dy += S.canvas.placeMedia({ src: 'Attachments/' + encodeURIComponent(iname) }, dim[0], dim[1], dy) + 24; n++; continue;
+        }
+        var name = await saveMedia(f, ext), src = 'Attachments/' + encodeURIComponent(name);
+        if (/^video\//.test(f.type)) {
+          var dims = await new Promise(function (res) { var v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = function () { res([v.videoWidth || 640, v.videoHeight || 360]); }; v.onerror = function () { res([640, 360]); }; v.src = imgCache[name]; });
+          dy += S.canvas.placeMedia({ src: src, mk: 'video', ttl: ttl }, dims[0], dims[1], dy) + 24;
+        } else if (/^audio\//.test(f.type)) dy += S.canvas.placeMedia({ src: src, mk: 'audio', ttl: ttl }, 360, 96, dy) + 24;
+        else dy += S.canvas.placeMedia({ src: src, mk: 'file', ttl: f.name }, 320, 72, dy) + 24; // any other file: a card that opens it
+        n++;
+      } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : f.name + ' could not be added: ' + (e.message || e)); return; }
+    }
+    hideToast();
   };
   // A PDF: kept once as it is, and each page shown on the page as a sheet to write on (one under another).
   var PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/';
-  async function addPdf(f, ttl) {
+  async function addPdf(f, ttl, dy0) {
     toast('Opening the PDF…', null, null, 600000);
     var lib = await import(PDFJS + 'pdf.min.mjs');
     lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
     var pdfName = await saveMedia(f, 'pdf'), doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
-    var n = Math.min(doc.numPages, 40), dy = 0;
+    var n = Math.min(doc.numPages, 40), dy = dy0 || 0;
     for (var i = 1; i <= n; i++) {
       toast('Page ' + i + ' of ' + n + '…', null, null, 600000);
       var pg = await doc.getPage(i), vp0 = pg.getViewport({ scale: 1 }), sc = Math.min(2.2, 1400 / vp0.width), vp = pg.getViewport({ scale: sc });
@@ -1932,8 +1998,8 @@
       var h = S.canvas.placeMedia({ src: 'Attachments/' + encodeURIComponent(name), mk: 'pdf', pg: i, of: 'Attachments/' + encodeURIComponent(pdfName), ttl: ttl }, vp0.width, vp0.height, dy);
       dy += h + 24;
     }
-    hideToast();
     if (doc.numPages > n) toast('The first ' + n + ' pages are on the page (the PDF has ' + doc.numPages + ').');
+    return dy - (dy0 || 0);
   }
   async function shrinkImage(file) {
     if (/gif|svg/.test(file.type) || !window.createImageBitmap) return file;
@@ -1981,6 +2047,7 @@
     closeMenu();
     if (b.dataset.m === 'labels') labelsSheet(n);
     if (b.dataset.m === 'image') pickImage();
+    if (b.dataset.m === 'link' && S.cur) copyNoteLink(S.cur, null);
     if (b.dataset.m === 'move') pickFolder('Move note to…', folderOf(n), function (target) {
       if (target !== folderOf(n)) {
         if (n.fileId && !n.moveFrom) n.moveFrom = n.folderId;
@@ -2205,6 +2272,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Links between notes, locks, and adding made simple', d: 'The Add button opens your files straight away: pick several of any kind. Hold it to add the link you copied. Select a part of a note and tap the link symbol, then hold Add in another note: that part shows there, live, with Open to jump to it (••• › Copy a link to this note does the whole note). Select › Lock: can\'t be erased, or can\'t be selected; tap the little sign to unlock. The lasso corner now has New, + Add and − Remove. Feedback notes can be dragged by their corner, and show in the picture exactly as typed.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="136" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><path d="M104 70h32" stroke="' + A + '" stroke-width="3" stroke-dasharray="5 4"/><circle cx="196" cy="34" r="10" fill="' + A + '"/>') },
     { t: 'Videos, sounds, PDFs and links on the page', d: 'The picture button in the tools (and Add image in the ••• menu) now adds any file: a picture, a video, a sound or a PDF. A PDF\'s pages go on the page one under another, ready to write on. Every file is saved once in Attachments in your Drive, named by what is in it, so adding the same file again (in this note or another) reuses it. Links go on as a card or as a window showing the page; switch between them from Select. With the Hand, videos play and links open.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="36" y="30" width="80" height="54" rx="6" fill="' + INKC + '"/><path d="M68 46l18 11-18 11z" fill="' + SURF + '"/><rect x="128" y="30" width="76" height="30" rx="6" fill="' + SOFT + '" stroke="' + A + '"/><rect x="128" y="68" width="40" height="46" rx="3" fill="#fff" stroke="' + RULE + '"/><rect x="172" y="68" width="40" height="46" rx="3" fill="#fff" stroke="' + RULE + '"/>') },
     { t: 'Page backgrounds, clean curves, names on hover', d: 'In a note, the ••• menu now has Page: plain, grid, dots or lines, on the theme or a paper colour (white, cream, kraft, grey, slate, black). Holding the pen at the end of an arc now makes a clean arc, and a wave a smooth curve, instead of straight pieces. Hover the pen over any tool or option to see its name. In the notes list, pinch a page picture with two fingers to zoom in and move around; double-tap to put it back.',
@@ -2281,20 +2350,38 @@
     { t: 'Back works like an app', d: 'The back button steps back through the folders and labels you visited. On the first screen, press back twice to leave.',
       a: art('<rect x="70" y="14" width="100" height="112" rx="16" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M128 56l-18 14 18 14" fill="none" stroke="' + A + '" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><rect x="88" y="100" width="64" height="12" rx="6" fill="' + MUT + '" opacity=".35"/>') }
   ];
+  // The guide: every update so far, as a page of cards to look around (newest first). Nothing is saved unless you write in it.
+  function openGuide() {
+    var n = newDraft('Serendipity: all updates and how to use it', '');
+    n.labels = []; n.page = 'dots';
+    var COLS = 3, CW = 560, GAP = 60, colY = [0, 0, 0];
+    n.boxes = [{ id: 'b0', x: 0, y: 0, w: CW * COLS + GAP * (COLS - 1), md: '## All updates, newest first\n\nPinch to zoom out and see them all. Short moving pictures of each tool are coming here next.' }];
+    colY = [170, 170, 170];
+    SLIDES.forEach(function (sl, k) {
+      var c = k % COLS, md = '### ' + sl.t + '\n\n' + sl.d, h = 90 + Math.ceil(sl.d.length / 62) * 26;
+      n.boxes.push({ id: 'b' + (k + 1), x: c * (CW + GAP), y: colY[c], w: CW, md: md });
+      colY[c] += h + GAP;
+    });
+    n.body = n.boxes.map(function (b) { return b.md; }).join('\n\n');
+    openNote(n, true);
+  }
   function whatsNew(force) {
     var seen = PREF.seenVersion;
     if (!force && seen === CFG.VERSION) return;
     var first = !seen && !Drive.signedInBefore() && !live().length;
     var i = 0, el = $('whatsNew');
+    // Only the last three updates (3.21); everything else is in the guide, one tap away.
+    var SL = first ? SLIDES : SLIDES.slice(0, 3);
     function draw(dir) {
-      var sl = SLIDES[i];
+      var sl = SL[i], SLIDES = SL;
       el.innerHTML = '<div class="wn-card" role="dialog" aria-modal="true" aria-label="What’s new">' +
         '<div class="wn-top">' + (i === 0 ? '<span class="wn-kicker">' + (first ? 'Welcome to Serendipity' : 'What’s new in ' + esc(CFG.VERSION)) + '</span>' : '<span class="wn-kicker">' + (i + 1) + ' of ' + SLIDES.length + '</span>') +
         '<button type="button" class="wn-skip" data-wn="done">Skip</button></div>' +
         '<div class="wn-slide ' + (dir || '') + '">' + sl.a + '<h2>' + esc(sl.t) + '</h2><p>' + esc(sl.d) + '</p></div>' +
         '<div class="wn-foot"><div class="wn-dots">' + SLIDES.map(function (x, k) { return '<i' + (k === i ? ' class="on"' : '') + '></i>'; }).join('') + '</div>' +
         (i > 0 ? '<button type="button" data-wn="prev">Back</button>' : '') +
-        '<button type="button" class="primary" data-wn="' + (i === SLIDES.length - 1 ? 'done' : 'next') + '">' + (i === SLIDES.length - 1 ? 'Start writing' : 'Next') + '</button></div></div>';
+        '<button type="button" class="primary" data-wn="' + (i === SLIDES.length - 1 ? 'done' : 'next') + '">' + (i === SLIDES.length - 1 ? 'Start writing' : 'Next') + '</button></div>' +
+        '<button type="button" class="wn-all" data-wn="guide">All updates and how to use the app ›</button></div>';
     }
     function close() { el.classList.add('hidden'); el.innerHTML = ''; PREF.seenVersion = CFG.VERSION; savePref(); }
     S.closeWhatsNew = close; S.sheetState = history.state;
@@ -2302,14 +2389,15 @@
       var b = e.target.closest('[data-wn]');
       if (!b) { if (e.target === el) close(); return; }
       if (b.dataset.wn === 'done') return close();
-      if (b.dataset.wn === 'next' && i < SLIDES.length - 1) { i++; draw('from-right'); }
+      if (b.dataset.wn === 'guide') { close(); return openGuide(); }
+      if (b.dataset.wn === 'next' && i < SL.length - 1) { i++; draw('from-right'); }
       if (b.dataset.wn === 'prev' && i > 0) { i--; draw('from-left'); }
     };
     var sx = null;
     el.onpointerdown = function (e) { sx = e.clientX; };
     el.onpointerup = function (e) {
       if (sx == null) return; var dx = e.clientX - sx; sx = null;
-      if (dx < -50 && i < SLIDES.length - 1) { i++; draw('from-right'); }
+      if (dx < -50 && i < SL.length - 1) { i++; draw('from-right'); }
       if (dx > 50 && i > 0) { i--; draw('from-left'); }
     };
     draw(); el.classList.remove('hidden');
