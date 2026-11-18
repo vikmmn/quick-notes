@@ -38,6 +38,21 @@
     var offs = [];
     function on(t, type, fn, opt) { t.addEventListener(type, fn, opt); offs.push(function () { t.removeEventListener(type, fn, opt); }); }
     var stage = el('div', 'stage', host);
+    // The page behind everything (3.19): plain, grid, dots or lines, on the theme's paper or a paper colour.
+    var pageBg = el('div', 'page-bg', stage);
+    var PAPERS = { white: ['#ffffff', 0], cream: ['#f6efdc', 0], kraft: ['#c9a77c', 0], grey: ['#d9d9d6', 0], slate: ['#2f3640', 1], black: ['#111113', 1] };
+    function setPage(page) {
+      var t = String(page || '').split(/\s+/), style = t.filter(function (x) { return /^(grid|dots|lines)$/.test(x); })[0] || '', paper = t.filter(function (x) { return PAPERS[x]; })[0] || '';
+      var P = PAPERS[paper];
+      stage.classList.toggle('on-paper', !!P);
+      stage.style.setProperty('--paper-c', P ? P[0] : 'var(--paper)');
+      // Ink and text that follow the theme ('ink') stay readable on the paper chosen.
+      if (P) { stage.style.setProperty('--ink', P[1] ? '#f1ece3' : '#1b1b1f'); stage.style.setProperty('--line-c', P[1] ? 'rgba(255,255,255,.13)' : 'rgba(0,0,0,.13)'); }
+      else { stage.style.removeProperty('--ink'); stage.style.removeProperty('--line-c'); }
+      pageBg.dataset.style = style; pageBg.style.setProperty('--qn-m', M + 'px');
+      pageBg.style.display = style || P ? '' : 'none';
+    }
+    setPage(note.page);
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'ink-layer');
     stage.appendChild(svg);
@@ -919,6 +934,7 @@
       showPoint(b.x + 40, b.y + 40);
     };
     self.focusStart = function () { var f = editors[boxes[0].id]; if (f) f.ed.commands.focus('end'); };
+    self.setPage = function (page) { note.page = page || ''; setPage(note.page); };
     self.destroy = function () {
       flushAll();
       Object.keys(editors).forEach(function (id) { editors[id].ed.destroy(); });

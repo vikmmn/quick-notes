@@ -27,7 +27,7 @@
   //   {"groups":[{"id":"g1","x":10,"y":200,"strokes":[{"c":"#222","s":3,"p":[[0,0,0.5],…]}]}]}
   //   -->
   // Obsidian and other Markdown apps hide the markers and show the text in reading order.
-  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1, order: 1 };
+  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1, order: 1, page: 1 };
   var BOX = /^<!-- qn:box (\{.*\}) -->[ \t]*$/;
 
   function parseLabels(v) {
@@ -122,6 +122,7 @@
       created: (fm.created || '').trim() || (file && file.createdTime) || new Date().toISOString(),
       updated: (fm.updated || '').trim() || fileTime || new Date().toISOString(),
       source: (fm.source || '').trim() || 'notes',
+      page: (fm.page || '').trim(), // the page behind everything: 'grid', 'dots', 'lines' and a paper colour, e.g. 'grid cream'
       extra: extra,
       fileId: file ? file.id : null,
       md5: file ? file.md5Checksum : null,
@@ -146,6 +147,7 @@
     var out = ['---', 'id: ' + n.id, 'created: ' + n.created, 'updated: ' + n.updated,
       'labels: ' + JSON.stringify(n.labels || []), 'pinned: ' + (n.pinned ? 'true' : 'false'), 'source: ' + (n.source || 'notes')]
       .concat(n.order != null ? ['order: ' + n.order] : [])
+      .concat(n.page ? ['page: ' + n.page] : [])
       .concat(n.extra || [], ['---', '']);
     if (n.title) out.push('# ' + n.title.replace(/\n/g, ' '), '');
     out.push(canvasText(n));

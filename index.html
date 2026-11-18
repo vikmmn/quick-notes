@@ -130,7 +130,7 @@
   img.qn-img.pending { min-height: 48px; min-width: 80px; background: var(--accent-soft); }
   .card .prev img.qn-img { max-height: 220px; object-fit: cover; }
   .card .ink-thumb { display: block; max-width: 100%; height: auto; margin-top: 6px; }
-  .card .mini-page { display: block; width: 100%; height: auto; max-height: 320px; margin-top: 4px; border-radius: 8px; background: var(--paper); }
+  .card .mini-page { display: block; width: 100%; height: auto; max-height: 320px; touch-action: pan-y; margin-top: 4px; border-radius: 8px; background: var(--paper); }
   .mini-page .mp-box { font: 16px/1.5 var(--font); color: var(--ink); overflow: hidden; height: 100%; }
   .mini-page .mp-box p, .mini-page .mp-box ul, .mini-page .mp-box ol, .mini-page .mp-box h1, .mini-page .mp-box h2, .mini-page .mp-box h3 { margin: 0 0 6px; }
   .card .foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }
@@ -276,6 +276,19 @@
   .inkbar .ib { width: 38px; height: 38px; min-height: 0 !important; padding: 0 !important; display: inline-grid; place-items: center; border-radius: 10px; }
   .inkbar .bt { font: 600 11.5px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 6px 0 4px; width: 100%; }
   #penColPop { max-width: 230px; }
+  /* The page behind everything (3.19). It reaches far beyond the page in every direction; the grid lines up with the page. */
+  .page-bg { position: absolute; left: -60000px; top: -60000px; width: 120000px; height: 120000px; pointer-events: none; z-index: 0;
+    background-color: var(--paper-c, var(--paper)); --g: 32px; background-position: calc(60000px + var(--qn-m, 0px)) calc(60000px + var(--qn-m, 0px)); }
+  .page-bg[data-style="grid"] { background-image: linear-gradient(var(--line-c, color-mix(in srgb, var(--ink) 12%, transparent)) 1px, transparent 1px), linear-gradient(90deg, var(--line-c, color-mix(in srgb, var(--ink) 12%, transparent)) 1px, transparent 1px); background-size: var(--g) var(--g); }
+  .page-bg[data-style="dots"] { background-image: radial-gradient(circle, var(--line-c, color-mix(in srgb, var(--ink) 22%, transparent)) 1.4px, transparent 1.6px); background-size: var(--g) var(--g); }
+  .page-bg[data-style="lines"] { background-image: linear-gradient(transparent calc(var(--g) - 1px), var(--line-c, color-mix(in srgb, var(--ink) 14%, transparent)) 1px); background-size: 100% var(--g); }
+  .stage.on-paper .box, .stage.on-paper .ProseMirror { color: var(--ink); }
+  #noteMenu .pagerow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; }
+  #noteMenu .pagerow > span { width: 100%; font: 500 12px/1 var(--font); color: var(--muted); }
+  #noteMenu .pagerow button { min-height: 32px; padding: 4px 10px; border-radius: 10px; }
+  #noteMenu .pagerow button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+  #noteMenu .pagerow .pp { width: 28px; height: 28px; padding: 0; border: 1px solid var(--rule); }
+  .apptip { position: fixed; z-index: 200; max-width: 240px; padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 500 12.5px/1.3 var(--font); pointer-events: none; box-shadow: var(--shadow); }
   #penColPop .swatch { width: 28px; height: 28px; margin: 0; }
   .box { position: absolute; min-height: 32px; border-radius: 6px; touch-action: none; }
   .box.focused { box-shadow: 0 0 0 1px var(--rule); }
@@ -614,6 +627,15 @@
     <button type="button" data-m="move"><svg class="i"><use href="#i-folder"/></svg>Move to folder</button>
     <button type="button" data-m="copy"><svg class="i"><use href="#i-copy"/></svg>Make a copy</button>
     <button type="button" data-m="history"><svg class="i"><use href="#i-history"/></svg>Version history</button>
+    <div class="pagerow" id="pageRow"><span>Page</span>
+      <button type="button" data-pg="" aria-label="Plain page">Plain</button><button type="button" data-pg="grid" aria-label="Grid">#</button>
+      <button type="button" data-pg="dots" aria-label="Dots">∷</button><button type="button" data-pg="lines" aria-label="Lines">≡</button>
+      <span>Paper</span>
+      <button type="button" class="pp" data-pp="" aria-label="Theme paper" style="background:var(--paper)"></button><button type="button" class="pp" data-pp="white" aria-label="White paper" style="background:#ffffff"></button>
+      <button type="button" class="pp" data-pp="cream" aria-label="Cream paper" style="background:#f6efdc"></button><button type="button" class="pp" data-pp="kraft" aria-label="Kraft paper" style="background:#c9a77c"></button>
+      <button type="button" class="pp" data-pp="grey" aria-label="Grey paper" style="background:#d9d9d6"></button><button type="button" class="pp" data-pp="slate" aria-label="Slate paper" style="background:#2f3640"></button>
+      <button type="button" class="pp" data-pp="black" aria-label="Black paper" style="background:#111113"></button>
+    </div>
     <div class="space"><span>Add space</span>
       <button type="button" data-space="left" aria-label="Add space on the left">←</button>
       <button type="button" data-space="up" aria-label="Add space at the top">↑</button>

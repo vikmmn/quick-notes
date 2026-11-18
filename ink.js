@@ -555,6 +555,23 @@
     out.push(poly[poly.length - 1].slice(0, 2));
     return out;
   }
+  function fitCircle(pts) { // the circle closest to the points (least squares)
+    var n = pts.length, mx = 0, my = 0; pts.forEach(function (q) { mx += q[0]; my += q[1]; }); mx /= n; my /= n;
+    var suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+    pts.forEach(function (q) { var u = q[0] - mx, v = q[1] - my; suu += u * u; svv += v * v; suv += u * v; suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u; });
+    var det = suu * svv - suv * suv; if (Math.abs(det) < 1e-9) return null;
+    var b1 = (suuu + suvv) / 2, b2 = (svvv + svuu) / 2, uc = (b1 * svv - b2 * suv) / det, vc = (suu * b2 - suv * b1) / det;
+    return { x: mx + uc, y: my + vc, r: Math.sqrt(uc * uc + vc * vc + (suu + svv) / n) };
+  }
+  function smoothCurve(pts, step) { // even spacing, then gently averaged; the ends stay where they were
+    var A = along(pts.map(function (q) { return [q[0], q[1], 0.5]; })), n = Math.max(8, Math.round(A.len / Math.max(step, A.len / 120))), out = [];
+    for (var i = 0; i <= n; i++) { var q = A.at(A.len * i / n); out.push([q[0], q[1]]); }
+    for (var pass = 0; pass < 6; pass++) {
+      var nx = out.map(function (q, j) { if (!j || j === out.length - 1) return q; return [(out[j - 1][0] + 2 * q[0] + out[j + 1][0]) / 4, (out[j - 1][1] + 2 * q[1] + out[j + 1][1]) / 4]; });
+      out = nx;
+    }
+    return out;
+  }
   function recognize(raw) {
     var pts = raw.map(function (q) { return [q[0], q[1]]; });
     if (pts.length < 4) return null;
@@ -624,10 +641,36 @@
       }
       return null;
     }
-    // Open: a few straight sides (a corner, a zigzag) become exact straight lines.
+    // Open. An arc (part of a circle): a clean arc, as it was drawn (before 3.19 it became straight pieces).
+    var arc = fitCircle(pts);
+    if (arc && arc.r < 4 * D) {
+      var ae = 0, am = 0; pts.forEach(function (q) { var e = Math.abs(Math.hypot(q[0] - arc.x, q[1] - arc.y) - arc.r) / arc.r; ae += e; am = Math.max(am, e); });
+      ae /= pts.length;
+      if (ae < 0.045 && am < 0.14) {
+        var tA = Math.atan2(A[1] - arc.y, A[0] - arc.x), sweep = 0, prev = tA;
+        pts.forEach(function (q) { var t2 = Math.atan2(q[1] - arc.y, q[0] - arc.x), dt = t2 - prev; while (dt > Math.PI) dt -= 2 * Math.PI; while (dt < -Math.PI) dt += 2 * Math.PI; sweep += dt; prev = t2; });
+        if (Math.abs(sweep) > 0.5) {
+          var na = Math.max(12, Math.round(Math.abs(sweep) * arc.r / step)), ap = [];
+          for (var ai = 0; ai <= na; ai++) { var ta = tA + sweep * ai / na; ap.push([arc.x + arc.r * Math.cos(ta), arc.y + arc.r * Math.sin(ta)]); }
+          return { name: 'arc', pts: ap, closed: false, c: [arc.x, arc.y] };
+        }
+      }
+    }
+    // A few straight sides (a corner, a zigzag) become exact straight lines, but only when the sides really are straight.
     var bends = simplify(pts, 0.07 * D);
-    if (bends.length >= 3 && bends.length <= 6) return { name: 'lines', pts: dense(bends, step), closed: false, c: c };
-    return null;
+    if (bends.length >= 3 && bends.length <= 6) {
+      // Real corners: nearly all of the turning happens right at the bends, the rest of the line runs straight.
+      var EV = along(smoothCurve(pts, step).map(function (q) { return [q[0], q[1], 0.5]; })), ns = 60, dirs = [], near = 0, tot = 0, win = EV.len * 0.06;
+      for (var si = 0; si <= ns; si++) { var g = EV.at(EV.len * si / ns); dirs.push([g[0], g[1], Math.atan2(g[3], g[2])]); }
+      for (var di = 1; di < dirs.length; di++) {
+        var dt2 = dirs[di][2] - dirs[di - 1][2]; while (dt2 > Math.PI) dt2 -= 2 * Math.PI; while (dt2 < -Math.PI) dt2 += 2 * Math.PI; dt2 = Math.abs(dt2);
+        tot += dt2;
+        if (bends.slice(1, -1).some(function (bq) { return Math.hypot(bq[0] - dirs[di][0], bq[1] - dirs[di][1]) < win; })) near += dt2;
+      }
+      if (tot > 0 && near / tot > 0.65) return { name: 'lines', pts: dense(bends, step), closed: false, c: c };
+    }
+    // Any other curve (a wave, an S): the same curve, made smooth and even.
+    return { name: 'curve', pts: smoothCurve(pts, step), closed: false, c: c };
   }
 
   // ---------- Distort: the map that takes one four-cornered shape onto another (perspective, skew, shear) ----------
