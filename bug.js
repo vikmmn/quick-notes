@@ -183,7 +183,7 @@
     view.innerHTML = '<canvas></canvas>' +
       '<div class="bt"><button type="button" data-t="pen" aria-pressed="true">Pen</button><button type="button" data-t="box" aria-pressed="false">Box</button><button type="button" data-t="text" aria-pressed="false">Text</button><b></b>' +
       COLORS.map(function (c, i) { return '<button type="button" class="c" data-c="' + c + '" style="background:' + c + '" aria-pressed="' + !i + '" aria-label="Colour"></button>'; }).join('') + '<b></b>' +
-      SIZES.map(function (s, i) { return '<button type="button" class="sz" data-s="' + s + '" aria-pressed="' + (i === 1) + '" aria-label="Pen size"><i style="width:' + (s + 3) + 'px;height:' + (s + 3) + 'px"></i></button>'; }).join('') + '<b></b>' +
+      SIZES.map(function (s, i) { return '<button type="button" class="sz" data-s="' + s + '" aria-pressed="' + (i === 0) + '" aria-label="Pen size"><i style="width:' + (s + 3) + 'px;height:' + (s + 3) + 'px"></i></button>'; }).join('') + '<b></b>' +
       '<button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button><button type="button" data-b="cancel">Cancel</button></div>' +
       '<div class="wait"><span>Taking a picture of the screen…</span></div>' +
       '<div class="hint" style="opacity:0"></div>';
@@ -202,7 +202,7 @@
     var w = shot ? shot.width : innerWidth, h = shot ? shot.height : innerHeight;
     cv.width = w; cv.height = h; cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; // exactly over the app, even when the keyboard opens
     var k = w / innerWidth;
-    var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 4, lastTap = null, lastMulti = null;
+    var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 2, lastTap = null, lastMulti = null;
     function paint(withNotes) {
       g.clearRect(0, 0, w, h);
       if (shot) g.drawImage(shot, 0, 0); else { g.fillStyle = '#202124'; g.fillRect(0, 0, w, h); }
