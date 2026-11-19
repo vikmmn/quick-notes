@@ -55,6 +55,7 @@
       if (onClick) onClick(b.dataset.act, b, e);
     };
     $('sheet').onsubmit = function (e) { e.preventDefault(); if (onSubmit) onSubmit(e); };
+    $('sheet').oninput = null;
     var f = $('sheet').querySelector('input[autofocus]');
     if (f) setTimeout(function () { f.focus(); f.select(); }, 60);
   }
@@ -1148,7 +1149,7 @@
       '<div class="row"><button class="primary" type="button" data-act="save">Save</button>' + (def ? '<button type="button" data-act="saveas">Save as new</button>' : '') +
       '<button type="button" data-act="close">Cancel</button>' + (def ? '<button type="button" class="danger" data-act="del">Delete</button>' : '') + '</div>';
     openSheet(html, function (act, b) {
-      if (act === 'brush') { pen.b = b.dataset.v; mark(b); return; }
+      if (act === 'brush') { pen.b = b.dataset.v; mark(b); pen.erase = false; var rb = $('sheet').querySelector('[data-act="rub"]'); if (rb) rb.setAttribute('aria-pressed', 'false'); return; } // a pen: back to drawing
       if (act === 'col') { pen.c = b.dataset.v; mark(b); return; }
       if (act === 'rub') { pen.erase = !pen.erase; b.setAttribute('aria-pressed', pen.erase); return; }
       if (act === 'pm') { st.pm = b.dataset.v; mark(b); return; }
@@ -1195,7 +1196,7 @@
       if (keep.length !== before) { undo.push(st.items); st.items = keep; draw(); }
     }
     box.addEventListener('pointerdown', function (e) {
-      e.preventDefault(); box.setPointerCapture(e.pointerId);
+      e.preventDefault(); try { box.setPointerCapture(e.pointerId); } catch (er) {}
       var p = at(e);
       if (pen.erase) { cur = { rub: true }; rubAt(p); return; }
       var isPen = e.pointerType === 'pen';
@@ -1207,7 +1208,9 @@
       if (!cur) return;
       var p = at(e);
       if (cur.rub) { rubAt(p); return; }
-      cur.p.push([p[0], p[1], cur.f ? e.pressure || 0.5 : 0.5]); draw();
+      // A fresh copy each move: the drawing code keeps each line's outline, so the same line growing kept its first dot.
+      var nx = Object.assign({}, cur, { p: cur.p.concat([[p[0], p[1], cur.f ? e.pressure || 0.5 : 0.5]]) }), ix = st.items.indexOf(cur);
+      if (ix > -1) st.items[ix] = nx; cur = nx; draw();
     });
     var end = function () { cur = null; };
     box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
@@ -1502,7 +1505,10 @@
     if (!S.canvas) return;
     S.canvas.viewOps.navigator(!!PREF.nav); S.canvas.viewOps.rotate(PREF.rotate !== false);
     $('navState').textContent = PREF.nav ? 'On' : 'Off'; $('rotState').textContent = PREF.rotate !== false ? 'On' : 'Off';
+    window.QNPageMode = PREF.pageMode || 'auto';
+    $('pageState').textContent = { auto: 'Phone upright', on: 'Always', off: 'Never (free canvas)' }[window.QNPageMode];
   }
+  window.QNPageMode = PREF.pageMode || 'auto';
   function closeViewMenu() { $('viewMenu').classList.add('hidden'); $('zoomBtn').setAttribute('aria-expanded', 'false'); }
   $('zoomBtn').onclick = function () {
     var open = $('viewMenu').classList.contains('hidden');
@@ -1514,6 +1520,7 @@
     var v = b.dataset.v, ops = S.canvas.viewOps;
     if (v === 'nav') { PREF.nav = !PREF.nav; savePref(); applyViewPrefs(); return; }
     if (v === 'rot') { PREF.rotate = PREF.rotate === false; savePref(); applyViewPrefs(); return; }
+    if (v === 'page') { var nx = { auto: 'off', off: 'on', on: 'auto' }; PREF.pageMode = nx[PREF.pageMode || 'auto']; savePref(); applyViewPrefs(); ops.actual(); return; }
     if (v === 'area') { closeViewMenu(); ops.area(); toast('Drag across the part you want to zoom into', null, null, 2500); return; }
     ops[v]();
     if (v !== 'zoomIn' && v !== 'zoomOut') closeViewMenu();
@@ -1597,13 +1604,78 @@
         i = j - 1;
       } else html += card(l, i, false);
     }
+    // The background (3.23): two special layers under all the others, a grid and a texture. Tap one to choose.
+    if (!sel && window.QNBg) {
+      var B = window.QNBg.parse(S.cur && S.cur.page), GN = B.g && window.QNBg.GRIDS.filter(function (g) { return g[0] === B.g; })[0], TN = B.t && window.QNBg.TEXTURES.filter(function (t) { return t[0] === B.t; })[0];
+      var bgCard = function (kind, name, sub, on, thumb) {
+        return '<div class="lcard lbg' + (on ? '' : ' hid') + '" data-bg="' + kind + '"><div class="lthumb">' + thumb + '</div><div class="lmeta"><b>' + name + '</b><small>' + sub + '</small></div>' +
+          lic(on ? 'eye' : 'eyeOff', 'data-lo="bgvis" data-k="' + kind + '"', on ? 'Hide' : 'Show', on ? '' : 'off') + '</div>';
+      };
+      html += '<div class="lbgs"><small class="lbgh">Background</small>' +
+        bgCard('g', 'Grid', GN ? GN[1] : 'None (tap to choose)', B.gv !== false && !!GN, GN ? bgThumb(B, 'g') : '') +
+        bgCard('t', 'Texture', TN ? TN[1] : 'None (tap to choose)', B.tv !== false && !!TN, TN ? bgThumb(B, 't') : '') + '</div>';
+    }
     html += '</div>' + (sel ? '' : '<p class="lhint">Tap a layer again for its settings. Hold to pick several; hold and drag to move it.</p>');
     p.innerHTML = html;
+  }
+  function bgThumb(B, kind) { // a little square of the grid (on the texture's colour) or of the texture
+    var Q = window.QNBg, surf = Q.surfaceColour(B) || getComputedStyle(document.documentElement).getPropertyValue('--paper').trim();
+    if (kind === 't') return '<span class="bgsw" style="background:' + surf + (B.t !== 'plain' ? ' url(' + Q.textureUrl(B.t, B.tc) + ') 0 0/96px' : '') + '"></span>';
+    var C = Q.css(JSON.stringify({ g: B.g, gs: 0.6, go: B.go, gc: B.gc, t: B.t, tc: B.tc }), false);
+    return '<span class="bgsw" style="background-color:' + (C.color || surf) + ';background-image:' + C.image + ';background-size:' + C.size + '"></span>';
+  }
+  function setBg(change) { // change the note's background and show it
+    var n = S.cur; if (!n || !S.canvas) return;
+    var B = window.QNBg.parse(n.page); change(B);
+    n.page = window.QNBg.stringify(B); S.canvas.setPage(n.page); touchNote(n);
+    renderLayers();
+  }
+  function bgSheet(kind) {
+    var Q = window.QNBg, B = Q.parse(S.cur && S.cur.page);
+    var surf = Q.surfaceColour(B) || getComputedStyle(document.documentElement).getPropertyValue('--paper').trim();
+    var sw = function (attr, list, cur, first) { return (first || '') + list.map(function (c) { return '<button type="button" class="swatch' + (cur === c ? ' on' : '') + '" ' + attr + '="' + c + '" style="background:' + c + '" aria-label="Colour ' + c + '"></button>'; }).join('') +
+      '<label class="swatch custom" aria-label="Any colour"><input type="color" ' + attr + '-any value="' + (/^#[0-9a-f]{6}$/i.test(cur || '') ? cur : '#888888') + '"></label>'; };
+    var html;
+    if (kind === 'g') {
+      html = '<h2>Grid</h2><div class="bgpick">' + '<button type="button" class="bgt' + (!B.g ? ' on' : '') + '" data-bgg=""><span class="bgsw" style="background:' + surf + '"></span><small>None</small></button>' +
+        Q.GRIDS.map(function (g) { var C = Q.css(JSON.stringify({ g: g[0], gs: 0.6, go: B.go, gc: B.gc, t: B.t, tc: B.tc }), Q.isDark(surf)); return '<button type="button" class="bgt' + (B.g === g[0] ? ' on' : '') + '" data-bgg="' + g[0] + '"><span class="bgsw" style="background-color:' + (C.color || surf) + ';background-image:' + C.image + ';background-size:' + C.size + '"></span><small>' + g[1] + '</small></button>'; }).join('') + '</div>' +
+        '<div class="osec">Line colour</div><div class="swatches">' + sw('data-bgc', ['#000000', '#5f6368', '#c0392b', '#d9822b', '#2b6cb0', '#2f855a', '#7e57c2', '#e91e63', '#00796b', '#ffffff'], B.gc, '<button type="button" class="ochip' + (!B.gc ? ' on' : '') + '" data-bgc="">Auto</button>') + '</div>' +
+        '<label class="op">Size <input type="range" min="25" max="400" value="' + Math.round((B.gs || 1) * 100) + '" data-bgs></label>' +
+        '<label class="op">Strength <input type="range" min="4" max="60" value="' + Math.round((B.go == null ? 0.18 : B.go) * 100) + '" data-bgo></label>';
+    } else {
+      html = '<h2>Texture</h2><div class="bgpick">' + '<button type="button" class="bgt' + (!B.t ? ' on' : '') + '" data-bgt=""><span class="bgsw" style="background:var(--paper)"></span><small>None (theme)</small></button>' +
+        Q.TEXTURES.map(function (t) { return '<button type="button" class="bgt' + (B.t === t[0] ? ' on' : '') + '" data-bgt="' + t[0] + '"><span class="bgsw" style="background:' + (t[0] === B.t && B.tc ? B.tc : t[2]) + (t[0] !== 'plain' ? ' url(' + Q.textureUrl(t[0], t[0] === B.t ? B.tc : '') + ') 0 0/96px' : '') + '"></span><small>' + t[1] + '</small></button>'; }).join('') + '</div>' +
+        '<div class="osec">Colour</div><div class="swatches">' + sw('data-bgtc', Q.COLOURS, B.tc, '<button type="button" class="ochip' + (!B.tc ? ' on' : '') + '" data-bgtc="">Its own</button>') + '</div>' +
+        '<label class="op">Size <input type="range" min="25" max="400" value="' + Math.round((B.ts || 1) * 100) + '" data-bgts></label>';
+    }
+    openSheet(html + '<div class="row"><button type="button" class="primary" data-act="close">Done</button></div>', function (act, b) {});
+    var sh = $('sheet');
+    sh.onclick = function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.act === 'close') return closeSheet();
+      var d = b.dataset;
+      if (d.bgg != null) setBg(function (B) { if (d.bgg) { B.g = d.bgg; delete B.gv; } else delete B.g; });
+      else if (d.bgc != null) setBg(function (B) { if (d.bgc) B.gc = d.bgc; else delete B.gc; });
+      else if (d.bgt != null) setBg(function (B) { if (d.bgt) { B.t = d.bgt; delete B.tv; } else { delete B.t; delete B.tc; } if (d.bgt === 'plain' && !B.tc) B.tc = '#f6f3ea'; });
+      else if (d.bgtc != null) setBg(function (B) { if (d.bgtc) { B.tc = d.bgtc; if (!B.t) B.t = 'plain'; } else delete B.tc; });
+      else return;
+      var grp = b.closest('.bgpick, .swatches'); if (grp) grp.querySelectorAll('.on').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on');
+    };
+    sh.oninput = function (e) {
+      var t = e.target, v = +t.value / 100;
+      if (t.hasAttribute('data-bgs')) setBg(function (B) { B.gs = v; });
+      if (t.hasAttribute('data-bgo')) setBg(function (B) { B.go = v; });
+      if (t.hasAttribute('data-bgts')) setBg(function (B) { B.ts = v; });
+      if (t.hasAttribute('data-bgc-any')) setBg(function (B) { B.gc = t.value; });
+      if (t.hasAttribute('data-bgtc-any')) setBg(function (B) { B.tc = t.value; if (!B.t) B.t = 'plain'; });
+    };
   }
   $('layersPanel').addEventListener('click', function (e) {
     if (Date.now() - (S.lheldAt || 0) < 400) return; // the end of a hold, not a tap
     var b = e.target.closest('[data-lo]'), eng = S.canvas && S.canvas.ink(); if (!eng) return;
     var cardEl = e.target.closest('.lcard');
+    if (b && b.dataset.lo === 'bgvis') { var k = b.dataset.k; setBg(function (B) { var key = k + 'v'; if (B[key] === false) delete B[key]; else B[key] = false; }); return; }
+    if (cardEl && cardEl.dataset.bg) { bgSheet(cardEl.dataset.bg); return; }
     if (!b && cardEl) { // a tap on a layer
       var cid = cardEl.dataset.id;
       if (S.lsel) { if (S.lsel[cid]) delete S.lsel[cid]; else S.lsel[cid] = true; if (!Object.keys(S.lsel).length) S.lsel = null; return renderLayers(); }
@@ -2101,6 +2173,7 @@
     closeMenu();
     if (b.dataset.m === 'labels') labelsSheet(n);
     if (b.dataset.m === 'image') pickImage();
+    if (b.dataset.m === 'bgg' || b.dataset.m === 'bgt') { closeMenu(); bgSheet(b.dataset.m === 'bgg' ? 'g' : 't'); return; }
     if (b.dataset.m === 'link' && S.cur) copyNoteLink(S.cur, null);
     if (b.dataset.m === 'move') pickFolder('Move note to…', folderOf(n), function (target) {
       if (target !== folderOf(n)) {
@@ -2326,6 +2399,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Backgrounds: grids and textures', d: 'At the bottom of Layers there are now two background layers: Grid (23 kinds, any line colour, size and strength) and Texture (33 surfaces: papers, handmade and crumpled paper, linen, canvas, denim, felt, woods, cork, steel, concrete, marble, leather, whiteboard, green board, blackboard and more, each in its own colour or any colour). Tap one to choose; the eye hides it. On a phone held upright, notes now open like a page that only scrolls up and down (View › Page like Keep changes this), and the line you are typing stays in view above the keyboard. Feedback notes move by press and hold, then drag.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="#c79a64"/><path d="M20 46h200M20 78h200M20 110h200M52 14v112M84 14v112M116 14v112M148 14v112M180 14v112" stroke="rgba(0,0,0,.18)"/>') },
     { t: 'Bring in another note, or part of one', d: 'The Add button now asks: Files from the device, or Serendipity notes. Choose notes, search or browse for one, and open it. Select a part of it if you like (or nothing, for the whole note), then tap As a live picture or As a link: it goes into the note you came from. Open ↗ on it takes you there.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="32" width="64" height="76" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="52" y="48" width="36" height="22" rx="3" fill="none" stroke="' + A + '" stroke-dasharray="4 3"/><path d="M110 70h24" stroke="' + A + '" stroke-width="3"/><path d="M128 62l8 8-8 8" fill="none" stroke="' + A + '" stroke-width="3"/><rect x="142" y="40" width="60" height="60" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="152" y="54" width="40" height="26" rx="3" fill="' + A + '" opacity=".35"/>') },
     { t: 'Links between notes, locks, and adding made simple', d: 'The Add button opens your files straight away: pick several of any kind. Hold it to add the link you copied. Select a part of a note and tap the link symbol, then hold Add in another note: that part shows there, live, with Open to jump to it (••• › Copy a link to this note does the whole note). Select › Lock: can\'t be erased, or can\'t be selected; tap the little sign to unlock. The lasso corner now has New, + Add and − Remove. Feedback notes can be dragged by their corner, and show in the picture exactly as typed.',

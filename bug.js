@@ -64,8 +64,8 @@
     '.qn-bugview .wait span{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.55);padding:10px 16px;border-radius:12px}' +
     '.qn-bugview .wait span::before{content:"";width:18px;height:18px;border-radius:50%;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;animation:qnspin .7s linear infinite}' +
     '.qn-bugview .tn{position:absolute;min-width:160px;max-width:min(320px,70vw);background:#fff8c4;color:#202124;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,.45);padding:2px}' +
-    '.qn-bugview .tn-grip{position:absolute;right:-12px;top:-12px;width:26px;height:26px;border-radius:50%;background:#202124;color:#fff8c4;display:grid;place-items:center;font:16px/1 system-ui;touch-action:none;cursor:move;box-shadow:0 2px 6px rgba(0,0,0,.4)}' +
-    '.qn-bugbtn.floating{z-index:90}' +
+    '.qn-bugview .tn{touch-action:none}.qn-bugview .tn.lifting{transform:scale(1.04);box-shadow:0 10px 24px rgba(0,0,0,.5);cursor:move}' +
+    '.qn-bugbtn.floating:not(.send){z-index:90}' +
     '.qn-bugview .tn textarea{display:block;width:100%;box-sizing:border-box;border:0;outline:0;background:transparent;color:#202124;font:15px/1.35 var(--font,system-ui);padding:6px 8px;resize:none;overflow:hidden;min-height:34px}';
   document.head.appendChild(css);
 
@@ -145,7 +145,7 @@
   }, 300);
   function lift() { // above the feedback screen, where it was, as the Send button
     var r = btn.getBoundingClientRect();
-    document.body.appendChild(btn); btn.classList.remove('docked'); btn.classList.add('send');
+    document.body.appendChild(btn); btn.classList.remove('docked', 'floating'); btn.classList.add('send'); // (3.22: 'floating' kept it under the feedback screen)
     btn.style.left = Math.round(Math.min(innerWidth - 60, Math.max(4, r.left + r.width / 2 - 26))) + 'px';
     btn.style.top = Math.round(Math.min(innerHeight - 60, Math.max(70, r.top + r.height / 2 - 26))) + 'px';
   }
@@ -265,18 +265,35 @@
     function noteEl(n) {
       n.el = document.createElement('div'); n.el.className = 'tn';
       n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
-      n.el.innerHTML = '<textarea rows="1" placeholder="Type here"></textarea><span class="tn-grip" title="Drag to move the note" aria-label="Move note">⠿</span>';
+      n.el.innerHTML = '<textarea rows="1" placeholder="Type here"></textarea>';
       n.ta = n.el.firstChild;
-      // Moving a note, while typing it or after (3.21): drag the grip at its corner.
-      var grip = n.el.lastChild, gs = null;
-      grip.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); grip.setPointerCapture(e.pointerId); gs = { x: e.clientX, y: e.clientY, nx: n.x, ny: n.y }; });
-      grip.addEventListener('pointermove', function (e) {
+      // Moving a note (3.22.x): press and hold it, then drag. A quick tap types in it, as before.
+      var gs = null;
+      n.el.addEventListener('pointerdown', function (e) {
+        var focused = document.activeElement === n.ta;
+        if (!focused) e.preventDefault(); // no keyboard or text selection until we know it is a tap
+        e.stopPropagation();
+        gs = { x: e.clientX, y: e.clientY, nx: n.x, ny: n.y, focused: focused, held: false, moved: false, id: e.pointerId };
+        gs.t = setTimeout(function () {
+          if (!gs || gs.moved) return;
+          gs.held = true; n.el.classList.add('lifting'); if (navigator.vibrate) navigator.vibrate(12);
+          try { n.el.setPointerCapture(gs.id); } catch (er) {}
+        }, 320);
+      });
+      n.el.addEventListener('pointermove', function (e) {
         if (!gs) return;
-        n.x = Math.max(0, Math.min(innerWidth - 60, gs.nx + e.clientX - gs.x)); n.y = Math.max(0, Math.min(innerHeight - 40, gs.ny + e.clientY - gs.y));
+        var dx = e.clientX - gs.x, dy = e.clientY - gs.y;
+        if (!gs.held) { if (Math.hypot(dx, dy) > 10) { gs.moved = true; clearTimeout(gs.t); } return; }
+        e.preventDefault();
+        n.x = Math.max(0, Math.min(innerWidth - 60, gs.nx + dx)); n.y = Math.max(0, Math.min(innerHeight - 40, gs.ny + dy));
         n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
       });
-      grip.addEventListener('pointerup', function () { gs = null; });
-      grip.addEventListener('pointercancel', function () { gs = null; });
+      var endMove = function () {
+        if (!gs) return; clearTimeout(gs.t); n.el.classList.remove('lifting');
+        if (!gs.held && !gs.moved && !gs.focused) n.ta.focus(); // a quick tap: type
+        gs = null;
+      };
+      n.el.addEventListener('pointerup', endMove); n.el.addEventListener('pointercancel', endMove);
       n.ta.addEventListener('input', function () { n.ta.style.height = 'auto'; n.ta.style.height = n.ta.scrollHeight + 'px'; });
       n.ta.addEventListener('blur', function () { setTimeout(function () { if (view && !n.ta.value.trim() && notes.indexOf(n) > -1) { n.el.remove(); notes.splice(notes.indexOf(n), 1); done.splice(done.indexOf(n), 1); } }, 150); });
       n.el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
