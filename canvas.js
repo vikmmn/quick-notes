@@ -40,17 +40,17 @@
     var stage = el('div', 'stage', host);
     // The page behind everything (3.19): plain, grid, dots or lines, on the theme's paper or a paper colour.
     var pageBg = el('div', 'page-bg', stage);
-    var PAPERS = { white: ['#ffffff', 0], cream: ['#f6efdc', 0], kraft: ['#c9a77c', 0], grey: ['#d9d9d6', 0], slate: ['#2f3640', 1], black: ['#111113', 1] };
+    // (3.23) Two background layers, drawn by bg.js: a grid over a texture (paper, cloth, wood, steel, boards…).
     function setPage(page) {
-      var t = String(page || '').split(/\s+/), style = t.filter(function (x) { return /^(grid|dots|lines)$/.test(x); })[0] || '', paper = t.filter(function (x) { return PAPERS[x]; })[0] || '';
-      var P = PAPERS[paper];
-      stage.classList.toggle('on-paper', !!P);
-      stage.style.setProperty('--paper-c', P ? P[0] : 'var(--paper)');
-      // Ink and text that follow the theme ('ink') stay readable on the paper chosen.
-      if (P) { stage.style.setProperty('--ink', P[1] ? '#f1ece3' : '#1b1b1f'); stage.style.setProperty('--line-c', P[1] ? 'rgba(255,255,255,.13)' : 'rgba(0,0,0,.13)'); }
-      else { stage.style.removeProperty('--ink'); stage.style.removeProperty('--line-c'); }
-      pageBg.dataset.style = style; pageBg.style.setProperty('--qn-m', M + 'px');
-      pageBg.style.display = style || P ? '' : 'none';
+      var pc = getComputedStyle(stage).getPropertyValue('--paper').trim(), themeDark = window.QNBg && /^#[0-9a-f]{6}$/i.test(pc) ? window.QNBg.isDark(pc) : false;
+      var C = window.QNBg ? window.QNBg.css(page, themeDark) : { any: false };
+      stage.classList.toggle('on-paper', !!C.color);
+      if (C.ink) { stage.style.setProperty('--ink', C.ink); } else stage.style.removeProperty('--ink');
+      pageBg.style.display = C.any ? '' : 'none';
+      pageBg.style.backgroundColor = C.color || 'var(--paper)';
+      pageBg.style.backgroundImage = C.image || 'none';
+      pageBg.style.backgroundSize = C.size || '';
+      pageBg.style.setProperty('--qn-m', M + 'px');
     }
     setPage(note.page);
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -101,7 +101,39 @@
     function toWorld(sx, sy) { var dx = sx - view.x, dy = sy - view.y, c = Math.cos(-view.r), s = Math.sin(-view.r); return [(dx * c - dy * s) / view.z, (dx * s + dy * c) / view.z]; }
     function toScreen(wx, wy) { var c = Math.cos(view.r), s = Math.sin(view.r); return [view.x + (wx * c - wy * s) * view.z, view.y + (wx * s + wy * c) * view.z]; }
     function local(ev) { var r = host.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; }
+    // While typing, the line being typed stays in view, about a third of the way down the space the keyboard leaves
+    // (3.23). The page moves only when the caret gets near the edges of that space.
+    var caretRaf = 0;
+    function keepCaret() {
+      cancelAnimationFrame(caretRaf);
+      caretRaf = requestAnimationFrame(function () {
+        var s = window.getSelection(); if (!s || !s.rangeCount || !active) return;
+        var r = s.getRangeAt(0).getBoundingClientRect(); if (!r || (!r.height && !r.top)) return;
+        var vv = window.visualViewport, top = (vv ? vv.offsetTop : 0), hgt = vv ? vv.height : innerHeight, hr = host.getBoundingClientRect();
+        var lo = Math.max(hr.top, top) + 70, hi = Math.min(hr.bottom, top + hgt) - 60;
+        if (hi - lo < 80) return;
+        var want = null;
+        if (r.bottom > hi) want = lo + (hi - lo) * 0.38; else if (r.top < lo) want = lo + (hi - lo) * 0.25;
+        if (want == null) return;
+        view.y += want - (r.top + r.bottom) / 2; clampPage(); applyView();
+      });
+    }
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { if (active) keepCaret(); });
+    // Page mode (3.23): a phone held upright opens notes like a page, only scrolling up and down (no sideways moving
+    // or zooming), as in Keep. Turned sideways, or on a tablet, it is the open canvas. View › Free canvas switches.
+    function pageMode() {
+      var phone = Math.min(screen.width, screen.height) < 600, upright = innerHeight > innerWidth;
+      var pref = (window.QNPageMode || 'auto');
+      return pref === 'on' || (pref === 'auto' && phone && upright);
+    }
+    function clampPage() {
+      if (!pageMode()) return;
+      view.z = 1; view.r = 0; view.x = 0; // the page fills the width
+      if (view.y > headH) view.y = headH;
+    }
+    self.pageMode = pageMode;
     function applyView() {
+      clampPage();
       stage.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) rotate(' + view.r + 'rad) scale(' + view.z + ')';
       if (eng) eng.viewChanged();
       if (hooks.view) hooks.view({ z: view.z, r: view.r });
@@ -247,7 +279,7 @@
             if (!isFirst && boxes.indexOf(b) > -1 && !b.md.trim() && !e.contains(document.activeElement)) removeBox(b.id);
           }, 200);
         },
-        onSelectionUpdate: function () { hooks.selection(ed); },
+        onSelectionUpdate: function () { hooks.selection(ed); keepCaret(); },
         onTransaction: function () { hooks.selection(ed); }
       });
       editors[b.id] = { el: e, ed: ed };
