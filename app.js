@@ -2112,10 +2112,12 @@
     var lib = await import(PDFJS + 'pdf.min.mjs');
     lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
     var pdfName = await saveMedia(f, 'pdf'), doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
-    var n = Math.min(doc.numPages, 40), dy = dy0 || 0;
+    var n = Math.min(doc.numPages, 200), dy = dy0 || 0;
+    // Long PDFs are drawn smaller so the canvas stays fast: full size up to 40 pages, then 1000px wide (to 100), then 800px.
+    var maxW = n > 100 ? 800 : n > 40 ? 1000 : 1400, maxSc = n > 100 ? 1.2 : n > 40 ? 1.5 : 2.2;
     for (var i = 1; i <= n; i++) {
       toast('Page ' + i + ' of ' + n + '…', null, null, 600000);
-      var pg = await doc.getPage(i), vp0 = pg.getViewport({ scale: 1 }), sc = Math.min(2.2, 1400 / vp0.width), vp = pg.getViewport({ scale: sc });
+      var pg = await doc.getPage(i), vp0 = pg.getViewport({ scale: 1 }), sc = Math.min(maxSc, maxW / vp0.width), vp = pg.getViewport({ scale: sc });
       var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
       var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
       await pg.render({ canvasContext: g, viewport: vp }).promise;
