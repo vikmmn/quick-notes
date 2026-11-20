@@ -74,6 +74,8 @@
   .notice .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
   /* ---------- Home: notes grid ---------- */
+  #toolQuick .qhint { display: block; font-size: 11px; line-height: 1.35; color: var(--muted); padding: 4px 8px 6px; max-width: 104px; text-align: center; }
+  #listView, #listView * { touch-action: pan-y; } /* a pinch on the list never zooms the whole app (3.24.1) */
   #listView main { max-width: 1100px; margin: 0 auto; padding: 0 14px 110px; }
   .searchwrap { position: relative; margin: 2px 0 10px; }
   .searchwrap input { border-radius: 999px; padding: 13px 16px 13px 46px; background: var(--field); border-color: transparent; }
@@ -660,7 +662,7 @@
     <hr>
     <button type="button" data-v="nav">Navigator <span id="navState">Off</span></button>
     <button type="button" data-v="rot">Turn with two fingers <span id="rotState">On</span></button>
-    <button type="button" data-v="page" title="Upright on a phone, notes open like a page that only scrolls up and down">Page like Keep <span id="pageState">Phone upright</span></button>
+    <button type="button" data-v="page" title="Upright on a phone, notes open as a page that only scrolls up and down (a note with things out to the side stays a free canvas)">Linear mode <span id="pageState">Phone upright</span></button>
   </div>
   <div id="noteMenu" class="hidden" role="menu">
     <button type="button" data-m="image"><svg class="i"><use href="#i-image"/></svg>Add image</button>

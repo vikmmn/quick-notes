@@ -121,10 +121,20 @@
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { if (active) keepCaret(); });
     // Page mode (3.23): a phone held upright opens notes like a page, only scrolling up and down (no sideways moving
     // or zooming), as in Keep. Turned sideways, or on a tablet, it is the open canvas. View › Free canvas switches.
+    // (3.24.1: in Auto, a note with drawings, pictures or text boxes out to the side of the page opens as the free canvas,
+    // so nothing seems lost; Always keeps it a page.)
+    var spill = null;
+    function spills() {
+      if (spill != null) return spill;
+      if (!eng) return false; // not loaded yet: ask again
+      var W = host.clientWidth || innerWidth, ib = eng.box();
+      spill = !!(ib && (ib.x + ib.w > W + 4 || ib.x < -4)) || boxes.some(function (b) { return b.x < -4 || (b.w && b.x + b.w > W + 4) || b.x > W - 40; });
+      return spill;
+    }
     function pageMode() {
       var phone = Math.min(screen.width, screen.height) < 600, upright = innerHeight > innerWidth;
       var pref = (window.QNPageMode || 'auto');
-      return pref === 'on' || (pref === 'auto' && phone && upright);
+      return pref === 'on' || (pref === 'auto' && phone && upright && !spills());
     }
     function clampPage() {
       if (!pageMode()) return;
@@ -211,6 +221,7 @@
       return out;
     };
     function changed(kind) {
+      spill = null;
       applyBoxLayers();
       hooks.change(kind);
       if (kind === 'text') { clearTimeout(textTimer); textTimer = setTimeout(record, 700); }

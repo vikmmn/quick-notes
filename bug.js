@@ -28,7 +28,13 @@
     var name = t.getAttribute('aria-label') || t.getAttribute('title') || t.dataset.tool || (t.classList.contains('card') ? 'a note card' : t.textContent);
     push(actions, 30, 'tap “' + short(name).slice(0, 50) + '”');
   }, true);
-  window.addEventListener('popstate', function () { push(actions, 30, 'back button'); });
+  window.addEventListener('popstate', function (e) {
+    // While the feedback screen is open the back gesture (an edge swipe while drawing, or pressing Send near the edge)
+    // must not leave the note behind it (3.24.1): it is kept here instead. This listener runs before the app's own.
+    if (guardBack > 0) { guardBack--; e.stopImmediatePropagation(); return; }
+    push(actions, 30, 'back button');
+    if (view) { e.stopImmediatePropagation(); try { history.pushState({ v: 'bug' }, ''); } catch (x) {} if (sayFn) sayFn('Back is paused while you write feedback. Tap Cancel to leave, or the round button to send.', 3500); }
+  });
 
   // ---- The button ----
   var css = document.createElement('style');
@@ -43,12 +49,14 @@
     '.qn-bugbtn.sent{animation:qnpop .6s ease-out}' +
     '@keyframes qnspin{to{transform:rotate(360deg)}}' +
     '@keyframes qnpop{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(0,121,107,.6)}40%{transform:scale(1.25)}100%{transform:scale(1);box-shadow:0 0 0 18px rgba(0,121,107,0)}}' +
-    '.qn-bugbtn.send{position:fixed;z-index:99;opacity:1;width:52px;height:52px;box-shadow:0 0 0 6px rgba(0,121,107,.3),0 4px 14px rgba(0,0,0,.4)}' +
+    '.qn-bugbtn.send{position:fixed;z-index:99;opacity:1;width:52px;height:52px;box-shadow:0 0 0 6px rgba(0,121,107,.3),0 4px 14px rgba(0,0,0,.4);' +
+    'left:auto!important;right:14px!important;top:calc(68px + env(safe-area-inset-top))!important}' + // always the same place, under the ribbon, in any turn of the phone (3.24.1)
     '.qn-bugbtn.send svg{width:26px;height:26px}' +
     '.qn-bugbtn.dot{opacity:1}.qn-bugbtn.dot::after{content:"";position:absolute;top:-1px;right:-1px;width:11px;height:11px;border-radius:50%;background:#d93025;border:2px solid var(--paper,#fff)}' +
     '.qn-bugview{position:fixed;inset:0;z-index:95;background:#202124;touch-action:none;overflow:hidden;animation:qnfade .15s ease-out}' +
     '@keyframes qnfade{from{opacity:0}to{opacity:1}}' +
     '.qn-bugview canvas{position:absolute;left:0;top:0;touch-action:none}' +
+    '.qn-bugview .stg{position:absolute;left:0;top:0;transform-origin:0 0}' +
     '.qn-bugview .bt{position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:6px 8px;' +
     'background:rgba(32,33,36,.94);border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);white-space:nowrap;max-width:calc(100vw - 16px);overflow-x:auto}' +
     '.qn-bugview .bt button{min-height:34px;padding:5px 12px;font-size:14px;border-radius:10px;color:#fff;background:transparent;border:1px solid rgba(255,255,255,.18)}' +
@@ -64,6 +72,7 @@
     '.qn-bugview .wait span{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.55);padding:10px 16px;border-radius:12px}' +
     '.qn-bugview .wait span::before{content:"";width:18px;height:18px;border-radius:50%;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;animation:qnspin .7s linear infinite}' +
     '.qn-bugview .tn{position:absolute;min-width:160px;max-width:min(320px,70vw);background:#fff8c4;color:#202124;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,.45);padding:2px}' +
+    '.qn-bugview .tn:not(:focus-within) textarea{-webkit-user-select:none;user-select:none}' +
     '.qn-bugview .tn{touch-action:none}.qn-bugview .tn.lifting{transform:scale(1.04);box-shadow:0 10px 24px rgba(0,0,0,.5);cursor:move}' +
     '.qn-bugbtn.floating:not(.send){z-index:90}' +
     '.qn-bugview .tn textarea{display:block;width:100%;box-sizing:border-box;border:0;outline:0;background:transparent;color:#202124;font:15px/1.35 var(--font,system-ui);padding:6px 8px;resize:none;overflow:hidden;min-height:34px}';
@@ -72,7 +81,7 @@
   var ICON_FB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z" fill="currentColor" fill-opacity=".2"/><path d="M12 8v4M12 14.5v.01"/></svg>';
   var ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 16-3-7z" fill="currentColor" fill-opacity=".25"/><path d="M11 13l9-9"/></svg>';
   var ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-  var btn = null, shotP = null, dockEl = null, place = null;
+  var btn = null, shotP = null, dockEl = null, place = null, guardBack = 0, sayFn = null;
   function setLook(kind) {
     if (!btn) return;
     btn.innerHTML = kind === 'send' ? ICON_SEND : kind === 'ok' ? ICON_OK : ICON_FB;
@@ -144,10 +153,8 @@
     } else if (!over && btn.classList.contains('floating')) { btn.classList.remove('floating'); btn.style.left = btn.style.top = ''; dock(dockEl); }
   }, 300);
   function lift() { // above the feedback screen, where it was, as the Send button
-    var r = btn.getBoundingClientRect();
     document.body.appendChild(btn); btn.classList.remove('docked', 'floating'); btn.classList.add('send'); // (3.22: 'floating' kept it under the feedback screen)
-    btn.style.left = Math.round(Math.min(innerWidth - 60, Math.max(4, r.left + r.width / 2 - 26))) + 'px';
-    btn.style.top = Math.round(Math.min(innerHeight - 60, Math.max(70, r.top + r.height / 2 - 26))) + 'px';
+    btn.style.left = btn.style.top = ''; // its place now comes from the style sheet: top right, under the ribbon
   }
   function settle() {
     btn.classList.remove('send', 'busy');
@@ -199,10 +206,12 @@
       '<button type="button" data-b="undo">Undo</button><button type="button" data-b="clear">Clear</button><button type="button" data-b="cancel">Cancel</button></div>' +
       '<div class="wait"><span>Taking a picture of the screen…</span></div>' +
       '<div class="hint" style="opacity:0"></div>';
-    document.body.appendChild(view);
+    document.body.appendChild(view); view._w0 = innerWidth; view._h0 = innerHeight; // the size of the app the picture is of
+    try { history.pushState({ v: 'bug' }, ''); } catch (x) {} // one step for the back gesture to use up
     if (btn) { lift(); setLook('send'); btn.classList.add('busy'); }
     var hint = view.querySelector('.hint'), wait = view.querySelector('.wait');
     function say(html, ms) { hint.innerHTML = html; hint.style.opacity = '1'; clearTimeout(say.t); say.t = setTimeout(function () { hint.style.opacity = '0'; }, ms || 3500); }
+    sayFn = say;
     var shot = null, failed = null;
     try { shot = await (p || capture()); } catch (e) { failed = e; }
     if (!view) return; // cancelled while waiting
@@ -212,8 +221,19 @@
       '<br><small style="opacity:.75">The picture and app details (version, device, recent taps and errors) go to the developer.</small>', failed ? 7000 : 5000);
     var cv = view.querySelector('canvas'), g = cv.getContext('2d');
     var w = shot ? shot.width : innerWidth, h = shot ? shot.height : innerHeight;
-    cv.width = w; cv.height = h; cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; // exactly over the app, even when the keyboard opens
-    var k = w / innerWidth;
+    // The picture and the notes sit on a stage the size of the screen at the start (exactly over the app, even when the
+    // keyboard opens). Turn the phone and the stage shrinks or grows to fit, so drawings and notes stay on what they point at (3.24.1).
+    var W0 = view._w0, H0 = view._h0, sc = 1, ox = 0, oy = 0, lastW = innerWidth;
+    var stg = document.createElement('div'); stg.className = 'stg'; stg.style.width = W0 + 'px'; stg.style.height = H0 + 'px';
+    view.insertBefore(stg, view.firstChild); stg.appendChild(cv);
+    cv.width = w; cv.height = h; cv.style.width = W0 + 'px'; cv.style.height = H0 + 'px';
+    var k = w / W0;
+    function fit() {
+      sc = Math.min(innerWidth / W0, innerHeight / H0); ox = (innerWidth - W0 * sc) / 2; oy = (innerHeight - H0 * sc) / 2;
+      stg.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + sc + ')';
+    }
+    var onTurn = function () { if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; fit(); } }; // (the keyboard changes only the height)
+    fit(); window.addEventListener('resize', onTurn); view._off = function () { window.removeEventListener('resize', onTurn); };
     var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 2, lastTap = null, lastMulti = null;
     function paint(withNotes) {
       g.clearRect(0, 0, w, h);
@@ -251,7 +271,7 @@
         });
         lines.push(line.trimEnd());
       });
-      var x = (r.left - cr.left) * k, y = (r.top - cr.top) * k, bw = r.width * k, bh = Math.max(r.height * k, lines.length * lh + 2 * padY);
+      var x = (r.left - cr.left) / sc * k, y = (r.top - cr.top) / sc * k, bw = r.width / sc * k, bh = Math.max(r.height / sc * k, lines.length * lh + 2 * padY);
       if (y + bh > h) y = Math.max(0, h - bh); if (x + bw > w) x = Math.max(0, w - bw); // all of it inside the picture
       var rad = 10 * k;
       var rr = function (ox, oy) { g.beginPath(); if (g.roundRect) g.roundRect(x + ox, y + oy, bw, bh, rad); else g.rect(x + ox, y + oy, bw, bh); };
@@ -282,10 +302,16 @@
       });
       n.el.addEventListener('pointermove', function (e) {
         if (!gs) return;
-        var dx = e.clientX - gs.x, dy = e.clientY - gs.y;
-        if (!gs.held) { if (Math.hypot(dx, dy) > 10) { gs.moved = true; clearTimeout(gs.t); } return; }
+        var dx = (e.clientX - gs.x) / sc, dy = (e.clientY - gs.y) / sc;
+        if (!gs.held) {
+          if (Math.hypot(dx, dy) * sc <= 10) return;
+          if (gs.focused) { gs.moved = true; clearTimeout(gs.t); return; } // typing in it: a drag selects text, as usual
+          // not being typed in: a plain press and drag moves it (3.24.1; before, it had to be held first)
+          clearTimeout(gs.t); gs.held = true; gs.moved = true; n.el.classList.add('lifting');
+          try { n.el.setPointerCapture(gs.id); } catch (er) {}
+        }
         e.preventDefault();
-        n.x = Math.max(0, Math.min(innerWidth - 60, gs.nx + dx)); n.y = Math.max(0, Math.min(innerHeight - 40, gs.ny + dy));
+        n.x = Math.max(0, Math.min(W0 - 60, gs.nx + dx)); n.y = Math.max(0, Math.min(H0 - 40, gs.ny + dy));
         n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
       });
       var endMove = function () {
@@ -299,8 +325,8 @@
       n.el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     }
     function addNote(x, y) {
-      var n = { kind: 'note', x: Math.min(x, innerWidth - 170), y: Math.min(y, innerHeight - 60) };
-      noteEl(n); view.appendChild(n.el); notes.push(n); done.push(n); undone = [];
+      var n = { kind: 'note', x: Math.min(x, W0 - 170), y: Math.min(y, H0 - 60) };
+      noteEl(n); stg.appendChild(n.el); notes.push(n); done.push(n); undone = [];
       setTimeout(function () { n.ta.focus(); }, 30);
     }
     function undo() {
@@ -310,7 +336,7 @@
     }
     function redo() {
       var it = undone.pop(); if (!it) return;
-      if (it.kind === 'note') { view.appendChild(it.el); notes.push(it); } else marks.push(it);
+      if (it.kind === 'note') { stg.appendChild(it.el); notes.push(it); } else marks.push(it);
       done.push(it); paint();
     }
     // Fingers: one draws (or double-taps for a note), two double-tap to undo, three to redo.
@@ -332,7 +358,7 @@
       if (multi) return;
       var now = Date.now(), fingerish = e.pointerType !== 'pen';
       if (tool === 'text' || (fingerish && lastTap && now - lastTap.t < 380 && Math.abs(e.clientX - lastTap.x) < 30 && Math.abs(e.clientY - lastTap.y) < 30)) {
-        lastTap = null; cur = null; paint(); addNote(e.clientX, e.clientY); return;
+        lastTap = null; cur = null; paint(); addNote((e.clientX - ox) / sc, (e.clientY - oy) / sc); return;
       }
       lastTap = fingerish ? { t: now, x: e.clientX, y: e.clientY } : null;
       cur = { kind: 'mark', t: tool, c: color, s: size, p: [pt(e)] }; cv.setPointerCapture(e.pointerId);
@@ -394,7 +420,8 @@
   }
   function send() { if (sendFn) sendFn(); }
   function close() {
-    if (view) { view.remove(); view = null; }
+    if (view) { if (view._off) view._off(); view.remove(); view = null; try { if (history.state && history.state.v === 'bug') { guardBack++; history.back(); } } catch (x) {} }
+    sayFn = null;
     sendFn = null; shotP = null;
     if (btn) { settle(); setLook('fb'); }
     if (btn && btn.dataset.tmp) { delete btn.dataset.tmp; btn.style.display = 'none'; }
