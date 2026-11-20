@@ -123,23 +123,27 @@
     // or zooming), as in Keep. Turned sideways, or on a tablet, it is the open canvas. View › Free canvas switches.
     // (3.24.1: in Auto, a note with drawings, pictures or text boxes out to the side of the page opens as the free canvas,
     // so nothing seems lost; Always keeps it a page.)
-    var spill = null;
-    function spills() {
-      if (spill != null) return spill;
-      if (!eng) return false; // not loaded yet: ask again
-      var W = host.clientWidth || innerWidth, ib = eng.box();
-      spill = !!(ib && (ib.x + ib.w > W + 4 || ib.x < -4)) || boxes.some(function (b) { return b.x < -4 || (b.w && b.x + b.w > W + 4) || b.x > W - 40; });
-      return spill;
-    }
+    // 3.25 (#70): Linear mode is no longer only the left column. Arrows at the screen's edges and corners show where
+    // more is; a double tap moves the column there (view.lx) and that is remembered with the note's view. A shake on a
+    // phone, or the Linear/Free button on a tablet, switches between Linear mode and the free canvas for this note.
+    var modeOv = null; // 'lin' | 'free' | null (follow View › Linear mode)
+    function phoneNow() { return Math.min(screen.width, screen.height) < 600; }
     function pageMode() {
-      var phone = Math.min(screen.width, screen.height) < 600, upright = innerHeight > innerWidth;
+      if (modeOv) return modeOv === 'lin';
       var pref = (window.QNPageMode || 'auto');
-      return pref === 'on' || (pref === 'auto' && phone && upright && !spills());
+      return pref === 'on' || (pref === 'auto' && phoneNow() && innerHeight > innerWidth);
+    }
+    var topCache = null;
+    function topLimit() { // how far up Linear mode scrolls: the title, or higher if something sits above it
+      if (topCache != null) return topCache;
+      if (!eng) return headH;
+      var b = contentBox(); topCache = b ? Math.max(headH, -b.y + (b.y < -headH ? M : 0)) : headH;
+      return topCache;
     }
     function clampPage() {
       if (!pageMode()) return;
-      view.z = 1; view.r = 0; view.x = 0; // the page fills the width
-      if (view.y > headH) view.y = headH;
+      view.z = 1; view.r = 0; view.x = view.lx || 0; // the column in focus fills the width
+      var t = topLimit(); if (view.y > t) view.y = t;
     }
     self.pageMode = pageMode;
     function applyView() {
@@ -148,7 +152,7 @@
       if (eng) eng.viewChanged();
       if (hooks.view) hooks.view({ z: view.z, r: view.r });
       clearTimeout(viewTimer); viewTimer = setTimeout(function () { try { localStorage.setItem(VKEY, JSON.stringify(view)); } catch (e) {} }, 400);
-      drawNavSoon();
+      drawNavSoon(); drawDirsSoon();
     }
     var eng = null;
     eng = new window.QNInk.Engine({
@@ -221,7 +225,7 @@
       return out;
     };
     function changed(kind) {
-      spill = null;
+      topCache = null; blocksC = null; drawDirsSoon();
       applyBoxLayers();
       hooks.change(kind);
       if (kind === 'text') { clearTimeout(textTimer); textTimer = setTimeout(record, 700); }
@@ -614,6 +618,7 @@
         var n = Object.keys(drag.fingers).length;
         var dx = (ev.clientX - prev[0]) / n, dy = (ev.clientY - prev[1]) / n;
         drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY];
+        if (view.lk && !pageMode()) { var ld = axisLock(dx, dy, drag, ev.clientX - drag.lx, ev.clientY - drag.ly); dx = ld[0]; dy = ld[1]; }
         if (Math.abs(dx) + Math.abs(dy) > 0) {
           drag.moved = drag.moved || Math.abs(ev.clientX - drag.lx) + Math.abs(ev.clientY - drag.ly) > 8;
           view.x += dx; view.y += dy; applyView();
@@ -706,6 +711,10 @@
       dA = Math.atan2(Math.sin(dA), Math.cos(dA));
       // Turning only starts after a clear twist, so zooming and moving never turn the page by accident.
       if (rotateOn && !gest.rotOn && Math.abs(dA) > 0.3) { gest.rotOn = true; gest.rotOff = dA; }
+      if (view.lk && !pageMode()) { // locked: two fingers only move, along the page's lines or columns
+        var lt = axisLock(c1[0] - gest.c0[0], c1[1] - gest.c0[1], gest, c1[0] - gest.c0[0], c1[1] - gest.c0[1]);
+        view.x = v0.x + lt[0]; view.y = v0.y + lt[1]; gest.transformed = false; applyView(); return;
+      }
       var r = v0.r + (gest.rotOn ? dA - gest.rotOff : 0), z = clampZ(v0.z * d1 / gest.d0);
       // Keep the page point that was under the fingers under the fingers.
       var dx = gest.c0[0] - v0.x, dy = gest.c0[1] - v0.y, c = Math.cos(-v0.r), sn = Math.sin(-v0.r);
@@ -736,7 +745,7 @@
       }
     }
     on(host, 'pointerdown', function (ev) {
-      if (ev.pointerType !== 'touch' || ev.target.closest('.qn-nav, .inkbar, .selbar')) return;
+      if (ev.pointerType !== 'touch' || ev.target.closest('.qn-nav, .inkbar, .selbar, .qn-dirs, .qn-peek, .qn-modebtn')) return;
       touches[ev.pointerId] = { x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY };
       if (tcount() >= 2) {
         if (!gest) startGesture(); else { gest.max = Math.max(gest.max, tcount()); if (!gest.moved) startPair(); }
@@ -765,7 +774,7 @@
     on(host, 'wheel', function (e) {
       e.preventDefault();
       var l = local(e), k = e.deltaMode === 1 ? 30 : 1;
-      if (e.ctrlKey || e.metaKey) zoomAt(l[0], l[1], Math.exp(-e.deltaY * k * 0.004));
+      if (e.ctrlKey || e.metaKey) { if (!view.lk) zoomAt(l[0], l[1], Math.exp(-e.deltaY * k * 0.004)); }
       else { view.x -= e.deltaX * k; view.y -= e.deltaY * k; applyView(); }
     }, { passive: false });
     // The browser scrolls to show the text cursor; turn that into moving the page instead.
@@ -828,7 +837,7 @@
     // ---- Zoom into an area: drag a box across it ----
     var areaEl = null;
     on(host, 'pointerdown', function (ev) {
-      if (!areaMode || ev.target.closest('.qn-nav')) return;
+      if (!areaMode || ev.target.closest('.qn-nav, .qn-dirs, .qn-peek, .qn-modebtn')) return;
       ev.stopImmediatePropagation(); ev.preventDefault();
       var l = local(ev);
       areaEl = el('div', 'qn-area', host);
@@ -854,6 +863,138 @@
       var W = host.clientWidth, H = host.clientHeight;
       animateView(view.z * Math.min(W / w, H / h) * 0.95, view.r, toWorld((l[0] + s0[0]) / 2, (l[1] + s0[1]) / 2));
     }, true);
+
+    // ---- Lock zoom and turn (3.25, #54): read a long note zoomed and turned as you like; fingers then only scroll,
+    // along the page's lines or down its columns (whichever way the move starts). Saved with the note's view. ----
+    function axisLock(dx, dy, st, tx, ty) {
+      var c = Math.cos(-view.r), s = Math.sin(-view.r);
+      if (!st.ax) { if (Math.abs(tx) + Math.abs(ty) < 10) return [0, 0]; var px = tx * c - ty * s, py = tx * s + ty * c; st.ax = Math.abs(px) > Math.abs(py) ? 'x' : 'y'; }
+      var qx = dx * c - dy * s, qy = dx * s + dy * c;
+      if (st.ax === 'x') qy = 0; else qx = 0;
+      var c2 = Math.cos(view.r), s2 = Math.sin(view.r);
+      return [qx * c2 - qy * s2, qx * s2 + qy * c2];
+    }
+
+    // ---- Linear mode's arrows: where more is, beyond the screen ----
+    var DIRS = { n: 270, ne: 315, e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225 };
+    var dirEl = el('div', 'qn-dirs hidden', host), dirRaf = 0, blocksC = null, lastDir = null;
+    dirEl.innerHTML = Object.keys(DIRS).map(function (d) {
+      return '<button type="button" class="qn-dir hidden" data-d="' + d + '" aria-label="More this way: tap to peek, double tap to go there" title="More this way: tap to peek, double tap to go there">' +
+        '<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(' + DIRS[d] + 'deg)"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+    }).join('');
+    var dirBtns = [].slice.call(dirEl.children);
+    function blocks() { // everything there is, in stage coordinates: text boxes one by one, drawings by area
+      if (blocksC) return blocksC;
+      var out = [];
+      boxes.forEach(function (b) {
+        var e = editors[b.id]; if (!e || !(b.md && b.md.trim())) return;
+        var L = layerOfBox(b); if (L && L.vis === false) return;
+        out.push({ x: b.x + M, y: b.y + M, w: e.el.offsetWidth, h: e.el.offsetHeight, box: b });
+      });
+      eng.blocks(320).forEach(function (q) { out.push({ x: q.x + M, y: q.y + M, w: q.w, h: q.h }); });
+      return (blocksC = out);
+    }
+    function drawDirsSoon() { if (!dirRaf) dirRaf = requestAnimationFrame(drawDirs); }
+    function drawDirs() {
+      dirRaf = 0;
+      var on = !!eng && pageMode();
+      dirEl.classList.toggle('hidden', !on);
+      modeBtn.classList.toggle('hidden', phoneNow());
+      modeBtn.textContent = pageMode() ? 'Linear' : 'Free';
+      modeBtn.setAttribute('aria-pressed', pageMode() ? 'true' : 'false');
+      if (!on) { hidePeek(); return; }
+      var W = host.clientWidth, H = host.clientHeight, best = {};
+      blocks().forEach(function (q) {
+        var p = [toScreen(q.x, q.y), toScreen(q.x + q.w, q.y + q.h)];
+        var x0 = Math.min(p[0][0], p[1][0]), x1 = Math.max(p[0][0], p[1][0]), y0 = Math.min(p[0][1], p[1][1]), y1 = Math.max(p[0][1], p[1][1]);
+        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < 6 ? 'n' : y0 > H - 6 ? 's' : '';
+        if (!hz && !vt) return;
+        var d = vt + hz, dist = Math.hypot(Math.max(0, -x1, x0 - W), Math.max(0, -y1, y0 - H));
+        if (!best[d] || dist < best[d].dist) best[d] = { q: q, dist: dist };
+      });
+      dirBtns.forEach(function (b) { var c = best[b.dataset.d]; b.classList.toggle('hidden', !c); b._q = c ? c.q : null; });
+      // Keep clear of the tool rail (right) and the quick corner (bottom left).
+      var hr = host.getBoundingClientRect(), t = document.getElementById('tools'), qk = document.getElementById('toolQuick');
+      var tr = t && !t.classList.contains('hidden') ? t.getBoundingClientRect() : null, qr = qk && !qk.classList.contains('hidden') ? qk.getBoundingClientRect() : null;
+      dirEl.style.setProperty('--dr', (tr && tr.width ? Math.max(8, hr.right - tr.left + 6) : 8) + 'px');
+      dirEl.style.setProperty('--dbl', (qr && qr.width && qr.left < hr.left + hr.width / 2 ? Math.max(76, hr.bottom - qr.top + 6) : 76) + 'px');
+    }
+    function blockText(q) {
+      var e = editors[q.box.id]; var t = (e ? e.el.innerText : q.box.md || '').replace(/\s+\n/g, '\n').trim();
+      return t.length > 420 ? t.slice(0, 420) + '…' : t;
+    }
+    var peekEl = null, peekTimer = 0;
+    function hidePeek() { clearTimeout(peekTimer); if (peekEl) { peekEl.remove(); peekEl = null; } }
+    function showPeek(q, d) {
+      hidePeek();
+      peekEl = el('div', 'qn-peek', host);
+      peekEl.dataset.d = d;
+      var W = host.clientWidth, pw = Math.min(W - 40, 340);
+      if (q.box) peekEl.innerHTML = '<div class="pk-text"></div>', peekEl.firstChild.textContent = blockText(q);
+      else {
+        var pad = 12, x = q.x - pad, y = q.y - pad, w = q.w + 2 * pad, h = q.h + 2 * pad;
+        var txt = boxes.map(function (b) {
+          var e = editors[b.id]; if (!e || !(b.md && b.md.trim())) return '';
+          return '<rect x="' + (b.x + M) + '" y="' + (b.y + M) + '" width="' + e.el.offsetWidth + '" height="' + e.el.offsetHeight + '" rx="6" fill="var(--rule)"/>';
+        }).join('');
+        peekEl.innerHTML = '<svg viewBox="' + x + ' ' + y + ' ' + w + ' ' + h + '" preserveAspectRatio="xMidYMid meet">' + txt + window.QNInk.svgFor(ink, 'pk-', M, M, true) + '</svg>';
+      }
+      peekEl.insertAdjacentHTML('beforeend', '<div class="pk-hint">Double tap the arrow, or tap here, to go there</div>');
+      peekEl.style.width = pw + 'px';
+      peekEl.style.left = (W - pw) / 2 + 'px';
+      if (d.charAt(0) === 'n') peekEl.style.top = '56px'; else if (d.charAt(0) === 's') peekEl.style.bottom = '64px'; else peekEl.style.top = '30%';
+      peekEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      peekEl.addEventListener('click', function () { hidePeek(); goTo(q, d); });
+      peekTimer = setTimeout(hidePeek, 3500);
+    }
+    function goTo(q, d) { // the column moves to it (sideways only if it is to the side), and it comes to the top of the screen
+      cancelAnimationFrame(anim);
+      var lx0 = view.lx || 0, y0 = view.y, t0 = performance.now();
+      var lx1 = /[ew]/.test(d) ? (Math.abs(M - q.x) < 40 ? 0 : M - q.x) : lx0;
+      var y1 = 90 - q.y; topCache = null; if (y1 > topLimit()) y1 = topLimit();
+      function step(now) {
+        var k = Math.min(1, (now - t0) / 320), e = 1 - Math.pow(1 - k, 3);
+        view.lx = lx0 + (lx1 - lx0) * e; view.y = y0 + (y1 - y0) * e; applyView();
+        if (k < 1) anim = requestAnimationFrame(step);
+      }
+      anim = requestAnimationFrame(step);
+    }
+    dirEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    dirEl.addEventListener('click', function (ev) {
+      var b = ev.target.closest('.qn-dir'); if (!b || !b._q) return;
+      var d = b.dataset.d, now = Date.now();
+      if (lastDir && lastDir.d === d && now - lastDir.t < 450) { lastDir = null; hidePeek(); goTo(b._q, d); return; }
+      lastDir = { d: d, t: now }; showPeek(b._q, d);
+    });
+
+    // ---- Linear mode or free canvas, for this note: a shake on a phone, the button elsewhere ----
+    var modeBtn = el('button', 'qn-modebtn hidden', host);
+    modeBtn.type = 'button'; modeBtn.title = 'Linear mode (scrolls up and down) or the free canvas';
+    modeBtn.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    modeBtn.addEventListener('click', function () { toggleMode(); });
+    function toggleMode() {
+      var W = host.clientWidth / 2, H = host.clientHeight / 2, wc = toWorld(W, H);
+      if (pageMode()) { modeOv = 'free'; view.x = view.lx || 0; }
+      else { // the middle of what is on screen stays in the middle of the column
+        modeOv = 'lin'; var lx = W - wc[0]; view.lx = Math.abs(lx) < 60 ? 0 : lx; view.y = H - wc[1];
+      }
+      hidePeek(); applyView(); drawDirs();
+      if (hooks.view) hooks.view({ z: view.z, r: view.r });
+      if (hooks.notice) hooks.notice(pageMode() ? 'Linear mode: scrolls up and down. Arrows show what is off to the side.' : 'Free canvas: move, zoom and turn as you like.' + (phoneNow() ? ' Shake again for Linear mode.' : ''));
+    }
+    var shk = { t: 0, n: 0, last: 0 };
+    on(window, 'devicemotion', function (e) {
+      if (!phoneNow() || !host.isConnected) return;
+      var a = e.acceleration, m;
+      if (a && a.x != null) m = Math.hypot(a.x, a.y, a.z);
+      else { var g = e.accelerationIncludingGravity; if (!g || g.x == null) return; m = Math.abs(Math.hypot(g.x, g.y, g.z) - 9.81); }
+      if (m < 16) return;
+      var t = Date.now();
+      if (t - shk.t < 110) return; // the same jolt
+      if (t - shk.t > 800) shk.n = 0;
+      shk.t = t; shk.n++;
+      if (shk.n >= 3 && t - shk.last > 1500 && !drag && !gest) { shk.n = 0; shk.last = t; toggleMode(); }
+    });
 
     // ---- The navigator: a small map of the whole page; tap or drag in it to go there ----
     var navOn = false, navEl = el('div', 'qn-nav hidden', host), navContent = null, navBox = null;
@@ -908,7 +1049,12 @@
       navigator: function (on) { navOn = !!on; navEl.classList.toggle('hidden', !navOn); navContent = null; drawNavSoon(); },
       gestures: function () { return 'pinch to zoom, two fingers to move, twist to turn, two-finger double tap to undo, three-finger double tap to redo'; },
       rotate: function (on) { rotateOn = !!on; },
-      info: function () { return { z: view.z, r: view.r }; }
+      info: function () { return { z: view.z, r: view.r, lk: !!view.lk, linear: pageMode() }; },
+      lock: function () { view.lk = !view.lk; applyView(); return view.lk; },
+      locked: function () { return !!view.lk; },
+      linear: function () { return pageMode(); },
+      toggleMode: toggleMode,
+      followPref: function () { modeOv = null; applyView(); }
     };
 
     // ---- What the app can ask of the canvas ----
@@ -1006,7 +1152,7 @@
     stage.style.transformOrigin = '0 0';
     renderAll();
     applyView();
-    on(window, 'resize', layout);
+    on(window, 'resize', function () { layout(); topCache = null; drawDirsSoon(); });
     self._unbind = function () { offs.forEach(function (f) { f(); }); offs = []; };
   }
 

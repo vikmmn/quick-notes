@@ -1890,6 +1890,18 @@
     self.viewChanged = function () { drawUi(); if (lockHost.firstChild) drawLocks(); };
     self.redraw = function () { layers.forEach(function (l) { l.items.forEach(invalidate); }); render(); }; // a tip, line style or pattern changed
     self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
+    // Where the drawings are, coarsely (3.25, for Linear mode's arrows): visible items gathered into grid cells, one box per cell.
+    self.blocks = function (cell) {
+      var cells = {}, out = [];
+      layers.forEach(function (l) { if (l.vis === false) return; l.items.forEach(function (it) {
+        var b = itemBox(it); if (!b || (!b.w && !b.h)) return;
+        var k = Math.floor((b.x + b.w / 2) / cell) + ',' + Math.floor((b.y + b.h / 2) / cell), c = cells[k];
+        if (!c) cells[k] = { x: b.x, y: b.y, r: b.x + b.w, b: b.y + b.h };
+        else { c.x = Math.min(c.x, b.x); c.y = Math.min(c.y, b.y); c.r = Math.max(c.r, b.x + b.w); c.b = Math.max(c.b, b.y + b.h); }
+      }); });
+      for (var k in cells) { var c = cells[k]; out.push({ x: c.x, y: c.y, w: c.r - c.x, h: c.b - c.y }); }
+      return out;
+    };
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
     // Guides (3.24): put one on the page (or take it away), ask which are there, clear them all.

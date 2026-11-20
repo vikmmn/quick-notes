@@ -250,6 +250,25 @@
   #canvasHost.picking { cursor: zoom-in; }
   .qn-nav { position: absolute; right: 12px; bottom: 84px; width: 168px; height: 124px; z-index: 8; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; touch-action: none; cursor: pointer; }
   .qn-nav svg { width: 100%; height: 100%; display: block; }
+  .qn-dirs { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
+  .qn-dir { position: absolute; pointer-events: auto; width: 40px; height: 40px; border-radius: 50%; padding: 0; display: grid; place-items: center; background: var(--surface); color: var(--accent); border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: .9; touch-action: manipulation; }
+  .qn-dir.hidden { display: none; }
+  .qn-dir[data-d=n] { top: 8px; left: calc(50% - 20px); }
+  .qn-dir[data-d=s] { bottom: 16px; left: calc(50% - 20px); }
+  .qn-dir[data-d=w] { left: 8px; top: calc(50% - 20px); }
+  .qn-dir[data-d=e] { right: var(--dr, 8px); top: calc(50% - 20px); }
+  .qn-dir[data-d=nw] { left: 8px; top: 8px; }
+  .qn-dir[data-d=ne] { right: var(--dr, 8px); top: 8px; }
+  .qn-dir[data-d=sw] { left: 8px; bottom: var(--dbl, 76px); }
+  .qn-dir[data-d=se] { right: var(--dr, 8px); bottom: 76px; }
+  .qn-peek { position: absolute; z-index: 10; max-height: 46%; overflow: hidden; background: var(--paper); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; animation: qnPeek .18s ease-out; }
+  .qn-peek svg { width: 100%; max-height: 220px; display: block; }
+  .qn-peek .pk-text { white-space: pre-wrap; font-size: 14px; line-height: 1.4; color: var(--ink); max-height: 220px; overflow: hidden; }
+  .qn-peek .pk-hint { font-size: 12px; color: var(--muted, #888); text-align: center; }
+  @keyframes qnPeek { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+  .qn-modebtn { position: absolute; z-index: 9; bottom: 16px; right: 110px; min-height: 36px; padding: 6px 14px; border-radius: 18px; background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow); font-size: 14px; color: var(--ink); }
+  .qn-modebtn[aria-pressed=true] { color: var(--accent); }
+  .qn-modebtn.hidden { display: none; }
   .qn-area { position: absolute; z-index: 9; border: 2px dashed var(--accent); background: rgba(0,121,107,.08); border-radius: 6px; pointer-events: none; }
   #viewCtl { position: fixed; right: 16px; z-index: 25; bottom: calc(22px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; }
   #viewCtl.lift { bottom: calc(70px + env(safe-area-inset-bottom)); }
@@ -662,7 +681,8 @@
     <hr>
     <button type="button" data-v="nav">Navigator <span id="navState">Off</span></button>
     <button type="button" data-v="rot">Turn with two fingers <span id="rotState">On</span></button>
-    <button type="button" data-v="page" title="Upright on a phone, notes open as a page that only scrolls up and down (a note with things out to the side stays a free canvas)">Linear mode <span id="pageState">Phone upright</span></button>
+    <button type="button" data-v="page" title="Upright on a phone, notes open as a column that only scrolls up and down; arrows at the edges show what is off to the side (tap to peek, double tap to go there). Shake the phone to switch to the free canvas and back.">Linear mode <span id="pageState">Phone upright</span></button>
+    <button type="button" data-v="lock" title="Keep this note's zoom and turn; fingers only scroll, along the lines or down the columns">Lock zoom and turn <span id="lockState">Off</span></button>
   </div>
   <div id="noteMenu" class="hidden" role="menu">
     <button type="button" data-m="image"><svg class="i"><use href="#i-image"/></svg>Add image</button>
