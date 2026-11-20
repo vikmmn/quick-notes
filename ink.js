@@ -781,10 +781,11 @@
     // Handles, tool circles and tap distances stay the same size on screen at any zoom.
     function Z() { return o.zoom ? o.zoom() : 1; }
     var tool = 'pen', opt = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 },
-      lasso: { m: 'most', how: 'loop', sc: 'all' },
+      lasso: { m: 'most', how: 'loop', sc: 'all' }, guide: { snap: true },
       text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
     var activeId = layers[layers.length - 1].id;
     var drag = null, sel = null, raf = 0;
+    var G = window.QNGuides ? window.QNGuides.create() : null; // ruler, set squares, protractor (3.24)
 
     function active() { return layers.filter(function (l) { return l.id === activeId; })[0] || layers[layers.length - 1]; }
     function editable(l) { return l.vis && !l.lock; }
@@ -1069,6 +1070,7 @@
           h += '<rect x="' + (q[0] - a / 2) + '" y="' + (q[1] - bb / 2) + '" width="' + a + '" height="' + bb + '" rx="' + 3 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 1.6 * k + '"/>';
         });
       }
+      if (G) h += G.svg(Z(), M);
       ui.innerHTML = h;
       placeBar();
     }
@@ -1622,6 +1624,10 @@
 
     // ---- Pointer input (positions are note coordinates) ----
     self.down = function (p, ev) {
+      if (tool === 'guide') { // a guide: move it, turn it with its knob, size it with its corner
+        var gh = G && G.hit(p, 18 / Z()); if (!gh) return false;
+        drag = { guide: gh }; drawUi(); return true;
+      }
       if (tool === 'lasso') {
         var hnd = handleAt(p);
         // Tap (3.21.1): a quick tap picks just that thing (or, on empty space, picks nothing); tap and hold adds it to
@@ -1636,11 +1642,13 @@
         var L = active();
         if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
         var pen = opt.pen, isPen = ev.pointerType === 'pen';
-        var it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [shapePt(p, isPen)] };
+        var p1 = shapePt(p, isPen), lk = G && G.count() && opt.guide.snap !== false ? G.snap(p, 16 / Z()) : null; // starting at a guide's edge: the line follows it
+        if (lk) { var fp = G.follow(lk, p1); p1 = [fp[0], fp[1]].concat(p1.slice(2)); G.highlight(lk); drawUi(); }
+        var it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o, p: [p1] };
         if (pen.cs && DEFS[pen.cs]) it.cs = pen.cs; // a home-made tip or line style
         if (pen.st != null) it.st = pen.st;
         if (isPen) { it.f = 1; if (pen.th != null) it.th = pen.th; }
-        drag = { stroke: it, layer: L };
+        drag = { stroke: it, layer: L, lock: lk };
         startLive(drag); liveSoon();
         return true;
       }
@@ -1659,6 +1667,7 @@
         return;
       }
       if (drag.held) return;
+      if (drag.guide) { G.drag(drag.guide, p); drawUi(); return; }
       if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } if (drag.far) applyTransform(p); return; }
       if (drag.pick) { if (Math.hypot(p[0] - drag.pick[0], p[1] - drag.pick[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } return; }
       if (drag.stroke && drag.snap) { // a clean shape: the pen now sizes and turns it (a line: moves its end)
@@ -1681,12 +1690,13 @@
             drag.hold = { x: p[0], y: p[1], t: setTimeout(function () { snapShape(); }, 550) };
           }
         }
-        (pts || [p]).map(function (q) { return shapePt(q, isPen); }).forEach(function (q) {
+        var lockPt = function (q) { if (!drag.lock) return q; var w = G.follow(drag.lock, q); return [w[0], w[1]].concat(q.slice(2)); };
+        (pts || [p]).map(function (q) { return lockPt(shapePt(q, isPen)); }).forEach(function (q) {
           var last = sp[sp.length - 1];
           if (last && Math.abs(q[0] - last[0]) + Math.abs(q[1] - last[1]) < 0.15 / Z()) { last[2] = Math.max(last[2], q[2]); return; } // no movement
           sp.push(q);
         });
-        drag.pred = pred && pred.length ? pred.slice(-2).map(function (q) { return shapePt(q, isPen); }) : null;
+        drag.pred = pred && pred.length ? pred.slice(-2).map(function (q) { return lockPt(shapePt(q, isPen)); }) : null;
         liveSoon();
         return;
       }
@@ -1751,6 +1761,8 @@
     self.up = function (p) {
       var d = drag; drag = null;
       if (!d) return;
+      if (d.guide) { G.end(); drawUi(); return; }
+      if (d.lock) { G.highlight(null); drawUi(); }
       if (d.hold) clearTimeout(d.hold.t);
       if (d.fhold) clearTimeout(d.fhold.t);
       clearTimeout(d.holdT);
@@ -1803,6 +1815,7 @@
     self.cancel = function () {
       if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); dropLiveSvg(drag); }
       if (drag && (drag.kind || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
+      if (G) { G.end(); G.highlight(null); }
       drag = null; cursor = null; drawUi();
     };
     self.busy = function () { return !!drag; };
@@ -1849,6 +1862,11 @@
     self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
+    // Guides (3.24): put one on the page (or take it away), ask which are there, clear them all.
+    self.guideToggle = function (k) { var c = o.center ? o.center() : [200, 200, 0]; var on = G.toggle(k, c, c[2] || 0); drawUi(); return on; };
+    self.guideHas = function (k) { return !!G && G.has(k); };
+    self.guideKinds = function () { return G ? G.kinds().map(function (k) { return [k, G.label(k)]; }) : []; };
+    self.guideClear = function () { if (G) { G.clear(); drawUi(); } };
     self.opts = function (k, v) {
       // A setting the app has taken away (no home-made tip any more: plain) goes here too; before 3.18 it stayed.
       if (v) { Object.keys(opt[k]).forEach(function (key) { if (!(key in v)) delete opt[k][key]; }); Object.assign(opt[k], v); }

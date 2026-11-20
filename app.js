@@ -1217,7 +1217,7 @@
   }
 
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
-  var INKOPT = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
+  var INKOPT = { guide: { snap: true }, pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
     lasso: { m: 'most', how: 'loop', sc: 'all' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
   (function migrate() { // settings saved by earlier versions
     if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
@@ -1305,8 +1305,16 @@
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
     } else if (t === 'type') html = G(HINT('Your finger moves the page; tap text to edit it, double-tap anywhere to start new text.')) +
         G(HINT('Writing with the pen switches to Pen by itself.'));
+    else if (t === 'guide') {
+      var CI = S.canvas && S.canvas.ink();
+      html = G(HINT('Tap to put one on the page; tap again to take it away.')) +
+        G((CI ? CI.guideKinds() : []).map(function (k) { return chip(k[1], 'data-guide="' + k[0] + '"', CI.guideHas(k[0])); }).join('')) +
+        G(chip('Lines follow the edge', 'data-gsnap title="Start a pen line at an edge (or the protractor rim) and it follows it"', o.guide.snap !== false)) +
+        G(HINT('Drag a guide to move it, the knob to turn it (it catches every 15°), the square to size it. Then draw with the Pen along an edge. Guides are not saved with the note.')) +
+        G(chip('Clear all', 'data-gclear'));
+    }
     else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
-    var NAMES = { type: 'Hand', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', select: 'Move' };
+    var NAMES = { type: 'Hand', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', guide: 'Guides', select: 'Move' };
     if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
       '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
@@ -1477,6 +1485,9 @@
     }
     if (b.dataset.act === 'layers') return toggleLayers();
     if (b.dataset.act === 'image') { if (addHeld) { addHeld = false; return; } addToPage(); return; } // any files onto the page
+    if (b.dataset.guide) { if (S.canvas) S.canvas.ink().guideToggle(b.dataset.guide); return setTool('guide'); }
+    if (b.dataset.gsnap != null) { INKOPT.guide.snap = INKOPT.guide.snap === false; applyInk(); savePref(); return setTool('guide'); }
+    if (b.dataset.gclear != null) { if (S.canvas) S.canvas.ink().guideClear(); return setTool('guide'); }
     if (b.dataset.snap != null) { INKOPT.pen.snap = INKOPT.pen.snap === false; applyInk(); savePref(); return setTool('pen'); }
     if (b.dataset.cs != null) { switchPen(function () { if (b.dataset.cs) INKOPT.pen.cs = b.dataset.cs; else delete INKOPT.pen.cs; }); return setTool('pen'); }
     if (b.dataset.big != null) { PREF.bigSize = SIZE_MAX() <= 24; if (!PREF.bigSize && INKOPT.pen.s > 24) INKOPT.pen.s = 24; applyInk(); savePref(); return setTool('pen'); }
@@ -2401,6 +2412,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Ruler, set squares and protractor', d: 'A new tool, Guides, puts a ruler, a 45° set square, a 30/60° set square and a protractor on the page. Drag one to move it, the knob above it to turn it (it catches every 15°), the square corner to size it. Then draw with the Pen along an edge, or along the protractor\'s curved rim: the line follows it. Guides are helpers: they are not saved with the note. Perspective and isometric guides come next. Longer PDFs too: up to 200 pages.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-18 120 80)"><rect x="52" y="64" width="136" height="26" rx="3" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M64 64v8M76 64v5M88 64v8M100 64v5M112 64v8M124 64v5M136 64v8M148 64v5M160 64v8M172 64v5" stroke="' + INKC + '" stroke-width="1.2" opacity=".7"/></g><path d="M60 100L180 28" stroke="' + INKC + '" stroke-width="3" stroke-linecap="round" fill="none"/>') },
     { t: 'Backgrounds: grids and textures', d: 'At the bottom of Layers there are now two background layers: Grid (23 kinds, any line colour, size and strength) and Texture (33 surfaces: papers, handmade and crumpled paper, linen, canvas, denim, felt, woods, cork, steel, concrete, marble, leather, whiteboard, green board, blackboard and more, each in its own colour or any colour). Tap one to choose; the eye hides it. On a phone held upright, notes now open like a page that only scrolls up and down (View › Page like Keep changes this), and the line you are typing stays in view above the keyboard. Feedback notes move by press and hold, then drag.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="#c79a64"/><path d="M20 46h200M20 78h200M20 110h200M52 14v112M84 14v112M116 14v112M148 14v112M180 14v112" stroke="rgba(0,0,0,.18)"/>') },
     { t: 'Bring in another note, or part of one', d: 'The Add button now asks: Files from the device, or Serendipity notes. Choose notes, search or browse for one, and open it. Select a part of it if you like (or nothing, for the whole note), then tap As a live picture or As a link: it goes into the note you came from. Open ↗ on it takes you there.',
