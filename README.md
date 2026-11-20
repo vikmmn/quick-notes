@@ -37,7 +37,7 @@ Anywhere other than https://vikmmn.github.io it opens in demo mode with a preten
 
 ## Note files
 `YYYY-MM-DD HHmm <title or first words>.md`, in Notes › Inbox, with front matter for `id`, `created`,
-`updated`, `labels`, `pinned` and `source` (notes, keep or notion), then `# Title` and the note.
+`updated`, `labels`, `pinned` and `source` (notes, keep, notion or obsidian), then `# Title` and the note.
 Checklists are `- [ ]` / `- [x]` lines; underline, highlight, colour and size are small inline HTML tags.
 
 A plain note is just Markdown. A note laid out on the canvas has one section per text box after a hidden
@@ -71,6 +71,8 @@ Text of that box
 | `demo-data.js` | Pretend notes for demo mode only |
 | `import.html`, `import.js`, `zip.js` | One-time copy from Google Keep (Takeout): reads the export from Drive in pieces, writes Notes › Keep |
 | `notion.html`, `notion.js` | One-time copy from a Notion "Markdown & CSV" export, writes Notes › Notion |
+| `vault.html`, `vault.js` | One-time copy of an Obsidian vault folder (read from the computer), writes Second brain |
+| `excalidraw/` | Excalidraw library and fonts, used only by the vault copy to draw Excalidraw drawings as pictures |
 
 ## Copying notes in from Keep or Notion
 These are one-time copies, not syncs. Open them from the Folders menu › Settings › Copy notes in.
@@ -83,6 +85,14 @@ skips what is already there.
 Notion: open `notion.html`, pick the export zip (Settings › Export all workspace content › Markdown & CSV, with
 sub-pages in folders). Pages go to Notes › Notion, sub-pages in folders named after their parent page, files to
 Notion › Attachments, Tags become labels. Running it again skips what is already there.
+
+Obsidian: open `vault.html` in Chrome or Edge on the computer and choose the vault folder (it is only read). Notes go to
+Second brain in the vault's folders; each note's id is `vault-` plus a hash of its path, so `[[links]]` become
+`qn://note/<id>` links before anything is saved. Excalidraw drawings (drawn by the Excalidraw library) and `.canvas`
+files become PNG pictures on the note's page (tiles of up to 4096 px, about 2 px per unit, fewer for very big boards),
+with their words in a text box below. Pictures and files go to the main Attachments folder, named by a hash of their
+contents. Tables become one line per row (text boxes don't keep tables). Skipped: hidden folders (.obsidian, .trash,
+.space…), `001 Template`, `.mdb`, `.js`/`.css`/`.json` files and empty notes. Running it again skips what is there.
 
 ## Syncing while the phone sleeps
 When the app goes to the background it writes its unsent changes to an outbox in IndexedDB and registers a

@@ -311,6 +311,55 @@
     openNote(n);
     if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
   }, true);
+  // Links in a note's text (3.26): a note link (qn://note/…, as the Obsidian copy makes from [[links]]) opens that
+  // note; a link to a file in Attachments opens the file. A tap while the text is being written still just places the
+  // cursor, so the link's words can be changed.
+  var writingAtDown = false;
+  document.addEventListener('pointerdown', function (e) {
+    var ed = e.target.closest && e.target.closest('[contenteditable="true"]');
+    writingAtDown = !!(ed && document.activeElement === ed);
+  }, true);
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]'); if (!a || a.closest('.emb, .card, #sheet')) return;
+    var href = a.getAttribute('href') || '', ed = a.closest('[contenteditable]');
+    var L = noteLinkOf(href), local = !L && isLocalRef(href) && /^Attachments\//.test(href);
+    if (!L && !local) return;
+    e.preventDefault();
+    if (ed && writingAtDown && !e.ctrlKey && !e.metaKey) { // writing: the tap places the cursor; a second tap on it opens
+      if (S.linkTap === a && Date.now() - S.linkTapAt < 2500) { S.linkTap = null; }
+      else { S.linkTap = a; S.linkTapAt = Date.now(); toast('Tap the link again to open it.', null, null, 2000); return; }
+    }
+    e.stopPropagation();
+    if (local) {
+      var w = window.open('', '_blank');
+      attachmentUrl(refName(href)).then(function (u) { if (u && w) w.location = u; else { if (w) w.close(); toast('That file isn\'t in Drive yet, or you are offline.'); } });
+      return;
+    }
+    var n = noteById(L.id);
+    if (!n) { toast('That note isn\'t here (deleted, or not synced yet).'); return; }
+    if (S.cur && S.canvas) S.canvas.flush();
+    openNote(n);
+    if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
+  }, true);
+  // Notes that link to this one (3.26): in their text, or as a linked note on their page.
+  function linkedFrom(n) {
+    var key = 'qn://note/' + encodeURIComponent(n.id);
+    return live().filter(function (x) {
+      if (x.id === n.id) return false;
+      if (String(x.body || '').indexOf(key) >= 0) return true;
+      return (x.ink || []).some(function (l) { return (l.items || []).some(function (it) { return it.t === 'i' && String(it.src || '').indexOf(key) === 0; }); });
+    }).sort(function (a, b) { return String(b.updated).localeCompare(String(a.updated)); });
+  }
+  function linkedFromSheet(n) {
+    var list = linkedFrom(n);
+    openSheet('<h2>Linked from</h2>' + (list.length ? '<p>' + list.length + ' note' + (list.length > 1 ? 's link' : ' links') + ' here.</p><ul class="linked">' + list.slice(0, 200).map(function (x) {
+      return '<li data-open="' + esc(x.id) + '" style="cursor:pointer;padding:6px 0"><b>' + esc(x.title || 'Untitled') + '</b></li>';
+    }).join('') + '</ul>' : '<p>No other note links here yet. Copy a link to this note (in the ••• menu) and add it to another note.</p>') +
+      '<div class="row"><button type="button" data-act="close">Close</button></div>');
+    $('sheet').querySelectorAll('[data-open]').forEach(function (li) {
+      li.onclick = function () { var x = notes[li.dataset.open]; if (x && !x.deleted) { closeSheet(); if (S.canvas) S.canvas.flush(); openNote(x); } };
+    });
+  }
   // How a note's preview was enlarged in the list stays that way (3.24.1): the part of a page picture, or the size of a text preview.
   var PZ = {};
   try { PZ = JSON.parse(localStorage.getItem('qn-pz') || '{}') || {}; } catch (e) {}
@@ -859,11 +908,12 @@
     setTimeout(importSheet, 250); // after the drawer's history step is undone
   };
   function importSheet() {
-    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Serendipity. It is not a sync: Keep and Notion stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
+    openSheet('<h2>Copy notes in</h2><p>A one-time copy into Serendipity. It is not a sync: Keep, Notion and Obsidian stay as they are, and edits made here stay here. Running a copy again only adds notes that are not here yet.</p>' +
       '<div class="pick"><button type="button" data-act="keep">' + icon('notes') + 'From Google Keep (Takeout export)</button>' +
-      '<button type="button" data-act="notion">' + icon('notes') + 'From Notion (Markdown export)</button></div>' +
+      '<button type="button" data-act="notion">' + icon('notes') + 'From Notion (Markdown export)</button>' +
+      '<button type="button" data-act="vault">' + icon('notes') + 'From Obsidian (a vault folder on this computer)</button></div>' +
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
-    function (act) { if (act === 'keep') location.href = 'import.html'; if (act === 'notion') location.href = 'notion.html'; });
+    function (act) { if (act === 'keep') location.href = 'import.html'; if (act === 'notion') location.href = 'notion.html'; if (act === 'vault') location.href = 'vault.html'; });
   }
 
   function newFolderSheet(parent) {
@@ -2237,6 +2287,7 @@
     if (b.dataset.m === 'image') pickImage();
     if (b.dataset.m === 'bgg' || b.dataset.m === 'bgt') { closeMenu(); bgSheet(b.dataset.m === 'bgg' ? 'g' : 't'); return; }
     if (b.dataset.m === 'link' && S.cur) copyNoteLink(S.cur, null);
+    if (b.dataset.m === 'linked' && S.cur) { closeMenu(); linkedFromSheet(S.cur); return; }
     if (b.dataset.m === 'move') pickFolder('Move note to…', folderOf(n), function (target) {
       if (target !== folderOf(n)) {
         if (n.fileId && !n.moveFrom) n.moveFrom = n.folderId;
@@ -2445,7 +2496,7 @@
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       toolOrderHtml() +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
-        '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
+        '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button> <button type="button" data-act="vault">From Obsidian</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
         '<button type="button" data-act="bugbtn">' + (PREF.bugBtn !== false ? 'Hide the feedback button' : 'Show the feedback button') + '</button> <button type="button" data-act="bugnow">Send feedback now</button> <button type="button" data-act="fbinbox">Your feedback and replies</button></div>' +
       '<div class="set"><b>About</b><p>Serendipity ' + esc(CFG.VERSION) + '. Notes are Markdown files in your Google Drive › ' + esc(sync.rootName()) + ', readable by any notes app. Serendipity can only see the files it makes.</p>' +
@@ -2469,6 +2520,7 @@
       if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
       if (act === 'keep') location.href = 'import.html';
       if (act === 'notion') location.href = 'notion.html';
+      if (act === 'vault') location.href = 'vault.html';
       if (act === 'update') { closeSheet(); checkUpdate(); }
       if (act === 'demoOffline') { Drive.setOffline(!Drive.isOffline()); sync.run({ pull: true }); settingsSheet(); }
       if (act === 'demoElsewhere') {
@@ -2487,6 +2539,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Your Obsidian vault, copied in', d: 'Settings › Copy notes in › From Obsidian copies a whole vault from your computer into Second brain, keeping its folders. [[Links]] become note links: tap one to open that note (while writing, tap it twice). ••• › Linked from… lists the notes that link to the one you are in. Excalidraw drawings and canvases come in as sharp pictures, with their words below for search. The vault itself is only read, never changed.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="64" height="80" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="142" y="30" width="64" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M98 70h40" stroke="' + A + '" stroke-width="3"/><path d="M130 62l8 8-8 8" fill="none" stroke="' + A + '" stroke-width="3"/><path d="M44 46h44M44 58h34M44 70h40" stroke="' + RULE + '" stroke-width="3"/>') },
     { t: 'Choose how a link shows', d: 'When you add a web link you now choose how it shows: a link card that opens the page in your browser, the page itself in a window, or a picture of the page (made by a free screenshot service, so the address is sent to it). Select the link later and tap its mode button to change it any time.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="30" width="72" height="26" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="128" y="30" width="72" height="50" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="40" y="72" width="72" height="40" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/>') },
     { t: 'Linear mode shows what is off to the side', d: 'On an upright phone, notes scroll up and down as a column, and now arrows at the edges and corners show where more is: drawings, text or pictures off to the side, above or below. Tap an arrow to peek at it for a moment; double tap it (or tap the peek) to move the column there. The note remembers where you were when you open it again. Shake the phone to switch to the free canvas and back; on a tablet use the Linear/Free button. View › Lock zoom and turn keeps a note zoomed and turned as you set it, and fingers then only scroll along the lines or down the columns.',

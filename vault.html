@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Copy in an Obsidian vault · Serendipity</title>
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+  :root { --paper: #ffffff; --surface: #fff; --ink: #1f1f1f; --muted: #5f6368; --rule: #e0e3e7; --accent: #00796b; --accent-soft: #d8efec; --bad: #b3261e;
+    --font: "Google Sans", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #1f1f1f; --surface: #1f1f1f; --ink: #e3e3e3; --muted: #a8adb3; --rule: #444746; --accent: #5fc4b5; --accent-soft: #1f3a37; --bad: #f2b8b5; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--font);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  main { max-width: 720px; margin: 0 auto; padding: 20px 18px 60px; }
+  h1 { font-size: 24px; font-weight: 400; margin: 8px 0 4px; }
+  h2 { font-size: 18px; margin: 0 0 8px; }
+  section { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; margin: 14px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .bad { color: var(--bad); font-size: 14px; }
+  .hidden { display: none !important; }
+  button, .button { font: 500 15px/1 var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 11px 18px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.primary, .button { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+  button:disabled { opacity: .5; cursor: default; }
+  .pick { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--rule); cursor: pointer; overflow-wrap: anywhere; }
+  .pick input, .opt input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+  .track { height: 10px; background: var(--accent-soft); border-radius: 5px; overflow: hidden; margin: 10px 0 6px; }
+  #bar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  ol, ul { padding-left: 20px; }
+  a { color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  #pause { background: var(--accent-soft); border-radius: 10px; padding: 12px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="./">← Serendipity</a></p>
+  <h1>Copy in an Obsidian vault</h1>
+  <p class="muted">A one-time copy, not a sync: the vault on this computer is only read, never changed, and edits made in Serendipity stay in Serendipity. Everything goes to Serendipity › Second brain, in the vault's own folders. [[Links]] become note links, Excalidraw drawings and canvases come in as sharp pictures, and pictures and files go to Attachments once each. Running it again later only adds what isn't there yet, so it's fine to stop and carry on later.</p>
+  <p id="demoNote" class="bad hidden">Demo mode: this copy uses a pretend Drive. Use the real app at vikmmn.github.io/quick-notes/vault.html to copy for real.</p>
+
+  <section>
+    <h2>1. Sign in</h2>
+    <div id="signedOut" class="hidden"><p class="muted">Sign in with Google to save the notes in your Drive.</p><button id="signInBtn" class="primary" type="button">Sign in with Google</button></div>
+    <p class="muted">Use Chrome or Edge on the computer the vault is on.</p>
+  </section>
+
+  <section>
+    <h2>2. Choose the vault folder</h2>
+    <p class="muted">The folder that holds the whole vault (the one with the hidden .obsidian folder in it). The browser asks once to let this page read it.</p>
+    <div class="row"><button id="pickBtn" class="primary" type="button">Choose the vault folder</button></div>
+    <input id="dirInput" type="file" webkitdirectory multiple class="hidden">
+    <p id="status" class="muted"></p>
+  </section>
+
+  <section id="step3" class="hidden">
+    <div id="summary"></div>
+    <label class="opt" id="looseRow"><input type="checkbox" id="optLoose" checked><span>Also copy the pictures and files no note uses: <span id="looseCount"></span>. Each comes in as a note of its own, in its folder.</span></label>
+    <div class="row"><button id="importBtn" class="primary" type="button">Copy into Serendipity</button></div>
+    <div id="progress" class="hidden">
+      <div class="track"><div id="bar"></div></div>
+      <div id="count" class="muted"></div>
+      <div id="now" class="muted" style="overflow-wrap:anywhere"></div>
+      <div id="pause" class="hidden"><b>Your Google sign-in ran out.</b> The copy is paused, nothing is lost. <div class="row"><button id="continueBtn" class="primary" type="button">Continue</button></div></div>
+      <div class="row"><button id="stopBtn" type="button">Stop</button></div>
+      <p class="muted">Keep this tab open; the screen stays on while it runs. Big drawings take a few seconds each.</p>
+      <div id="result"></div>
+    </div>
+  </section>
+</main>
+<script>window.EXCALIDRAW_ASSET_PATH = new URL('excalidraw/', location.href).href;</script>
+<script src="config.js"></script>
+<script src="drive.js"></script>
+<script src="vendor.js"></script>
+<script src="excalidraw/excalidraw.js"></script>
+<script src="vault.js"></script>
+</body>
+</html>
