@@ -303,8 +303,8 @@
     return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + out + '</g>';
   }
   // ps: how big the pattern is drawn (1: the tile's own size); pd: spacing, the room between repeats (1: none).
-  function patternDef(d, pid, ps, pd) { // a tile, with its edges wrapped round so the pattern runs on without seams
-    var sz = (d.sz || 48) * (ps || 1), per = sz * Math.max(1, pd || 1), inner = defItems(d), nine = '';
+  function patternDef(d, pid, ps, pd, pc) { // a tile, with its edges wrapped round so the pattern runs on without seams (pc: one colour for the whole tile)
+    var sz = (d.sz || 48) * (ps || 1), per = sz * Math.max(1, pd || 1), inner = defItems(d, pc ? colorOf(pc) : null), nine = '';
     [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
     var body = per > sz ? '<clipPath id="' + pid + '-c"><rect width="100" height="100"/></clipPath><g clip-path="url(#' + pid + '-c)">' + nine + '</g>' : nine;
     return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + per.toFixed(2) + '" height="' + per.toFixed(2) + '"><g transform="scale(' + (sz / 100) + ')">' + body + '</g></pattern>';
@@ -316,7 +316,7 @@
     if (it.cs && DEFS[it.cs] && it.p && it.p.length) return DEFS[it.cs].k === 'line' ? lineSvg(it, DEFS[it.cs]) : tipSvg(it, DEFS[it.cs]);
     if (it.pt && DEFS[it.pt] && it.t === 'f') {
       var pid = 'pt-' + it.id, po = (it.o == null ? 1 : it.o) * (it.co || 1);
-      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid, it.ps, it.pd) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
+      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid, it.ps, it.pd, it.pc) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
     }
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
@@ -344,8 +344,10 @@
       var xo = it.op === 'exclude';
       defs = '<mask id="' + id + '"' + HUGE + '>' + (xo ? '<g style="isolation:isolate">' : '') +
         k.map(function (p) { var s = shape(p); return xo ? s.replace('<g style="', '<g style="mix-blend-mode:difference;') : s; }).join('') + (xo ? '</g>' : '') + '</mask>';
-      var lo = lead && lead.o != null ? lead.o : 1;
-      body = '<rect x="' + bb.x.toFixed(1) + '" y="' + bb.y.toFixed(1) + '" width="' + bb.w.toFixed(1) + '" height="' + bb.h.toFixed(1) + '" fill="' + colorOf(col) + '"' + (lo !== 1 ? ' fill-opacity="' + lo + '"' : '') + ' mask="url(#' + id + ')"/>';
+      var lo = lead && lead.o != null ? lead.o : 1, fillv = colorOf(col);
+      var lp = it.pt ? it : lead; // a pattern on the shape, or on its bottom part, carries over
+      if (lp && lp.pt && DEFS[lp.pt]) { var ppid = 'pt-' + it.id; defs += patternDef(DEFS[lp.pt], ppid, lp.ps, lp.pd, lp.pc); fillv = 'url(#' + ppid + ')'; }
+      body = '<rect x="' + bb.x.toFixed(1) + '" y="' + bb.y.toFixed(1) + '" width="' + bb.w.toFixed(1) + '" height="' + bb.h.toFixed(1) + '" fill="' + fillv + '"' + (lo !== 1 ? ' fill-opacity="' + lo + '"' : '') + ' mask="url(#' + id + ')"/>';
     }
     var o = (it.o == null ? 1 : it.o) * (it.co || 1);
     return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + defs + body + '</g>';
@@ -1124,13 +1126,16 @@
       if (mode === 'color') sel.lw0 = null;
       if (mode === 'color') {
         var onlyImg = sel.items.every(function (it) { return it.t === 'i'; });
-        var strokes = sel.items.filter(function (it) { return it.t === 's'; }), pfills = sel.items.filter(function (it) { return it.t === 'f' && it.pt; });
+        var strokes = sel.items.filter(function (it) { return it.t === 's'; }), pfills = sel.items.filter(function (it) { return it.t === 'f' && it.pt; }), fillsAll = sel.items.filter(function (it) { return it.t === 'f'; });
         h = T(onlyImg ? 'Opacity' : 'Colour') + (onlyImg ? '' : SW.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + colorOf(c) + '" aria-label="Colour"></button>'; }).join('')) +
           '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round((sel.items[0].o == null ? 1 : sel.items[0].o) * 100) + '" data-op></label>' +
           // Lines (outlines from Text art too): thinner or thicker, all by the same amount.
           (strokes.length ? '<label class="op">Line width <input type="range" min="10" max="400" value="100" data-lw></label>' : '') +
           (pfills.length ? '<label class="op">Pattern size <input type="range" min="20" max="400" value="' + Math.round((pfills[0].ps || 1) * 100) + '" data-ps></label>' +
             '<label class="op">Spacing <input type="range" min="100" max="400" value="' + Math.round((pfills[0].pd || 1) * 100) + '" data-pd></label>' : '') +
+          (fillsAll.length ? '<span class="bt">Pattern</span><button type="button" data-spt=""' + (fillsAll.every(function (f) { return !f.pt; }) ? ' aria-pressed="true"' : '') + '>Plain</button>' +
+            Object.keys(DEFS).filter(function (k) { return DEFS[k].k === 'pat'; }).map(function (k) { return '<button type="button" data-spt="' + k + '"' + (fillsAll.every(function (f) { return f.pt === k; }) ? ' aria-pressed="true"' : '') + '>' + esc(DEFS[k].name || 'Pattern') + '</button>'; }).join('') +
+            (pfills.length ? '<button type="button" data-spt="~orig" title="Use the pattern\'s own colours">Own colours</button>' : '') : '') +
           '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
@@ -1203,8 +1208,19 @@
         var pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].map(function (q) { return o.toScreen(q[0], q[1]); });
         var x0 = Math.min.apply(null, pts.map(function (q) { return q[0]; })), y1 = Math.max.apply(null, pts.map(function (q) { return q[1]; }));
         var host = o.uiHost, W = host.clientWidth, H = host.clientHeight;
-        bar.style.left = Math.max(6, Math.min(W - bar.offsetWidth - 6, x0)) + 'px';
-        bar.style.top = Math.max(6, Math.min(H - bar.offsetHeight - 6, y1 + 16)) + 'px';
+        var y0 = Math.min.apply(null, pts.map(function (q) { return q[1]; })), bw = bar.offsetWidth, bh = bar.offsetHeight;
+        var bl = Math.max(6, Math.min(W - bw - 6, x0)), hr0 = host.getBoundingClientRect();
+        // keep clear of the option cards and rails that sit on the screen: try under the selection, above it, then beside the cards
+        var obs = [].slice.call(document.querySelectorAll('#penOpts:not(.hidden), #toolQuick:not(.hidden), #tools')).map(function (e) {
+          var r = e.getBoundingClientRect(); return r.width && r.height ? { l: r.left - hr0.left, t: r.top - hr0.top, r: r.right - hr0.left, b: r.bottom - hr0.top } : null;
+        }).filter(Boolean);
+        var hit = function (t) { return obs.some(function (r) { return bl < r.r && bl + bw > r.l && t < r.b && t + bh > r.t; }); };
+        var cands = [y1 + 16, y0 - bh - 16].concat(obs.map(function (r) { return r.t - bh - 6; }), obs.map(function (r) { return r.b + 6; }));
+        var bt = null;
+        for (var ci = 0; ci < cands.length; ci++) { var tt = cands[ci]; if (tt >= 6 && tt <= H - bh - 6 && !hit(tt)) { bt = tt; break; } }
+        if (bt == null) bt = Math.max(6, Math.min(H - bh - 6, y1 + 16));
+        bar.style.left = bl + 'px';
+        bar.style.top = bt + 'px';
         return;
       }
       bar.style.left = Math.max(4, b.x + M - 6) + 'px';
@@ -1265,8 +1281,13 @@
         renderBar('lock'); return;
       }
       if (b.dataset.c) {
-        var paint = function (it) { it.c = b.dataset.c; if (it.t === 'b') it.k.forEach(function (p) { if (p.t !== 'i') paint(p); }); };
+        var paint = function (it) { it.c = b.dataset.c; if (it.pt) it.pc = b.dataset.c; if (it.t === 'b') it.k.forEach(function (p) { if (p.t !== 'i') paint(p); }); };
         sel.items.slice().forEach(function (it) { paint(own(it)); }); done(); renderBar('color'); return;
+      }
+      if (b.dataset.spt != null) {
+        var pv = b.dataset.spt;
+        sel.items.slice().forEach(function (it) { var t = own(it); if (t.t !== 'f') return; if (pv === '~orig') delete t.pc; else if (pv) t.pt = pv; else { delete t.pt; delete t.pc; } invalidate(t); });
+        done(); renderBar('color'); return;
       }
       if (b.dataset.tol) {
         var to = layers.filter(function (l) { return l.id === b.dataset.tol; })[0];
