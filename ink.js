@@ -207,7 +207,7 @@
   function embedSvg(it, plain) {
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, w = it.w.toFixed(1), h = it.h.toFixed(1);
     var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
-    var web = it.mk === 'link' || it.mk === 'web' || it.mk === 'note' || it.mk === 'notecard', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
+    var web = it.mk === 'link' || it.mk === 'web' || it.mk === 'thumb' || it.mk === 'note' || it.mk === 'notecard', url = web ? it.src : imageUrl(it.src), ttl = xmlEsc(it.ttl || (web ? hostOf(it.src) : it.mk === 'audio' ? 'Sound' : 'Video'));
     var head = '<g data-i="' + it.id + '" transform="' + tr + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>';
     if (plain || (!web && !url)) { // a little picture (or the file not here yet): a card with its name
       return head + '<rect width="' + w + '" height="' + h + '" rx="10" fill="var(--surface, #fff)" stroke="var(--rule, #8886)"' + (url || web ? '' : ' stroke-dasharray="6 5"') + '/>' +
@@ -220,6 +220,9 @@
     if (it.mk === 'file') return head + X + '<a class="emb-live emb-card" href="' + u + '" download="' + ttl + '" target="_blank" rel="noopener"><span class="emb-ico">⎙</span><span><b>' + ttl + '</b><small>File · tap to open</small></span></a>' + Y;
     if (it.mk === 'note') return head + X + noteEmbed(it) + Y;
     if (it.mk === 'notecard') return head + X + '<a class="emb-live emb-card emb-open" data-qn="' + xmlEsc(it.src) + '"><span class="emb-ico">✎</span><span><b>' + ttl + '</b><small>' + (/#/.test(it.src) ? 'Part of a note' : 'Note') + ' · Open ↗</small></span></a>' + Y;
+    if (it.mk === 'thumb') return head + X + '<a class="emb-live emb-thumb" href="' + u + '" target="_blank" rel="noopener" style="display:block;width:100%;height:100%;position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--rule,#8886);background:var(--surface,#fff)">' +
+      '<img alt="" style="width:100%;height:100%;object-fit:cover;object-position:top;display:block" src="https://s.wordpress.com/mshots/v1/' + encodeURIComponent(it.src) + '?w=' + Math.round(Math.min(1200, Math.max(320, it.w * 2))) + '"/>' +
+      '<span style="position:absolute;left:0;right:0;bottom:0;padding:5px 10px;font:12px sans-serif;background:rgba(0,0,0,.55);color:#fff">' + dom + ' · Open ↗</span></a>' + Y;
     if (it.mk === 'web') return head + X + '<div class="emb-bar"><span>' + dom + '</span><a class="emb-live" href="' + u + '" target="_blank" rel="noopener">Open ↗</a></div>' +
       '<iframe class="emb-live" src="' + u + '" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>' + Y;
     return head + X + '<a class="emb-live emb-card" href="' + u + '" target="_blank" rel="noopener"><img alt="" src="https://www.google.com/s2/favicons?sz=64&amp;domain=' + encodeURIComponent(hostOf(it.src)) + '"/>' +
@@ -1140,6 +1143,10 @@
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
         h = T('Collective') + '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
+      } else if (mode === 'webmode') {
+        var wm = sel.items[0].mk;
+        var WB = function (v, label) { return '<button type="button" data-wm="' + v + '"' + (wm === v ? ' aria-pressed="true"' : '') + '>' + label + '</button>'; };
+        h = T('Link shows as') + WB('link', 'Link card') + WB('web', 'Page in a window') + WB('thumb', 'Picture of the page') + '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'newnote') {
         h = T('To new note') + '<button type="button" data-act="nn-copy" title="This note stays as it is">Copy to new note</button>' +
           '<button type="button" data-act="nn-move" title="It leaves this note">Extract to new note</button><button type="button" data-act="back">Cancel</button>';
@@ -1191,7 +1198,7 @@
           (hasArt ? B('outline', 'To outlines (each letter becomes lines you can erase, nudge, fill)', '<path d="M5 20l7-16 7 16h-3l-1.6-4H9.6L8 20z"/><path d="M10.6 13h2.8L12 9.5z"/>') : '') +
           (hasArt ? B('tobox', 'To text box (normal, editable text)', '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10M7 13h7"/>') : '') +
           (layers.length > 1 ? B('layer', 'Move to layer', '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>') : '') +
-          (sel.items.length === 1 && /^(link|web)$/.test(sel.items[0].mk || '') ? B('webmode', sel.items[0].mk === 'link' ? 'Show the page in a window' : 'Show as a card',
+          (sel.items.length === 1 && /^(link|web|thumb)$/.test(sel.items[0].mk || '') ? B('webmodes', 'How this link shows: card, page in a window, or picture',
             sel.items[0].mk === 'link' ? '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>' : '<rect x="3" y="8" width="18" height="8" rx="2"/><path d="M7 12h6"/>') : '') +
           (sel.items.length ? B('lock', 'Lock (can\'t be erased, can\'t be selected)', '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>') : '') +
           (o.copyLink ? B('copylink', 'Copy a link to this part (paste it into another note: hold the Add button)', '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>') : '') +
@@ -1296,10 +1303,11 @@
         done(); renderBar(); return;
       }
       if (act === 'back') return renderBar();
-      if (act === 'webmode') { // a link: a small card, or the page itself in a window
-        var wi = own(sel.items[0]), cx0 = wi.x, cy0 = wi.y;
-        if (wi.mk === 'link') { wi.mk = 'web'; wi.w = Math.max(wi.w, 640); wi.h = Math.max(wi.h, 440); } else { wi.mk = 'link'; wi.w = 360; wi.h = 84; }
-        wi.x = cx0; wi.y = cy0; invalidate(wi); render(); refreshBox(); commit(); renderBar(); drawUi(); return;
+      if (act === 'webmodes') return renderBar('webmode');
+      if (b.dataset.wm) {
+        var wi2 = own(sel.items[0]), cx1 = wi2.x, cy1 = wi2.y, sz = { link: [360, 84], web: [640, 440], thumb: [360, 270] }[b.dataset.wm];
+        if (wi2.mk !== b.dataset.wm) { wi2.mk = b.dataset.wm; wi2.w = Math.max(sz[0], b.dataset.wm === 'link' ? 0 : wi2.w); wi2.h = sz[1]; if (b.dataset.wm === 'link') wi2.w = sz[0]; }
+        wi2.x = cx1; wi2.y = cy1; invalidate(wi2); render(); refreshBox(); commit(); renderBar('webmode'); drawUi(); return;
       }
       if (act === 'straight') { // text lines up with the page again
         sel.items.slice().forEach(function (it) { if (boxy(it) && it.r) { var t = own(it); t.r = 0; invalidate(t); } });
