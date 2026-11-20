@@ -2107,8 +2107,24 @@
     if (/^qn:\/\//.test(t)) return placeNoteLink(t);
     if (!/^https?:\/\/\S+$/i.test(t) && !/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(t)) return linkSheet(t);
     if (!/^https?:/i.test(t)) t = 'https://' + t;
-    S.canvas.placeMedia({ src: t, mk: 'link' }, 360, 84);
-    toast('Link added. Select it to show the page itself in a window.', null, null, 3000);
+    askLinkMode(t);
+  }
+  // How a web link shows (#71): asked every time; select the link later to change it.
+  var LINKMODES = { link: [360, 84], web: [640, 440], thumb: [360, 270] };
+  function askLinkMode(u) {
+    var host = ''; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch (e) {}
+    openSheet('<h2>How should this link show?</h2><p style="margin:0 0 8px">' + esc(host || u) + '</p>' +
+      '<div class="pick" style="margin:0">' +
+      '<button type="button" data-act="lm" data-v="link"><b>Link card</b>: a small card; tap it to open the page in your browser.</button>' +
+      '<button type="button" data-act="lm" data-v="web"><b>The page in a window</b>: the page itself, live on the canvas (some sites refuse to be shown this way).</button>' +
+      '<button type="button" data-act="lm" data-v="thumb"><b>A picture of the page</b>: a small snapshot on the canvas; tap it to open the page. The address is sent to a free screenshot service to make it.</button></div>' +
+      '<p style="margin-top:8px">You can change this later: select the link and tap its mode button.</p>' +
+      '<div class="row"><button type="button" data-act="close">Cancel</button></div>',
+    function (act, b) {
+      if (act !== 'lm') return;
+      var m = b.dataset.v; closeSheet();
+      S.canvas.placeMedia({ src: u, mk: m }, LINKMODES[m][0], LINKMODES[m][1]);
+    });
   }
   function linkSheet(pre) {
     openSheet('<form><h2>Add a link</h2><input name="u" type="text" inputmode="url" autocapitalize="off" placeholder="https://…" autofocus required value="' + esc(pre && pre.length < 400 ? pre : '') + '">' +
@@ -2118,7 +2134,7 @@
       if (/^qn:\/\//.test(u)) { closeSheet(); return placeNoteLink(u); }
       if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
       try { new URL(u); } catch (er) { return sheetError('That doesn\'t look like a web address.'); }
-      closeSheet(); S.canvas.placeMedia({ src: u, mk: 'link' }, 360, 84);
+      closeSheet(); askLinkMode(u);
     });
   }
   mediaInput.onchange = async function () {
@@ -2471,12 +2487,12 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Choose how a link shows', d: 'When you add a web link you now choose how it shows: a link card that opens the page in your browser, the page itself in a window, or a picture of the page (made by a free screenshot service, so the address is sent to it). Select the link later and tap its mode button to change it any time.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="30" width="72" height="26" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="128" y="30" width="72" height="50" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="40" y="72" width="72" height="40" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/>') },
     { t: 'Linear mode shows what is off to the side', d: 'On an upright phone, notes scroll up and down as a column, and now arrows at the edges and corners show where more is: drawings, text or pictures off to the side, above or below. Tap an arrow to peek at it for a moment; double tap it (or tap the peek) to move the column there. The note remembers where you were when you open it again. Shake the phone to switch to the free canvas and back; on a tablet use the Linear/Free button. View › Lock zoom and turn keeps a note zoomed and turned as you set it, and fingers then only scroll along the lines or down the columns.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="70" y="26" width="100" height="88" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><circle cx="200" cy="70" r="11" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><path d="M197 65l5 5-5 5" fill="none" stroke="' + A + '" stroke-width="2"/><circle cx="40" cy="34" r="11" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/>') },
     { t: 'Your tools, your order', d: 'In Settings there is now a Tools list: move each tool up or down to put the side rail in the order you like. Original order puts it back.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="150" y="26" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="150" y="54" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="150" y="82" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/>') },
-    { t: 'Patterns and Join keep their look', d: 'A picked fill now lets you change its colour and its pattern: open Colour and choose a colour (it recolours the pattern), a different pattern, Plain, or Own colours. Joining shapes keeps the pattern instead of turning it into a flat colour. The Select bar now moves out of the way of the option cards instead of hiding under them.',
-      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="90" cy="70" r="34" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><circle cx="130" cy="70" r="34" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/>') },
     { t: 'Links between notes, locks, and adding made simple', d: 'The Add button opens your files straight away: pick several of any kind. Hold it to add the link you copied. Select a part of a note and tap the link symbol, then hold Add in another note: that part shows there, live, with Open to jump to it (••• › Copy a link to this note does the whole note). Select › Lock: can\'t be erased, or can\'t be selected; tap the little sign to unlock. The lasso corner now has New, + Add and − Remove. Feedback notes can be dragged by their corner, and show in the picture exactly as typed.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="136" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><path d="M104 70h32" stroke="' + A + '" stroke-width="3" stroke-dasharray="5 4"/><circle cx="196" cy="34" r="10" fill="' + A + '"/>') },
     { t: 'Videos, sounds, PDFs and links on the page', d: 'The picture button in the tools (and Add image in the ••• menu) now adds any file: a picture, a video, a sound or a PDF. A PDF\'s pages go on the page one under another, ready to write on. Every file is saved once in Attachments in your Drive, named by what is in it, so adding the same file again (in this note or another) reuses it. Links go on as a card or as a window showing the page; switch between them from Select. With the Hand, videos play and links open.',
