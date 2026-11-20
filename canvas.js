@@ -28,7 +28,7 @@
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
   // Drawing lives in ink.js (layers, brushes, erasers, lasso, nudge, fills).
-  var INK = { pen: 1, erase: 1, lasso: 1, nudge: 1, fill: 1 };
+  var INK = { pen: 1, erase: 1, lasso: 1, nudge: 1, fill: 1, guide: 1 };
 
   // ---------- The canvas ----------
   function NoteCanvas(host, wrap, note, hooks) {
@@ -142,6 +142,7 @@
     }
     var eng = null;
     eng = new window.QNInk.Engine({
+      center: function () { var w = toWorld(host.clientWidth / 2, host.clientHeight / 2); return [w[0] - M, w[1] - M, -(view.r || 0)]; }, // the middle of the screen, and the page's turn
       uiHost: host, toScreen: function (x, y) { return toScreen(x + M, y + M); }, zoom: function () { return view.z; },
       zoomTo: function (b) { fitRect(b, true); },
       layers: ink, svg: svg, stage: stage, margin: M, boxes: boxApi(),
@@ -531,7 +532,7 @@
       }
       // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
       var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
-      if (inkTool && !(isFinger && !fingerDraws())) {
+      if (inkTool && !(isFinger && !fingerDraws() && inkTool !== 'guide')) { // (a finger can always move a guide)
         // The pen writing in Type mode switches the tools to Pen, so the toolbar shows what is happening.
         if (tool === 'type' && inkTool === 'pen' && hooks.autoTool) { hooks.autoTool('pen'); tool = 'pen'; }
         if (eng.tool() !== inkTool) eng.setTool(inkTool);
