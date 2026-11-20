@@ -1431,6 +1431,13 @@
           else { for (var j = 1; j < its.length; j++) if (isSel(its[j]) && !isSel(its[j - 1])) { var u = its[j]; its[j] = its[j - 1]; its[j - 1] = u; } }
         });
         var q = seqAll();
+        // Sent to the back, or back a step with nothing left to pass: the picked drawings sit at the very bottom, so a text box
+        // that was below everything is lifted just above them, and now really is in front of them (3.24.1; before, a shape could
+        // never go behind text that sat at the bottom).
+        if (a === 'back' || a === 'bwd') {
+          var lead = 0; while (lead < q.length && isSelIt[q[lead].it.id]) lead++;
+          if (lead) Object.keys(keep).forEach(function (id) { if (keep[id] < lead) keep[id] = lead; });
+        }
         Object.keys(keep).forEach(function (id) { var ps = keep[id]; BX.setAnchor(id, ps > 0 && q[ps - 1] ? q[ps - 1].it.id : ''); });
         var firstSel = -1; q.some(function (e, k) { if (isSelIt[e.it.id]) { firstSel = k; return true; } return false; });
         var picked = bl.filter(function (b) { return sel.boxes.indexOf(b.id) > -1; }).sort(function (x, y) { return x.pos - y.pos || (x.zt || 0) - (y.zt || 0); });
@@ -1448,7 +1455,8 @@
           else { ps = Math.max(0, ps - 1); BX.setAnchor(b.id, ps ? q[ps - 1].it.id : ''); }
           BX.setPos(b.id, ps);
         });
-        render(); commit(); renderBar('arrange'); return;
+        render(); commit(); renderBar('arrange');
+        o.notice({ front: 'Brought to the front', back: 'Sent to the back', fwd: 'Moved forward one step', bwd: 'Moved back one step' }[a]); return;
       }
       var units = [], byG = {};
       sel.items.forEach(function (it) { if (it.g) { if (!byG[it.g]) units.push(byG[it.g] = { items: [], boxes: [] }); byG[it.g].items.push(it); } else units.push({ items: [it], boxes: [] }); });
@@ -1795,6 +1803,7 @@
         }
         if (len < 12 / Z()) { // a tap: pick what is under it
           var hit = pickAt(p);
+          if (!hit) { setSel(null); return; } // a tap on empty space clears the selection, whichever way a loop adds (3.24.1)
           if ((opt.lasso.op || 'new') === 'new') { setSel(hit ? hit.it ? [hit.it] : [] : null, hit && hit.box ? [hit.box] : []); return; }
           return combineSel(d.prev, hit && hit.it ? [hit.it] : [], hit && hit.box ? [hit.box] : []);
         }

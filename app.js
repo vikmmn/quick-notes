@@ -311,13 +311,26 @@
     openNote(n);
     if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
   }, true);
-  // Two fingers on a page picture: pinch to zoom, move to look around (one finger still scrolls the list).
+  // How a note's preview was enlarged in the list stays that way (3.24.1): the part of a page picture, or the size of a text preview.
+  var PZ = {};
+  try { PZ = JSON.parse(localStorage.getItem('qn-pz') || '{}') || {}; } catch (e) {}
+  function pzGet(id) { return PZ[id] || {}; }
+  function pzSet(id, v) { if (v && (v.vb || v.fs)) PZ[id] = v; else delete PZ[id]; try { localStorage.setItem('qn-pz', JSON.stringify(PZ)); } catch (e) {} }
+  // Two fingers on a page picture: pinch to zoom, move to look around (one finger still scrolls the list). On a text
+  // preview, pinch makes the text bigger or smaller. Double tap puts it back.
   (function () {
-    var pz = null, swallowTap = 0;
+    var pz = null, swallowTap = 0, tz = null;
+    function cardId(el) { var c = el.closest && el.closest('.card'); return c && c.dataset.id; }
     function vb(svg) { return svg.getAttribute('viewBox').split(/\s+/).map(Number); }
     function mid(t) { return [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2]; }
     function dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
     document.addEventListener('touchstart', function (e) {
+      var tx = e.touches.length === 2 && e.target.closest && e.target.closest('.card .prev');
+      if (tx) {
+        if (!tx.dataset.fs0) tx.dataset.fs0 = parseFloat(getComputedStyle(tx).fontSize) || 15;
+        tz = { el: tx, fs: parseFloat(getComputedStyle(tx).fontSize) || 15, d: dist(e.touches) };
+        e.preventDefault(); return;
+      }
       var svg = e.target.closest && e.target.closest('.mini-page');
       if (!svg || e.touches.length !== 2) return;
       if (!svg.dataset.vb0) svg.dataset.vb0 = svg.getAttribute('viewBox');
@@ -325,6 +338,7 @@
       e.preventDefault();
     }, { passive: false });
     document.addEventListener('touchmove', function (e) {
+      if (tz && e.touches.length === 2) { e.preventDefault(); tz.el.style.fontSize = Math.max(9, Math.min(60, tz.fs * dist(e.touches) / tz.d)) + 'px'; tz.el.dataset.fs = parseFloat(tz.el.style.fontSize); swallowTap = Date.now(); return; }
       if (!pz || e.touches.length !== 2) return;
       e.preventDefault();
       var v = pz.v, r = pz.r, k = v[2] / r.width; // page units per screen pixel (the picture keeps its proportions)
@@ -335,13 +349,18 @@
       pz.svg.setAttribute('viewBox', nx + ' ' + ny + ' ' + w + ' ' + h);
       swallowTap = Date.now();
     }, { passive: false });
-    document.addEventListener('touchend', function (e) { if (pz && e.touches.length < 2) pz = null; });
+    document.addEventListener('touchend', function (e) {
+      if (e.touches.length >= 2) return;
+      if (tz) { var ti = cardId(tz.el); if (ti) pzSet(ti, Object.assign({}, pzGet(ti), { fs: Math.round(parseFloat(tz.el.style.fontSize) * 10) / 10 })); tz = null; }
+      if (pz) { var pi = cardId(pz.svg); if (pi && pz.svg.closest('#listView')) pzSet(pi, Object.assign({}, pzGet(pi), { vb: pz.svg.getAttribute('viewBox') })); pz = null; }
+    });
     // The page picture just pinched: don't open the note when the fingers lift; a double tap puts it back.
     document.addEventListener('click', function (e) {
-      if (Date.now() - swallowTap < 450 && e.target.closest && e.target.closest('.mini-page')) { e.stopPropagation(); e.preventDefault(); }
+      if (Date.now() - swallowTap < 450 && e.target.closest && e.target.closest('.mini-page, .card .prev')) { e.stopPropagation(); e.preventDefault(); }
     }, true);
     document.addEventListener('dblclick', function (e) {
-      var svg = e.target.closest && e.target.closest('.mini-page'); if (svg && svg.dataset.vb0) { svg.setAttribute('viewBox', svg.dataset.vb0); e.stopPropagation(); }
+      var svg = e.target.closest && e.target.closest('.mini-page'); if (svg && svg.dataset.vb0) { svg.setAttribute('viewBox', svg.dataset.vb0); var di = cardId(svg); if (di) pzSet(di, Object.assign({}, pzGet(di), { vb: null })); e.stopPropagation(); }
+      var tp = e.target.closest && e.target.closest('.card .prev'); if (tp && tp.dataset.fs) { tp.style.fontSize = ''; delete tp.dataset.fs; var dj = cardId(tp); if (dj) pzSet(dj, Object.assign({}, pzGet(dj), { fs: null })); e.stopPropagation(); }
     }, true);
   })();
   function card(n, extra, where) {
@@ -351,9 +370,10 @@
     if (where) inner += '<div class="where">' + esc(where) + '</div>';
     if (extra) inner += extra;
     else {
-      var mini = N.hasInk(n) ? pagePreview(n) : '';
+      var mini = N.hasInk(n) ? pagePreview(n) : '', zs = pzGet(n.id);
+      if (mini && zs.vb) mini = mini.replace(/viewBox="([^"]*)"/, function (m0, v0) { return 'data-vb0="' + v0 + '" viewBox="' + zs.vb + '"'; }); // kept as you enlarged it (3.24.1)
       if (mini) inner += mini;
-      else if (n.body) inner += preview(n);
+      else if (n.body) { var pv = preview(n); if (zs.fs) pv = pv.replace('<div class="prev', '<div data-fs="' + zs.fs + '" style="font-size:' + zs.fs + 'px" class="prev'); inner += pv; }
     }
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
@@ -1286,7 +1306,9 @@
         G(HINT('Picks what is') + chip('Partly in', 'data-k="lasso" data-m="part" title="Anything the loop touches"', lm === 'part') +
           chip('Mostly in', 'data-k="lasso" data-m="most" title="At least half inside the loop"', lm === 'most') +
           chip('Fully in', 'data-k="lasso" data-m="full" title="Only what is completely inside"', lm === 'full')) +
-        G(HINT(how === 'tap' ? 'Tap to add or take out. Drag to move, corner to resize, knob to rotate.' : 'Circle to select, or tap one. Drag to move, corner to resize, knob to rotate.'));
+        (how === 'tap' ? '' : G(HINT('A new loop') + chip('Picks new', 'data-set="lasso.op" data-v="new" title="A new selection"', (o.lasso.op || 'new') === 'new') + chip('+ Adds', 'data-set="lasso.op" data-v="add" title="Add to what is picked"', o.lasso.op === 'add') +
+          chip('− Takes out', 'data-set="lasso.op" data-v="sub" title="Take away from what is picked"', o.lasso.op === 'sub'))) +
+        G(HINT(how === 'tap' ? 'Tap picks one. Tap and hold adds it, or takes it out. Tap empty space to clear. Drag to move, corner to resize, knob to rotate.' : 'Circle to select, or tap one. Tap empty space to clear. Drag to move, corner to resize, knob to rotate.'));
     } else if (t === 'nudge') {
       html = G(chip('Nudge', 'data-k="nudge" data-m="nudge"', o.nudge.m === 'nudge') + chip('Smooth', 'data-k="nudge" data-m="smooth"', o.nudge.m === 'smooth')) +
         G(slider('Reach', 'nudge', 'r', 10, 160, o.nudge.r) + slider('Strength', 'nudge', 'k', 5, 100, o.nudge.k, 100));
@@ -1334,8 +1356,8 @@
     nudge: ['nudge', 'm', [['nudge', 'Nudge'], ['smooth', 'Smooth']]],
     fill: ['fill', 'm', [['lasso', 'Shape'], ['tap', 'Tap area']]]
   };
-  var QUICK2 = { // a second choice under the first (3.21): what a new lasso does with what is already picked
-    lasso: ['lasso', 'op', [['new', 'New', 'A new selection'], ['add', '+ Add', 'Add to the selection'], ['sub', '− Remove', 'Take away from the selection']]]
+  var QUICK2 = { // a second choice under the first: for the Lasso, what it picks (3.24.1; New / Add / Remove moved into its card)
+    lasso: ['lasso', 'm', [['part', 'Partly', 'Anything the loop touches'], ['most', 'Mostly', 'At least half inside the loop'], ['full', 'Fully', 'Only what is completely inside']]]
   };
   function updatePenQuick() {
     var on = S.view === 'note' && !!S.cur && !!PREF.showTools, t = PREF.tool;
@@ -1347,6 +1369,7 @@
       var cur = INKOPT[Q[0]][Q[1]];
       tq.innerHTML = Q[2].map(function (v) { return '<button type="button" data-q="' + v[0] + '" aria-pressed="' + (cur === v[0]) + '">' + v[1] + '</button>'; }).join('');
       var Q2 = QUICK2[t];
+      if (t === 'lasso' && INKOPT.lasso.how === 'tap') { Q2 = null; tq.innerHTML += '<hr><span class="qhint">Tap picks one.<br>Hold adds it or takes it out.<br>Tap empty space: clear.</span>'; }
       if (Q2) { var c2 = INKOPT[Q2[0]][Q2[1]] || Q2[2][0][0]; tq.innerHTML += '<hr>' + Q2[2].map(function (v) { return '<button type="button" data-q2="' + v[0] + '" aria-label="' + v[2] + '" aria-pressed="' + (c2 === v[0]) + '">' + v[1] + '</button>'; }).join(''); }
     }
     if (!sized) return;
@@ -1857,8 +1880,14 @@
     var r = btn.getBoundingClientRect(), pop = $('pop');
     pop.innerHTML = html;
     pop.classList.remove('hidden');
-    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
-    pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + 'px';
+    if (btn.closest('#tools')) { // from the tool rail: beside it, on the side with room, never over it (3.24.1)
+      var onLeft = r.left < window.innerWidth / 2;
+      pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, onLeft ? r.right + 10 : r.left - pop.offsetWidth - 10)) + 'px';
+      pop.style.top = Math.max(8, Math.min(window.innerHeight - pop.offsetHeight - 8, r.top + r.height / 2 - pop.offsetHeight / 2)) + 'px';
+    } else {
+      pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
+      pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + 'px';
+    }
     pop.onclick = function (e) { var b = e.target.closest('button'); if (b) onClick(b); };
   }
   $('pop').addEventListener('pointerdown', function (e) { if (e.target.closest('button')) e.preventDefault(); });
@@ -2017,6 +2046,7 @@
   // The Add button (3.22): files from the device, or Serendipity notes (a whole note, or a part of one).
   function addToPage() {
     if (!S.canvas) return;
+    if (!$('layersPanel').classList.contains('hidden')) { $('layersPanel').classList.add('hidden'); layersBtn(); } // one panel at a time
     popAt(document.querySelector('#tools [data-act="image"]'), '<button data-v="files">Files from the device</button><button data-v="notes">Serendipity notes</button>', function (b) {
       $('pop').classList.add('hidden');
       if (b.dataset.v === 'files') { mediaInput.value = ''; mediaInput.click(); }
@@ -2412,9 +2442,11 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Fixes from your feedback', d: 'Writing feedback no longer throws you out of the note: the back swipe is held until you tap Cancel or Send, and turning the phone keeps your drawing and notes on the picture, with Send always at the top right. Notes with drawings off to the side open as a free canvas, so nothing looks missing (the phone page style is now called Linear mode). In the list, pinching never zooms the whole app, and a note you enlarged stays enlarged (text notes too). To the back now really puts a shape behind text. Add and Layers no longer overlap. Select shows Partly, Mostly and Fully in the corner, and tapping empty space clears the selection. Feedback notes move with a plain drag.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="34" width="86" height="34" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="40" y="76" width="140" height="34" rx="6" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="178" cy="46" r="12" fill="' + Y + '"/><path d="M172 46l4 4 8-9" stroke="' + INKC + '" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>') },
     { t: 'Ruler, set squares and protractor', d: 'A new tool, Guides, puts a ruler, a 45° set square, a 30/60° set square and a protractor on the page. Drag one to move it, the knob above it to turn it (it catches every 15°), the square corner to size it. Then draw with the Pen along an edge, or along the protractor\'s curved rim: the line follows it. Guides are helpers: they are not saved with the note. Perspective and isometric guides come next. Longer PDFs too: up to 200 pages.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-18 120 80)"><rect x="52" y="64" width="136" height="26" rx="3" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M64 64v8M76 64v5M88 64v8M100 64v5M112 64v8M124 64v5M136 64v8M148 64v5M160 64v8M172 64v5" stroke="' + INKC + '" stroke-width="1.2" opacity=".7"/></g><path d="M60 100L180 28" stroke="' + INKC + '" stroke-width="3" stroke-linecap="round" fill="none"/>') },
-    { t: 'Backgrounds: grids and textures', d: 'At the bottom of Layers there are now two background layers: Grid (23 kinds, any line colour, size and strength) and Texture (33 surfaces: papers, handmade and crumpled paper, linen, canvas, denim, felt, woods, cork, steel, concrete, marble, leather, whiteboard, green board, blackboard and more, each in its own colour or any colour). Tap one to choose; the eye hides it. On a phone held upright, notes now open like a page that only scrolls up and down (View › Page like Keep changes this), and the line you are typing stays in view above the keyboard. Feedback notes move by press and hold, then drag.',
+    { t: 'Backgrounds: grids and textures', d: 'At the bottom of Layers there are now two background layers: Grid (23 kinds, any line colour, size and strength) and Texture (33 surfaces: papers, handmade and crumpled paper, linen, canvas, denim, felt, woods, cork, steel, concrete, marble, leather, whiteboard, green board, blackboard and more, each in its own colour or any colour). Tap one to choose; the eye hides it. On a phone held upright, notes now open like a page that only scrolls up and down (View › Linear mode changes this), and the line you are typing stays in view above the keyboard. Feedback notes move by press and hold, then drag.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="#c79a64"/><path d="M20 46h200M20 78h200M20 110h200M52 14v112M84 14v112M116 14v112M148 14v112M180 14v112" stroke="rgba(0,0,0,.18)"/>') },
     { t: 'Bring in another note, or part of one', d: 'The Add button now asks: Files from the device, or Serendipity notes. Choose notes, search or browse for one, and open it. Select a part of it if you like (or nothing, for the whole note), then tap As a live picture or As a link: it goes into the note you came from. Open ↗ on it takes you there.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="32" width="64" height="76" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="52" y="48" width="36" height="22" rx="3" fill="none" stroke="' + A + '" stroke-dasharray="4 3"/><path d="M110 70h24" stroke="' + A + '" stroke-width="3"/><path d="M128 62l8 8-8 8" fill="none" stroke="' + A + '" stroke-width="3"/><rect x="142" y="40" width="60" height="60" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="152" y="54" width="40" height="26" rx="3" fill="' + A + '" opacity=".35"/>') },
