@@ -1455,6 +1455,7 @@
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
+  applyToolOrder();
   setTimeout(function () { showTools(PREF.showTools); }, 0);
   // What the pen tells the app: write on the square to see pressure and tilt.
   function penCheck() {
@@ -2383,6 +2384,29 @@
       catch (e) { toast('Could not change it: ' + (e.message || e)); }
     });
   }
+  // The order of the tools on the rail is the user's own (Settings › Tools).
+  function toolBtns() { return [].slice.call(document.querySelectorAll('#tools .tool-row > button.tool[data-tool]:not([data-tool=""])')); }
+  function applyToolOrder() {
+    var row = document.querySelector('#tools .tool-row'); if (!row || !PREF.toolOrder) return;
+    var by = {}; toolBtns().forEach(function (b) { by[b.dataset.tool] = b; });
+    var first = toolBtns()[0], at = first ? first.previousSibling : null;
+    var names = PREF.toolOrder.filter(function (n) { return by[n]; }).concat(Object.keys(by).filter(function (n) { return PREF.toolOrder.indexOf(n) < 0; }));
+    var ref = first;
+    names.forEach(function (n) { var b = by[n]; if (b !== ref) row.insertBefore(b, ref); else ref = ref.nextElementSibling && ref.nextElementSibling.matches && ref.nextElementSibling.matches('button.tool[data-tool]:not([data-tool=""])') ? ref.nextElementSibling : ref.nextElementSibling; });
+  }
+  function toolLabel(b) { return (b.getAttribute('aria-label') || b.title || b.dataset.tool).split(':')[0]; }
+  function toolOrderHtml() {
+    return '<div class="set"><b>Tools</b><p>Put the tools on the side rail in the order you like.</p>' + toolBtns().map(function (b, i, a) {
+      return '<div class="row" style="align-items:center;gap:8px;margin:2px 0"><span style="flex:1">' + esc(toolLabel(b)) + '</span>' +
+        '<button type="button" data-act="tup" data-v="' + b.dataset.tool + '"' + (i ? '' : ' disabled') + ' aria-label="Move up">▲</button>' +
+        '<button type="button" data-act="tdown" data-v="' + b.dataset.tool + '"' + (i < a.length - 1 ? '' : ' disabled') + ' aria-label="Move down">▼</button></div>';
+    }).join('') + '<button type="button" data-act="treset">Original order</button></div>';
+  }
+  function moveTool(name, d) {
+    var names = toolBtns().map(function (b) { return b.dataset.tool; }), i = names.indexOf(name), j = i + d;
+    if (i < 0 || j < 0 || j >= names.length) return;
+    names.splice(j, 0, names.splice(i, 1)[0]); PREF.toolOrder = names; savePref(); applyToolOrder();
+  }
   function settingsSheet() {
     var st = sync.status(), h = health(st), who = Drive.account ? Drive.account() : '';
     var signin = Drive.demo ? 'Demo mode: a pretend Drive that resets when the page reloads.' :
@@ -2401,6 +2425,7 @@
         [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
+      toolOrderHtml() +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
@@ -2411,6 +2436,8 @@
         '<button type="button" data-act="demoOffline">' + (Drive.isOffline() ? 'Back online' : 'Pretend offline') + '</button> <button type="button" data-act="demoElsewhere">Pretend the laptop edited the last note</button></div>' : '') +
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
     function (act, b) {
+      if (act === 'tup' || act === 'tdown') { moveTool(b.dataset.v, act === 'tup' ? -1 : 1); var sc = $('sheet'); var y = sc ? sc.scrollTop : 0; settingsSheet(); sc = $('sheet'); if (sc) sc.scrollTop = y; return; }
+      if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
       if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
@@ -2442,12 +2469,12 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Your tools, your order', d: 'In Settings there is now a Tools list: move each tool up or down to put the side rail in the order you like. Original order puts it back.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="150" y="26" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="150" y="54" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="150" y="82" width="52" height="20" rx="6" fill="' + SOFT + '" stroke="' + RULE + '"/>') },
     { t: 'Patterns and Join keep their look', d: 'A picked fill now lets you change its colour and its pattern: open Colour and choose a colour (it recolours the pattern), a different pattern, Plain, or Own colours. Joining shapes keeps the pattern instead of turning it into a flat colour. The Select bar now moves out of the way of the option cards instead of hiding under them.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="90" cy="70" r="34" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><circle cx="130" cy="70" r="34" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/>') },
     { t: 'Fixes from your feedback', d: 'Writing feedback no longer throws you out of the note: the back swipe is held until you tap Cancel or Send, and turning the phone keeps your drawing and notes on the picture, with Send always at the top right. Notes with drawings off to the side open as a free canvas, so nothing looks missing (the phone page style is now called Linear mode). In the list, pinching never zooms the whole app, and a note you enlarged stays enlarged (text notes too). To the back now really puts a shape behind text. Add and Layers no longer overlap. Select shows Partly, Mostly and Fully in the corner, and tapping empty space clears the selection. Feedback notes move with a plain drag.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="40" y="34" width="86" height="34" rx="6" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><rect x="40" y="76" width="140" height="34" rx="6" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="178" cy="46" r="12" fill="' + Y + '"/><path d="M172 46l4 4 8-9" stroke="' + INKC + '" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>') },
-    { t: 'Ruler, set squares and protractor', d: 'A new tool, Guides, puts a ruler, a 45° set square, a 30/60° set square and a protractor on the page. Drag one to move it, the knob above it to turn it (it catches every 15°), the square corner to size it. Then draw with the Pen along an edge, or along the protractor\'s curved rim: the line follows it. Guides are helpers: they are not saved with the note. Perspective and isometric guides come next. Longer PDFs too: up to 200 pages.',
-      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><g transform="rotate(-18 120 80)"><rect x="52" y="64" width="136" height="26" rx="3" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M64 64v8M76 64v5M88 64v8M100 64v5M112 64v8M124 64v5M136 64v8M148 64v5M160 64v8M172 64v5" stroke="' + INKC + '" stroke-width="1.2" opacity=".7"/></g><path d="M60 100L180 28" stroke="' + INKC + '" stroke-width="3" stroke-linecap="round" fill="none"/>') },
     { t: 'Links between notes, locks, and adding made simple', d: 'The Add button opens your files straight away: pick several of any kind. Hold it to add the link you copied. Select a part of a note and tap the link symbol, then hold Add in another note: that part shows there, live, with Open to jump to it (••• › Copy a link to this note does the whole note). Select › Lock: can\'t be erased, or can\'t be selected; tap the little sign to unlock. The lasso corner now has New, + Add and − Remove. Feedback notes can be dragged by their corner, and show in the picture exactly as typed.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><rect x="136" y="30" width="70" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '"/><path d="M104 70h32" stroke="' + A + '" stroke-width="3" stroke-dasharray="5 4"/><circle cx="196" cy="34" r="10" fill="' + A + '"/>') },
     { t: 'Videos, sounds, PDFs and links on the page', d: 'The picture button in the tools (and Add image in the ••• menu) now adds any file: a picture, a video, a sound or a PDF. A PDF\'s pages go on the page one under another, ready to write on. Every file is saved once in Attachments in your Drive, named by what is in it, so adding the same file again (in this note or another) reuses it. Links go on as a card or as a window showing the page; switch between them from Select. With the Hand, videos play and links open.',
