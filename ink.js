@@ -1953,15 +1953,18 @@
       ta.addEventListener('blur', function () {
         setTimeout(function () {
           var a = document.activeElement; // a slider or colour on the Text card: still writing
+          if (editing && editing.ta === ta && !document.hasFocus() && document.visibilityState === 'visible') return; // another app on top (split screen, a panel): still writing
           if (editing && editing.ta === ta && a !== ta && !(a && a.closest && a.closest('[data-keeps-text]'))) finishText();
         }, 0);
       });
       ta.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
       setTimeout(function () { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 20);
     }
+    var awayText = null; // 3.27: the Text art being written when the app went to the background
     function finishText() {
       if (!editing) return;
       var e = editing; editing = null;
+      awayText = document.visibilityState === 'hidden' || !document.hasFocus() ? e.it.id : null;
       var txt = e.ta.value.replace(/\s+$/, ''); e.ta.remove();
       var lk = e.look;
       if (e.isNew) {
@@ -1994,6 +1997,16 @@
       editText({ id: uid('x'), t: 'x', txt: '', x: p[0] + Math.sin(a) * t.fs * 0.6, y: p[1] - Math.cos(a) * t.fs * 0.6, r: Math.abs(a) > 0.01 ? Math.round(a * 1000) / 1000 : 0, fs: t.fs, font: t.font, c: t.c, o: t.o }, true);
     };
     self.finishText = finishText;
+    self.forgetText = function () { awayText = null; };
+    self.awayPending = function () { return !!awayText; };
+    self.resumeText = function () { // back from another app: the text being written opens for writing again
+      if (editing) { editing.ta.focus(); return; }
+      var id = awayText; awayText = null; if (!id) return;
+      for (var li = layers.length - 1; li >= 0; li--) {
+        if (!editable(layers[li])) continue;
+        for (var j = 0; j < layers[li].items.length; j++) if (layers[li].items[j].id === id) { editText(layers[li].items[j], false); return; }
+      }
+    };
     // A new image on the page: in the layer being worked on, straight to the screen (angle), selected.
     self.addMedia = function (spec, x, y, w, h, angle) { // a video, a sound, a link or a live page
       var L = active(); if (!editable(L)) { o.notice('This layer is locked or hidden.'); return null; }
@@ -2021,6 +2034,8 @@
       render(); owned = new WeakSet();
     };
     self.clearSelection = function () { setSel(null); };
+    self.pickAt = function (p) { return !!pickAt(p); }; // 3.27: the Hand's double tap
+    self.selectAt = function (p) { tapPick(p); };
     self.selBox = function () { return sel && sel.box ? { x: sel.box.x, y: sel.box.y, w: sel.box.w, h: sel.box.h } : null; };
     self.selection = function () { return sel ? { items: sel.items.length, boxes: sel.boxes.length } : null; };
     self.reset = function () { // after undo/redo replaced the layers

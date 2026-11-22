@@ -8,6 +8,11 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Each note is an endless page: pinch to zoom, two fingers to move, twist to turn (snaps straight; the compass
   straightens it), two-finger double tap to undo, three-finger double tap to redo; Fit everything, Zoom into an area, zoom to a
   lasso selection, and a Navigator map. Mouse wheel moves, Ctrl + wheel zooms.
+- Tools: the Hand only moves the page (double tap a thing to pick it with Select; triple tap to type there), Text
+  types (tap text to type in it, double-tap empty space for new text). Two fingers move, zoom and turn with every tool.
+  Typing carries on after coming back from another app.
+- Linear mode (upright phone): arrows at the edges; tap one for a map of everything on that side, double tap a
+  part to go there. A note reopens in Linear mode or as a free canvas, as it was left.
 - Each note is a canvas: a text box at the top left like Keep; double-tap anywhere for another text box;
   write or draw with a pen (an S Pen draws without switching tools; the finger scrolls); move text and drawings
   with the Move tool; the canvas grows as you need it.

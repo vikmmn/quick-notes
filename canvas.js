@@ -126,7 +126,9 @@
     // 3.25 (#70): Linear mode is no longer only the left column. Arrows at the screen's edges and corners show where
     // more is; a double tap moves the column there (view.lx) and that is remembered with the note's view. A shake on a
     // phone, or the Linear/Free button on a tablet, switches between Linear mode and the free canvas for this note.
-    var modeOv = null; // 'lin' | 'free' | null (follow View › Linear mode)
+    // 3.27 (feedback 22 Nov): the switch is saved with the note's view (view.mo), so a note closed in Linear mode
+    // opens in Linear mode again, and one closed as a free canvas opens as a free canvas.
+    var modeOv = view.mo === 'lin' || view.mo === 'free' ? view.mo : null; // 'lin' | 'free' | null (follow View › Linear mode)
     function phoneNow() { return Math.min(screen.width, screen.height) < 600; }
     function pageMode() {
       if (modeOv) return modeOv === 'lin';
@@ -289,7 +291,12 @@
         onBlur: function () {
           e.classList.remove('focused');
           flushText(b.id);
+          // 3.27 (feedback 22 Nov): switching to another app takes the caret away. Remember where it was, so typing
+          // carries on there on coming back, and keep a new empty box: it was not left, the app was.
+          var sl = ed.state.selection;
+          if (awayNow()) away = { id: b.id, from: sl.from, to: sl.to };
           setTimeout(function () {
+            if (awayNow() || (away && away.id === b.id)) { away = away || { id: b.id, from: sl.from, to: sl.to }; return; }
             if (active && active.ed === ed && !e.contains(document.activeElement)) { hooks.blur(ed); }
             // A text box that was added and left empty goes away again.
             if (!isFirst && boxes.indexOf(b) > -1 && !b.md.trim() && !e.contains(document.activeElement)) removeBox(b.id);
@@ -482,6 +489,32 @@
       return [w[0] - M, w[1] - M, ev.pressure || 0.5, penTilt(ev)];
     }
 
+    // ---- Coming back from another app (3.27, feedback 22 Nov): typing carries on where it was ----
+    // Phones take the focus away when another app comes to the front. A text box gets its caret back at the same
+    // place, and Text art that was being written opens again for writing.
+    var away = null;
+    function awayNow() { return document.visibilityState === 'hidden' || !document.hasFocus(); }
+    function comeBack() {
+      if (document.visibilityState !== 'visible' || !host.isConnected) return;
+      setTimeout(function () {
+        var ae = document.activeElement;
+        if (ae && ae !== document.body && !stage.contains(ae)) { away = null; return; } // something else has the focus now
+        if (away && tool === 'type') {
+          var e = editors[away.id], a = away; away = null;
+          if (e && !e.el.contains(ae)) {
+            var max = e.ed.state.doc.content.size;
+            try { e.ed.chain().focus().setTextSelection({ from: Math.min(a.from, max), to: Math.min(a.to, max) }).run(); } catch (x) { e.ed.commands.focus('end'); }
+          }
+          return;
+        }
+        away = null;
+        if (tool === 'text' && eng.resumeText) eng.resumeText();
+      }, 60);
+    }
+    on(document, 'visibilitychange', comeBack);
+    on(window, 'focus', comeBack);
+    on(host, 'pointerdown', function () { away = null; if (eng.forgetText) eng.forgetText(); }, true); // a tap says where to go next
+
     // ---- Selection (Move tool) ----
     function itemRect(sel) {
       if (!sel) return null;
@@ -509,11 +542,11 @@
     var drag = null, taps = [], panV = null, panMoved = false;
     on(host, 'pointerdown', function (ev) {
       // With the Hand, a video's buttons, a sound's player, a link and a live page work as themselves.
-      if (tool === 'type' && ev.target.closest && ev.target.closest('.emb-live')) return;
+      if ((tool === 'type' || tool === 'hand') && ev.target.closest && ev.target.closest('.emb-live')) return;
       // The title and labels work as usual, except with a drawing tool: the title's strip runs right across the top of
       // the page, and before 3.18 nothing could be drawn over any of it.
       if (head && head.contains(ev.target)) {
-        var drawsHere = INK[tool] ? !ev.target.closest('button, .chip, a') : tool === 'type' && ev.pointerType === 'pen' && !ev.target.closest('input, button, .chip, a');
+        var drawsHere = INK[tool] ? !ev.target.closest('button, .chip, a') : (tool === 'type' || tool === 'hand') && ev.pointerType === 'pen' && !ev.target.closest('input, button, .chip, a');
         if (!drawsHere) return;
       }
       if (ev.pointerType === 'pen' && !penSeen) { penSeen = true; hooks.penSeen(); }
@@ -546,10 +579,10 @@
         return;
       }
       // Drawing tools. A pen draws even in Type mode; once a pen has been used, a finger scrolls instead.
-      var inkTool = INK[tool] ? tool : (tool === 'type' && ev.pointerType === 'pen' && !onBox ? 'pen' : null);
+      var inkTool = INK[tool] ? tool : ((tool === 'type' && !onBox || tool === 'hand') && ev.pointerType === 'pen' ? 'pen' : null);
       if (inkTool && !(isFinger && !fingerDraws() && inkTool !== 'guide')) { // (a finger can always move a guide)
         // The pen writing in Type mode switches the tools to Pen, so the toolbar shows what is happening.
-        if (tool === 'type' && inkTool === 'pen' && hooks.autoTool) { hooks.autoTool('pen'); tool = 'pen'; }
+        if ((tool === 'type' || tool === 'hand') && inkTool === 'pen' && hooks.autoTool) { hooks.autoTool('pen'); tool = 'pen'; }
         if (eng.tool() !== inkTool) eng.setTool(inkTool);
         if (eng.down(p, ev)) {
           ev.preventDefault();
@@ -559,6 +592,7 @@
           return;
         }
       }
+      if (tool === 'hand') { handDown(ev, p, onBox); return; }
       if (onBox) { // typing, selecting text: leave it to the editor, but a finger drag over the text still scrolls
         if (isFinger && tool === 'type') startPan(ev);
         return;
@@ -590,8 +624,42 @@
       }
       startPan(ev);
     });
-    function startPan(ev) {
-      if (ev.pointerType === 'mouse') return; // a mouse scrolls with its wheel
+    // ---- The Hand (3.27, feedback 21 Nov): it only moves the page. A tap does nothing; a double tap on a thing
+    // picks it and switches to Select; a triple tap switches to Text and types there (in the text tapped, or new
+    // text on empty space). A pen still writes. Two fingers move, zoom and turn the page with every tool. ----
+    var handTaps = [], handTimer = 0;
+    function handDown(ev, p, onBox) {
+      ev.preventDefault(); // no caret and no keyboard: the Hand doesn't type
+      if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
+      var now = Date.now(), lt = handTaps[handTaps.length - 1];
+      if (!lt || now - lt.t > 400 || Math.hypot(lt.cx - ev.clientX, lt.cy - ev.clientY) > 32) handTaps = [];
+      handTaps.push({ t: now, cx: ev.clientX, cy: ev.clientY });
+      clearTimeout(handTimer);
+      startPan(ev, true);
+      if (drag) drag.hand = { n: handTaps.length, p: p, box: onBox ? onBox.dataset.id : null, cx: ev.clientX, cy: ev.clientY };
+    }
+    function handUp(h) { // a tap that didn't move: count it
+      if (h.n === 2) { handTimer = setTimeout(function () { if (handTaps.length === 2) { handTaps = []; handPick(h.p); } }, 320); return; }
+      if (h.n >= 3) { handTaps = []; handType(h); }
+    }
+    function handPick(p) {
+      if (!eng.pickAt || !eng.pickAt(p)) return;
+      if (hooks.autoTool) hooks.autoTool('lasso'); else self.setTool('lasso');
+      tool = 'lasso'; eng.selectAt(p);
+    }
+    function handType(h) {
+      if (hooks.autoTool) hooks.autoTool('type'); else self.setTool('type');
+      tool = 'type';
+      var e = h.box && editors[h.box];
+      if (e) {
+        var pos = null; try { pos = e.ed.view.posAtCoords({ left: h.cx, top: h.cy }); } catch (x) {}
+        e.ed.commands.focus(pos ? pos.pos : 'end');
+        return;
+      }
+      addBox(h.p[0] - 4, h.p[1] - 14); changed('layout');
+    }
+    function startPan(ev, mouseToo) {
+      if (ev.pointerType === 'mouse' && !mouseToo) return; // a mouse scrolls with its wheel
       drag = { type: 'pan', id: ev.pointerId, fingers: {}, lx: ev.clientX, ly: ev.clientY, moved: false, t: Date.now() };
       drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY];
       if (panV) { cancelAnimationFrame(panV.raf); panV = null; }
@@ -643,10 +711,11 @@
         delete drag.fingers[ev.pointerId];
         if (Object.keys(drag.fingers).length) return;
         var vx = drag.vx || 0, vy = drag.vy || 0;
-        if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; }
-        var tapAt = !drag.moved && drag.textTap;
+        if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; handTaps = []; clearTimeout(handTimer); }
+        var tapAt = !drag.moved && drag.textTap, handTap = !drag.moved && drag.hand;
         drag = null;
         if (tapAt && tool === 'text') { eng.textAt(tapAt, -(view.r || 0)); return; }
+        if (handTap && tool === 'hand') { handUp(handTap); return; }
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };
           var step = function () {
@@ -690,7 +759,7 @@
       // A second finger: whatever the first finger started (a stroke, scrolling, moving a box) gives way.
       if (drag && drag.type === 'ink') eng.cancel();
       if (panV) { cancelAnimationFrame(panV.raf); panV = null; }
-      drag = null; taps = []; clearTimeout(self._tapTimer); cancelAnimationFrame(anim);
+      drag = null; taps = []; clearTimeout(self._tapTimer); cancelAnimationFrame(anim); handTaps = []; clearTimeout(handTimer);
       gest = { t: Date.now(), max: tcount(), moved: false, transformed: false };
       // While two fingers move and zoom, the page is drawn once and the picture moved and scaled (it sharpens again
       // when the fingers lift), so big drawings don't have to be redrawn at every step of a pinch.
@@ -745,7 +814,7 @@
       }
     }
     on(host, 'pointerdown', function (ev) {
-      if (ev.pointerType !== 'touch' || ev.target.closest('.qn-nav, .inkbar, .selbar, .qn-dirs, .qn-peek, .qn-modebtn')) return;
+      if (ev.pointerType !== 'touch' || ev.target.closest('.qn-nav, .inkbar, .selbar, .qn-dirs, .qn-peek, .qn-side, .qn-modebtn')) return;
       touches[ev.pointerId] = { x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY };
       if (tcount() >= 2) {
         if (!gest) startGesture(); else { gest.max = Math.max(gest.max, tcount()); if (!gest.moved) startPair(); }
@@ -837,7 +906,7 @@
     // ---- Zoom into an area: drag a box across it ----
     var areaEl = null;
     on(host, 'pointerdown', function (ev) {
-      if (!areaMode || ev.target.closest('.qn-nav, .qn-dirs, .qn-peek, .qn-modebtn')) return;
+      if (!areaMode || ev.target.closest('.qn-nav, .qn-dirs, .qn-peek, .qn-side, .qn-modebtn')) return;
       ev.stopImmediatePropagation(); ev.preventDefault();
       var l = local(ev);
       areaEl = el('div', 'qn-area', host);
@@ -879,7 +948,7 @@
     var DIRS = { n: 270, ne: 315, e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225 };
     var dirEl = el('div', 'qn-dirs hidden', host), dirRaf = 0, blocksC = null, lastDir = null;
     dirEl.innerHTML = Object.keys(DIRS).map(function (d) {
-      return '<button type="button" class="qn-dir hidden" data-d="' + d + '" aria-label="More this way: tap to peek, double tap to go there" title="More this way: tap to peek, double tap to go there">' +
+      return '<button type="button" class="qn-dir hidden" data-d="' + d + '" aria-label="More this way: tap to see all of it, double tap to go to the nearest" title="More this way: tap to see all of it, double tap to go to the nearest">' +
         '<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(' + DIRS[d] + 'deg)"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     }).join('');
     var dirBtns = [].slice.call(dirEl.children);
@@ -902,7 +971,7 @@
       modeBtn.classList.toggle('hidden', phoneNow());
       modeBtn.textContent = pageMode() ? 'Linear' : 'Free';
       modeBtn.setAttribute('aria-pressed', pageMode() ? 'true' : 'false');
-      if (!on) { hidePeek(); return; }
+      if (!on) { hidePeek(); hideSide(); return; }
       var W = host.clientWidth, H = host.clientHeight, best = {};
       blocks().forEach(function (q) {
         var p = [toScreen(q.x, q.y), toScreen(q.x + q.w, q.y + q.h)];
@@ -948,10 +1017,12 @@
       peekTimer = setTimeout(hidePeek, 3500);
     }
     function goTo(q, d) { // the column moves to it (sideways only if it is to the side), and it comes to the top of the screen
+      glide(/[ew]/.test(d) ? (Math.abs(M - q.x) < 40 ? 0 : M - q.x) : (view.lx || 0), 90 - q.y);
+    }
+    function glide(lx1, y1) {
       cancelAnimationFrame(anim);
       var lx0 = view.lx || 0, y0 = view.y, t0 = performance.now();
-      var lx1 = /[ew]/.test(d) ? (Math.abs(M - q.x) < 40 ? 0 : M - q.x) : lx0;
-      var y1 = 90 - q.y; topCache = null; if (y1 > topLimit()) y1 = topLimit();
+      topCache = null; if (y1 > topLimit()) y1 = topLimit();
       function step(now) {
         var k = Math.min(1, (now - t0) / 320), e = 1 - Math.pow(1 - k, 3);
         view.lx = lx0 + (lx1 - lx0) * e; view.y = y0 + (y1 - y0) * e; applyView();
@@ -963,9 +1034,106 @@
     dirEl.addEventListener('click', function (ev) {
       var b = ev.target.closest('.qn-dir'); if (!b || !b._q) return;
       var d = b.dataset.d, now = Date.now();
-      if (lastDir && lastDir.d === d && now - lastDir.t < 450) { lastDir = null; hidePeek(); goTo(b._q, d); return; }
-      lastDir = { d: d, t: now }; showPeek(b._q, d);
+      if (lastDir && lastDir.d === d && now - lastDir.t < 450) { lastDir = null; hidePeek(); hideSide(); goTo(b._q, d); return; }
+      lastDir = { d: d, t: now };
+      if (sideEl && sideEl.dataset.d === d) { hideSide(); return; } // a second tap on the same arrow closes it
+      showSide(d);
     });
+
+    // ---- 3.27 (feedback 22 Nov): a side's navigator. A tap on an arrow opens a map of everything on that side, not
+    // only the nearest part: the whole strip to the right (or left, above, below), or the whole corner. It scrolls;
+    // a double tap on a part brings that part into the column. The part now on screen is outlined. ----
+    var sideEl = null;
+    var SIDE_NAMES = { n: 'Above', s: 'Below', e: 'To the right', w: 'To the left', ne: 'Up and to the right', nw: 'Up and to the left', se: 'Down and to the right', sw: 'Down and to the left' };
+    function hideSide() { if (sideEl) { sideEl.remove(); sideEl = null; } }
+    function sideBlocks(d) { // everything wholly off screen that way: a side takes in its corners too
+      var W = host.clientWidth, H = host.clientHeight;
+      return blocks().filter(function (q) {
+        var p = [toScreen(q.x, q.y), toScreen(q.x + q.w, q.y + q.h)];
+        var x0 = Math.min(p[0][0], p[1][0]), x1 = Math.max(p[0][0], p[1][0]), y0 = Math.min(p[0][1], p[1][1]), y1 = Math.max(p[0][1], p[1][1]);
+        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < 6 ? 'n' : y0 > H - 6 ? 's' : '';
+        if (d.length === 2) return vt === d.charAt(0) && hz === d.charAt(1);
+        return d === 'e' || d === 'w' ? hz === d : vt === d;
+      });
+    }
+    function wrapLines(t, n) { // a box's text as lines of about n characters, for the map
+      var out = [];
+      String(t || '').split('\n').forEach(function (para) {
+        if (!para) { out.push(''); return; }
+        while (para.length > n) { var cut = para.lastIndexOf(' ', n); if (cut < n * 0.5) cut = n; out.push(para.slice(0, cut)); para = para.slice(cut).replace(/^ /, ''); }
+        out.push(para);
+      });
+      return out;
+    }
+    function escX(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function showSide(d) {
+      hidePeek(); hideSide();
+      var list = sideBlocks(d); if (!list.length) return;
+      var W = host.clientWidth, H = host.clientHeight, pad = 24;
+      var a = toWorld(0, 0), b = toWorld(W, H); // the part on screen now, in page coordinates
+      var R = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      list.forEach(function (q) { R.x0 = Math.min(R.x0, q.x); R.y0 = Math.min(R.y0, q.y); R.x1 = Math.max(R.x1, q.x + q.w); R.y1 = Math.max(R.y1, q.y + q.h); });
+      // Take in the screen's own span along the side, so the outline of "here" shows where the rest is from it.
+      if (d === 'e' || d === 'w') { R.y0 = Math.min(R.y0, a[1]); R.y1 = Math.max(R.y1, b[1]); }
+      if (d === 'n' || d === 's') { R.x0 = Math.min(R.x0, a[0]); R.x1 = Math.max(R.x1, b[0]); }
+      R.x0 -= pad; R.y0 -= pad; R.x1 += pad; R.y1 += pad;
+      var rw = R.x1 - R.x0, rh = R.y1 - R.y0;
+      var dr = parseFloat(dirEl.style.getPropertyValue('--dr')) || 8; // the tool rail's room on the right
+      var pw = Math.max(200, Math.min(W - dr - 64, 360)), ph = Math.round(H * 0.62);
+      var s = Math.max(0.12, Math.min(1, (pw - 2) / rw));
+      var txt = boxes.map(function (bx) {
+        var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
+        var L = layerOfBox(bx); if (L && L.vis === false) return '';
+        var x = bx.x + M, y = bx.y + M, w = e.el.offsetWidth, h = e.el.offsetHeight;
+        if (x > R.x1 || x + w < R.x0 || y > R.y1 || y + h < R.y0) return '';
+        var fs = 16, lines = wrapLines(e.el.innerText, Math.max(8, Math.floor(w / (fs * 0.52)))), maxL = Math.max(1, Math.floor(h / (fs * 1.45)));
+        return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="6" fill="var(--rule)" opacity=".45"/>' +
+          '<text x="' + (x + 4) + '" y="' + y + '" font-size="' + fs + '" fill="var(--ink)">' + lines.slice(0, maxL).map(function (l) { return '<tspan x="' + (x + 4) + '" dy="' + (fs * 1.4) + '">' + escX(l) + '</tspan>'; }).join('') + '</text>';
+      }).join('');
+      var here = '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + (b[0] - a[0]) + '" height="' + (b[1] - a[1]) + '" fill="var(--accent)" fill-opacity=".08" stroke="var(--accent)" stroke-width="' + (2 / s) + '" stroke-dasharray="' + (8 / s) + ' ' + (6 / s) + '" rx="' + (8 / s) + '"/>';
+      sideEl = el('div', 'qn-side', host);
+      sideEl.dataset.d = d;
+      sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Double tap a part to go there</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
+        '<div class="sd-scroll"><svg width="' + Math.round(rw * s) + '" height="' + Math.round(rh * s) + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + rw + ' ' + rh + '">' +
+        txt + window.QNInk.svgFor(ink, 'sd-', M, M, true) + here + '</svg></div>';
+      sideEl.style.width = pw + 'px';
+      var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 44) + 'px';
+      var v = d.charAt(0), h0 = d.length === 2 ? d.charAt(1) : d;
+      if (v === 'n') sideEl.style.top = '56px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(56, (H - ph) / 2) + 'px';
+      // Beside its arrow, and never under the tool rail or off the screen.
+      var lx = h0 === 'e' ? W - dr - 48 - pw : h0 === 'w' ? 56 : (W - dr - pw) / 2;
+      sideEl.style.left = Math.max(8, Math.min(W - dr - pw - 4, lx)) + 'px';
+      // Open on the part nearest to here.
+      var cx = (Math.max(R.x0, Math.min(R.x1, (a[0] + b[0]) / 2)) - R.x0) * s, cy = (Math.max(R.y0, Math.min(R.y1, (a[1] + b[1]) / 2)) - R.y0) * s;
+      if (v === 'n') cy = rh * s; else if (v === 's') cy = 0;
+      if (h0 === 'w') cx = rw * s; else if (h0 === 'e') cx = 0;
+      sc.scrollTop = Math.max(0, cy - sc.clientHeight / 2); sc.scrollLeft = Math.max(0, cx - sc.clientWidth / 2);
+      sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
+      var lastTap = null;
+      sc.addEventListener('pointerdown', function (ev) { sc._down = { x: ev.clientX, y: ev.clientY }; });
+      sc.addEventListener('pointerup', function (ev) {
+        var dn = sc._down; sc._down = null;
+        if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
+        var t = Date.now(), r = sc.querySelector('svg').getBoundingClientRect();
+        var px = R.x0 + (ev.clientX - r.left) / s, py = R.y0 + (ev.clientY - r.top) / s;
+        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; hideSide(); goToPoint(px, py, d, list); return; }
+        lastTap = { t: t, x: ev.clientX, y: ev.clientY };
+      });
+    }
+    function goToPoint(px, py, d, list) { // that part fills the column: its left edge at the margin, the tapped point a third down
+      var W = host.clientWidth, H = host.clientHeight, lx1 = view.lx || 0;
+      if (/[ew]/.test(d)) {
+        var hit = null, best = Infinity;
+        list.forEach(function (q) {
+          var dx = Math.max(0, q.x - px, px - q.x - q.w), dy = Math.max(0, q.y - py, py - q.y - q.h), dist = Math.hypot(dx, dy) - (q.box ? 1 : 0);
+          if (dist < best) { best = dist; hit = q; }
+        });
+        lx1 = hit && best < 120 && hit.w < W ? (Math.abs(M - hit.x) < 40 ? 0 : M - hit.x) : W / 2 - px;
+      }
+      glide(lx1, H * 0.3 - py);
+    }
+    on(host, 'pointerdown', function (ev) { if (sideEl && !sideEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.qn-dir'))) hideSide(); }, true);
 
     // ---- Linear mode or free canvas, for this note: a shake on a phone, the button elsewhere ----
     var modeBtn = el('button', 'qn-modebtn hidden', host);
@@ -978,7 +1146,8 @@
       else { // the middle of what is on screen stays in the middle of the column
         modeOv = 'lin'; var lx = W - wc[0]; view.lx = Math.abs(lx) < 60 ? 0 : lx; view.y = H - wc[1];
       }
-      hidePeek(); applyView(); drawDirs();
+      view.mo = modeOv;
+      hidePeek(); hideSide(); applyView(); drawDirs();
       if (hooks.view) hooks.view({ z: view.z, r: view.r });
       if (hooks.notice) hooks.notice(pageMode() ? 'Linear mode: scrolls up and down. Arrows show what is off to the side.' : 'Free canvas: move, zoom and turn as you like.' + (phoneNow() ? ' Shake again for Linear mode.' : ''));
     }
@@ -1054,7 +1223,7 @@
       locked: function () { return !!view.lk; },
       linear: function () { return pageMode(); },
       toggleMode: toggleMode,
-      followPref: function () { modeOv = null; applyView(); }
+      followPref: function () { modeOv = null; delete view.mo; applyView(); }
     };
 
     // ---- What the app can ask of the canvas ----
@@ -1067,6 +1236,7 @@
       if (t !== 'type' && ae && stage.contains(ae) && !(t === 'text' && ae.classList.contains('ink-textedit'))) ae.blur();
     };
     self.ink = function () { return eng; };
+    self.resuming = function () { return !!away || !!(eng.awayPending && eng.awayPending()); };
     self.tool = function () { return tool; };
     self.penSeen = function () { return penSeen; };
     self.busy = function () { return !!drag || eng.busy(); };
@@ -1142,7 +1312,8 @@
       flushAll();
       Object.keys(editors).forEach(function (id) { editors[id].ed.destroy(); });
       if (head) { if (headRO) headRO.disconnect(); head.classList.remove('in-page'); head.style.width = head.style.top = ''; wrap.insertBefore(head, host); }
-      clearTimeout(navTimer);
+      clearTimeout(navTimer); clearTimeout(viewTimer);
+      try { localStorage.setItem(VKEY, JSON.stringify(view)); } catch (e) {} // the view as left, Linear or free (3.27)
       editors = {}; host.innerHTML = ''; if (self._unbind) self._unbind();
     };
     self.relayout = layout;
