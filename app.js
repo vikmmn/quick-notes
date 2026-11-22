@@ -839,7 +839,7 @@
     var html = '<div class="tree-row' + (!S.folder ? ' on' : '') + '"><span class="tw"></span><div class="nm" data-open="">' + icon('notes') + '<span>All notes</span><small>' + live().length + '</small></div></div>';
     function rows(parent, depth) {
       childrenOf(parent).forEach(function (f) {
-        if (parent === root && f.name === 'Attachments') return; // where the app keeps pictures; not a notes folder
+        if (parent === root && (f.name === 'Attachments' || f.name === 'Fonts')) return; // where the app keeps pictures and fonts; not notes folders
         var kids = childrenOf(f.id).length, open = !!S.expanded[f.id];
         html += '<div class="tree-row' + (S.folder === f.id ? ' on' : '') + '" style="padding-left:' + depth * 16 + 'px">' +
           (kids ? '<button class="tw" type="button" data-tw="' + esc(f.id) + '" aria-label="' + (open ? 'Collapse' : 'Expand') + '">' + icon(open ? 'chevd' : 'chev') + '</button>' : '<span class="tw"></span>') +
@@ -1381,6 +1381,7 @@
       // Artistic text: part of the drawing, in the current layer. (Double-tap still makes a normal text box.)
       var TF = [['"Google Sans", Roboto, system-ui, sans-serif', 'Sans'], ['Lora, serif', 'Serif'], ['"JetBrains Mono", monospace', 'Mono'],
         ['Caveat, cursive', 'Handwriting'], ['"Permanent Marker", cursive', 'Marker'], ['"Playfair Display", serif', 'Display']];
+      userFonts.forEach(function (f) { TF.push([fontCss(f), f.family]); });
       html = G(TF.map(function (f) { return chip('<span style="font-family:' + esc(f[0]) + '">' + f[1] + '</span>', 'data-tfont="' + esc(f[0]) + '"', o.text.font === f[0]); }).join('')) +
         G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
@@ -1491,8 +1492,8 @@
   $('penQuick').addEventListener('click', function (e) {
     if ($('penQuick').dataset.mode !== 'text' && e.target.closest('.pq-dot')) { penColours(); return; }
     if ($('penQuick').dataset.mode !== 'text' || !e.target.closest('.pq-dot')) return;
-    var i = TFONTS.indexOf(INKOPT.text.font);
-    INKOPT.text.font = TFONTS[(i + 1) % TFONTS.length]; applyInk(); savePref(); updatePenQuick();
+    var TF2 = TFONTS.concat(userFonts.map(fontCss)), i = TF2.indexOf(INKOPT.text.font);
+    INKOPT.text.font = TF2[(i + 1) % TF2.length]; applyInk(); savePref(); updatePenQuick();
     if (!$('penOpts').classList.contains('hidden')) setTool('text');
   });
   $('toolQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); if (e.target.closest('button')) e.preventDefault(); });
@@ -1992,8 +1993,7 @@
         return;
       case 'font':
         // With nothing selected, the font goes on the whole text box.
-        var FONTS = [['', 'Sans (standard)', 'var(--font)'], ['Lora, serif', 'Serif', 'Lora, serif'], ['"JetBrains Mono", monospace', 'Mono', '"JetBrains Mono", monospace'],
-          ['Caveat, cursive', 'Handwriting', 'Caveat, cursive'], ['"Permanent Marker", cursive', 'Marker', '"Permanent Marker", cursive'], ['"Playfair Display", serif', 'Display', '"Playfair Display", serif']];
+        var FONTS = allFonts();
         popAt(b, FONTS.map(function (f) { return '<button data-v="' + esc(f[0]) + '" style="font-family:' + esc(f[2]) + ';font-size:16px">' + f[1] + '</button>'; }).join(''), function (p) {
           var chain = ed.chain().focus();
           if (ed.state.selection.empty) chain = chain.selectAll();
@@ -2082,6 +2082,96 @@
     if (hit) return hit;
     attIndex = null;
     return sync.createFolder('Attachments', root);
+  }
+  // ---------- Fonts (3.27.1, #81) ----------
+  // Six fonts come with the app and work offline. More: put font files (.ttf, .otf, .woff, .woff2) in the Fonts folder
+  // inside the main folder in Drive (or add them from Settings › Fonts). Each is copied to this device once, so it
+  // works offline too, and shows in every font list (text boxes and Text art).
+  var CORE_FONTS = [['', 'Sans (standard)', 'var(--font)'], ['Lora, serif', 'Serif', 'Lora, serif'], ['"JetBrains Mono", monospace', 'Mono', '"JetBrains Mono", monospace'],
+    ['Caveat, cursive', 'Handwriting', 'Caveat, cursive'], ['"Permanent Marker", cursive', 'Marker', '"Permanent Marker", cursive'], ['"Playfair Display", serif', 'Display', '"Playfair Display", serif']];
+  var userFonts = [], FONT_EXT = /\.(ttf|otf|woff2?)$/i, fontsDone = {}, fontsChecked = 0;
+  function fontFamilyOf(file) {
+    return file.replace(FONT_EXT, '').replace(/[-_ ]?(Regular|Book|Normal|Roman|VariableFont.*)$/i, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]+/g, ' ').trim() || file;
+  }
+  function fontCss(f) { return '"' + f.family.replace(/"/g, '') + '", sans-serif'; }
+  function allFonts() { return CORE_FONTS.concat(userFonts.map(function (f) { return [fontCss(f), f.family, fontCss(f)]; })); }
+  async function addFontFace(file, buf) {
+    if (fontsDone[file]) return;
+    var fam = fontFamilyOf(file);
+    try { var ff = new FontFace(fam.replace(/"/g, ''), buf); await ff.load(); document.fonts.add(ff); } catch (e) { return; } // not a font after all
+    fontsDone[file] = 1;
+    if (!userFonts.some(function (f) { return f.family === fam; })) userFonts.push({ family: fam, file: file });
+    userFonts.sort(function (a, b) { return a.family.localeCompare(b.family); });
+  }
+  function fontKey(file) { return new Request(location.origin + '/qn-font/' + encodeURIComponent(file)); }
+  async function fontsFolder(make) {
+    var t = tree(), root = rootId();
+    if (!root) return null;
+    var hit = Object.keys(t).filter(function (k) { return t[k].name === 'Fonts' && t[k].parentId === root; })[0];
+    return hit || (make ? sync.createFolder('Fonts', root) : null);
+  }
+  async function loadFonts(fromDrive) {
+    var cache = null; try { cache = await caches.open('qn-fonts'); } catch (e) {}
+    if (cache) { // what is on this device already: at once, online or not
+      var keys = await cache.keys();
+      for (var i = 0; i < keys.length; i++) {
+        var file = decodeURIComponent(keys[i].url.split('/qn-font/')[1] || ''); if (!file) continue;
+        var r = await cache.match(keys[i]); if (r) await addFontFace(file, await r.arrayBuffer());
+      }
+    }
+    if (!fromDrive || Drive.demo && !Drive.list) return;
+    var fid = await fontsFolder(false); if (!fid) return;
+    var list = (await Drive.list(fid)).filter(function (f) { return FONT_EXT.test(f.name); });
+    for (var j = 0; j < list.length; j++) {
+      if (fontsDone[list[j].name]) continue;
+      try {
+        var blob = await Drive.readBlob(list[j].id), buf = await blob.arrayBuffer();
+        if (cache) await cache.put(fontKey(list[j].name), new Response(buf.slice(0), { headers: { 'Content-Type': 'font/' + list[j].name.split('.').pop().toLowerCase() } }));
+        await addFontFace(list[j].name, buf);
+      } catch (e) { if (e.code === 'auth' || e.code === 'offline') return; }
+    }
+    // Fonts taken out of the Drive folder go from this device too.
+    if (cache) {
+      var names = {}; list.forEach(function (f) { names[f.name] = 1; });
+      var ks = await cache.keys();
+      for (var k = 0; k < ks.length; k++) { var fn = decodeURIComponent(ks[k].url.split('/qn-font/')[1] || ''); if (fn && !names[fn]) await cache.delete(ks[k]); }
+    }
+    fontsChecked = Date.now();
+  }
+  function fontsFromDriveSoon() { // once the main folder is known; then again at most every 10 minutes
+    if (Date.now() - fontsChecked < 10 * 60 * 1000) return;
+    if (!rootId()) { setTimeout(fontsFromDriveSoon, 4000); return; }
+    fontsChecked = Date.now();
+    loadFonts(true).catch(function () { fontsChecked = 0; });
+  }
+  loadFonts(false).catch(function () {});
+  setTimeout(fontsFromDriveSoon, 2500);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') fontsFromDriveSoon(); });
+  var fontInput = document.createElement('input');
+  fontInput.type = 'file'; fontInput.multiple = true; fontInput.accept = '.ttf,.otf,.woff,.woff2,font/*'; fontInput.className = 'hidden';
+  document.body.appendChild(fontInput);
+  fontInput.addEventListener('change', async function () {
+    var files = Array.prototype.slice.call(fontInput.files || []).filter(function (f) { return FONT_EXT.test(f.name); }); fontInput.value = '';
+    if (!files.length) { toast('Those aren’t font files (.ttf, .otf, .woff or .woff2).'); return; }
+    try {
+      if (!rootId()) await sync.run();
+      var fid = await fontsFolder(true), have = {};
+      (await Drive.list(fid)).forEach(function (f) { have[f.name] = 1; });
+      for (var i = 0; i < files.length; i++) {
+        if (!have[files[i].name]) await Drive.upload(files[i].name, fid, files[i], files[i].type || 'application/octet-stream');
+        var buf = await files[i].arrayBuffer();
+        try { var c = await caches.open('qn-fonts'); await c.put(fontKey(files[i].name), new Response(buf.slice(0))); } catch (e) {}
+        await addFontFace(files[i].name, buf);
+      }
+      toast(files.length === 1 ? 'Font added: ' + fontFamilyOf(files[0].name) : files.length + ' fonts added');
+      if ($('sheet') && $('sheet').querySelector('[data-act="addfont"]')) settingsSheet();
+    } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : 'The font could not be added: ' + (e.message || e)); }
+  });
+  function fontsHtml() {
+    return '<div class="set"><b>Fonts</b><p>Built in, and work offline: ' + CORE_FONTS.map(function (f) { return '<span style="font-family:' + esc(f[2]) + '">' + f[1].replace(' (standard)', '') + '</span>'; }).join(', ') + '.</p>' +
+      '<p>Your own: put font files (.ttf, .otf, .woff) in Drive › ' + esc(sync.rootName()) + ' › Fonts, or add them here. Each is kept on this device too, so it works offline.</p>' +
+      (userFonts.length ? '<p>' + userFonts.map(function (f) { return '<span style="font-family:' + esc(fontCss(f)) + ';font-size:17px">' + esc(f.family) + '</span>'; }).join(' · ') + '</p>' : '') +
+      '<button type="button" data-act="addfont">Add font files</button></div>';
   }
   // Photos from a phone camera are huge: keep them sharp on screen but small in Drive (longest side 2000 px).
   // ---------- Files on the page: saved once in Attachments, named by what is in them (3.20) ----------
@@ -2505,7 +2595,7 @@
         [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
-      toolOrderHtml() +
+      toolOrderHtml() + fontsHtml() +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button> <button type="button" data-act="vault">From Obsidian</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
@@ -2517,6 +2607,7 @@
       '<div class="row"><button type="button" data-act="close">Close</button></div>',
     function (act, b) {
       if (act === 'tup' || act === 'tdown') { moveTool(b.dataset.v, act === 'tup' ? -1 : 1); var sc = $('sheet'); var y = sc ? sc.scrollTop : 0; settingsSheet(); sc = $('sheet'); if (sc) sc.scrollTop = y; return; }
+      if (act === 'addfont') { fontInput.click(); return; }
       if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
       if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
@@ -2550,7 +2641,9 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
-    { t: 'The Hand and Text are two tools', d: 'The Hand only moves the page: one finger drags it, and a tap does nothing. Double tap a drawing, picture or text to pick it (Select opens with it picked). Triple tap to type: in the text you tap, or new text on empty space; the rail switches to Text. Text (the T under the Hand) is for typing: tap text to type in it. With every tool, two fingers move, zoom and turn the page. Typing also carries on after you come back from another app.',
+    { t: 'Your own fonts, also offline', d: 'Put font files (.ttf, .otf, .woff) in the Fonts folder inside your main folder in Drive, or add them from Settings › Fonts. Each is kept on this phone too, so it works without the internet, and it shows in every font list. The six built-in fonts always work offline. Also new: the side map takes in the screen you are on, so a drawing that runs half here and half to the side can be picked whole; in the Text tool a double tap starts typing; and the app no longer slows down after many notes are opened.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><text x="40" y="66" font-family="Lora, serif" font-size="34" fill="' + INKC + '">Aa</text><text x="104" y="66" font-family="Caveat, cursive" font-size="36" fill="' + A + '">Aa</text><text x="160" y="66" font-family="Permanent Marker, cursive" font-size="28" fill="' + INKC + '">Aa</text><path d="M40 96h160" stroke="' + RULE + '" stroke-width="2"/><text x="120" y="116" text-anchor="middle" font-size="12" fill="' + INKC + '">Drive › Fonts</text>') },
+    { t: 'The Hand and Text are two tools', d: 'The Hand only moves the page: one finger drags it, and a tap does nothing. Double tap a drawing, picture or text to pick it (Select opens with it picked). Triple tap to type: in the text you tap, or new text on empty space; the rail switches to Text. Text (the T under the Hand) is for typing: double tap text to type in it (one tap only moves around, so the keyboard stays down). With every tool, two fingers move, zoom and turn the page. Typing also carries on after you come back from another app.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="28" width="40" height="84" rx="10" fill="' + SOFT + '" stroke="' + RULE + '"/><circle cx="54" cy="48" r="12" fill="' + A + '"/><text x="54" y="96" text-anchor="middle" font-size="26" font-weight="700" fill="' + INKC + '">T</text><path d="M96 52h104M96 68h80M96 84h92" stroke="' + RULE + '" stroke-width="3"/><circle cx="150" cy="70" r="5" fill="' + A + '"/><circle cx="150" cy="70" r="12" fill="none" stroke="' + A + '" stroke-width="2"/><circle cx="150" cy="70" r="19" fill="none" stroke="' + A + '" stroke-width="1.5" opacity=".6"/>') },
     { t: 'Linear mode: see a whole side', d: 'Tap an arrow at the edge and a map opens of everything that way: the whole right side, left side, above, below or a corner, not only the nearest part. Scroll it, and double tap a part to bring it into the column. The dashed outline shows where you are. A double tap on the arrow still goes straight to the nearest part. A note now opens in Linear mode or as a free canvas, the way you left it.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="24" width="70" height="92" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="122" y="24" width="86" height="92" rx="8" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="128" y="40" width="40" height="30" rx="6" fill="none" stroke="' + A + '" stroke-dasharray="5 4"/><path d="M132 86h60M132 98h44" stroke="' + RULE + '" stroke-width="3"/><path d="M108 70l8-6v12z" fill="' + A + '"/>') },
