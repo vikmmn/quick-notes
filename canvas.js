@@ -214,7 +214,7 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; if (b.z != null) o.z = b.z; return o; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; if (b.z != null) o.z = b.z; if (b.ls) o.ls = b.ls; if (b.ps != null) o.ps = b.ps; return o; })), ink: copyLayers(ink) }; }
     function sameAs(a, b) {
       if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
@@ -285,6 +285,8 @@
         if (!e) return;
         e.el.style.left = (b.x + M) + 'px'; e.el.style.top = (b.y + M) + 'px';
         e.el.style.transform = b.r ? 'rotate(' + b.r + 'rad)' : ''; // text written on a turned page stays straight to how it was written
+        if (b.ls) e.el.style.setProperty('--qn-lh', b.ls); else e.el.style.removeProperty('--qn-lh'); // (3.28) line and paragraph spacing
+        if (b.ps != null) e.el.style.setProperty('--qn-ps', b.ps + 'em'); else e.el.style.removeProperty('--qn-ps');
         // A text box without its own width: a comfortable reading width, not the whole screen (3.18.1), so in
         // landscape the rest of the page stays free for a quick scribble with the pen.
         e.el.style.width = (b.w || Math.max(160, Math.min(TEXT_W, autoWidth() - b.x))) + 'px';
@@ -320,7 +322,7 @@
           else textTimer = setTimeout(function () { flushText(b.id); record(); }, 700);
           requestAnimationFrame(layout);
         },
-        onFocus: function () { active = { box: b, ed: ed }; e.classList.add('focused'); hooks.focus(ed); },
+        onFocus: function () { active = { box: b, ed: ed }; lastBoxId = b.id; e.classList.add('focused'); hooks.focus(ed); },
         onBlur: function () {
           e.classList.remove('focused');
           flushText(b.id);
@@ -1294,6 +1296,15 @@
     self.penSeen = function () { return penSeen; };
     self.busy = function () { return !!drag || eng.busy(); };
     self.active = function () { return active && editors[active.box.id] ? active.ed : null; };
+    // (3.28, #80) The Text card works on the box being typed in, or else the one typed in last.
+    var lastBoxId = null;
+    function lastBox() { var id = active ? active.box.id : lastBoxId; var b = boxes.filter(function (x) { return x.id === id; })[0]; return b && editors[b.id] ? b : null; }
+    self.textTarget = function () { var b = lastBox(); return b ? { ed: editors[b.id].ed, typing: editors[b.id].el.contains(document.activeElement), ls: b.ls || null, ps: b.ps == null ? null : b.ps } : null; };
+    self.boxSpacing = function (k, v) {
+      var b = lastBox(); if (!b) return false;
+      if (v == null || v === '') delete b[k]; else b[k] = +v;
+      layout(); changed('layout'); record(); return true;
+    };
     self.flush = flushAll;
     self.undo = function () {
       flushAll(); clearTimeout(textTimer); record();

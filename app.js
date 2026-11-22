@@ -1306,6 +1306,28 @@
     PREF.ink = INKOPT;
   })();
   function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
+  // (3.28, #80) The Text tool's card: a short set of text tools in three parts, Letters, Paragraph and Spacing (like
+  // Affinity's Character and Paragraph panels, kept small). It works on the box being typed in, or the one typed in last.
+  function textCard() {
+    var G = function (x) { return '<div class="grp">' + x + '</div>'; };
+    var tt = S.canvas && S.canvas.textTarget && S.canvas.textTarget();
+    if (!tt) return G(HINT('Double tap a text box (or empty space for new text). These text tools then change it: letters, paragraphs and spacing.'));
+    var ed = tt.ed;
+    function on(f) { try { return FMT_STATE[f] ? FMT_STATE[f](ed) : false; } catch (e) { return false; } }
+    function tc(f, label, name, pressed) { return '<button type="button" class="ochip" data-tf="' + f + '" aria-label="' + name + '" title="' + name + '" aria-pressed="' + !!pressed + '">' + label + '</button>'; }
+    var ff = ed.getAttributes('textStyle').fontFamily || '', fn = (allFonts().filter(function (x) { return x[0] === ff; })[0] || ['', 'Sans'])[1].replace(' (standard)', '');
+    var fs = parseInt(ed.getAttributes('textStyle').fontSize, 10) || 17, ls = tt.ls || 1.55, ps = tt.ps == null ? 0.35 : tt.ps;
+    var para = !on('h1') && !on('h2') && !ed.isActive('heading', { level: 3 }) && !on('quote') && !ed.isActive('codeBlock');
+    return '<div class="olabel">Letters</div>' + G(tc('bold', '<b>B</b>', 'Bold', on('bold')) + tc('italic', '<i style="font-family:Georgia,serif">I</i>', 'Italic', on('italic')) + tc('underline', '<u>U</u>', 'Underline', on('underline')) + tc('strike', '<s>S</s>', 'Strikethrough', on('strike'))) +
+      G(tc('font', '<span style="font-family:' + esc(ff || 'var(--font)') + '">' + esc(fn) + '</span> ▾', 'Font') + tc('size', fs + ' ▾', 'Size') + tc('color', '<span style="font-weight:700;border-bottom:3px solid #c0392b">A</span>', 'Text colour') + tc('highlight', '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#fde68a;vertical-align:middle"></span>', 'Highlight', on('highlight'))) +
+      '<div class="olabel">Paragraph</div>' + G(tc('para', 'Body', 'Body text', para) + tc('h1', 'H1', 'Heading', on('h1')) + tc('h2', 'H2', 'Subheading', on('h2')) + tc('h3', 'H3', 'Small heading', ed.isActive('heading', { level: 3 })) + tc('quote', '❝', 'Quote', on('quote')) + tc('code', '{ }', 'Code', ed.isActive('codeBlock'))) +
+      G(tc('bullet', '•≡', 'Bulleted list', on('bullet')) + tc('ordered', '1.', 'Numbered list', on('ordered')) + tc('task', '☑', 'Checklist', on('task')) + tc('outdent', '⇠', 'Less indent') + tc('indent', '⇢', 'More indent')) +
+      G(tc('left', '⇤', 'Align left', !on('center') && !on('right') && !ed.isActive({ textAlign: 'justify' })) + tc('center', '↔', 'Centre', on('center')) + tc('right', '⇥', 'Align right', on('right')) + tc('justify', '☰', 'Justify', ed.isActive({ textAlign: 'justify' }))) +
+      '<div class="olabel">Spacing (this box)</div>' + G('<span class="olab2">Lines</span>' + [[1.2, 'Tight'], [1.55, 'Normal'], [1.9, 'Airy'], [2.3, 'Double']].map(function (o) { return '<button type="button" class="ochip" data-tls="' + o[0] + '" aria-pressed="' + (Math.abs(ls - o[0]) < 0.01) + '">' + o[1] + '</button>'; }).join('')) +
+      G('<span class="olab2">Gaps</span>' + [[0, 'None'], [0.35, 'Small'], [0.8, 'Medium'], [1.4, 'Big']].map(function (o) { return '<button type="button" class="ochip" data-tps="' + o[0] + '" aria-pressed="' + (Math.abs(ps - o[0]) < 0.01) + '">' + o[1] + '</button>'; }).join('')) +
+      G(tc('clear', 'Clear', 'Clear formatting') ) +
+      G(HINT(tt.typing ? 'Changes the words picked, or the line you are on.' : 'Not typing now: letter changes go on the whole box; paragraph changes on the line typed in last.'));
+  }
   function chip(label, attr, on) { return '<button type="button" class="ochip" ' + attr + ' aria-pressed="' + !!on + '">' + label + '</button>'; }
   function swatches(cur, key) {
     var known = SWATCH.indexOf(cur) > -1;
@@ -1385,8 +1407,8 @@
       html = G(TF.map(function (f) { return chip('<span style="font-family:' + esc(f[0]) + '">' + f[1] + '</span>', 'data-tfont="' + esc(f[0]) + '"', o.text.font === f[0]); }).join('')) +
         G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
-    } else if (t === 'type') html = G(HINT('Tap text to type in it; double tap empty space to start new text. One finger moves the page.')) +
-        G(HINT('Writing with the pen switches to Pen by itself.'));
+    } else if (t === 'type') html = textCard() +
+        G(HINT('Double tap text to type in it; double tap empty space to start new text. One finger moves the page. Writing with the pen switches to Pen by itself.'));
     else if (t === 'hand') html = G(HINT('One finger moves the page; a tap does nothing. Double tap a thing to pick it (Select). Triple tap to type: in the text you tap, or new text on empty space.')) +
         G(HINT('Two fingers move, zoom and turn the page with every tool. Writing with the pen switches to Pen by itself.'));
     else if (t === 'guide') {
@@ -1543,6 +1565,7 @@
     card.style.top = on ? Math.max(0, on.offsetTop - $('tools').querySelector('.tool-row').scrollTop - 8) + 'px' : '0px';
   }
   function showOpts(on) {
+    if (on && PREF.tool === 'type' && !$('tools').classList.contains('opts')) setTool('type'); // the Text card: for the box in use now (3.28)
     $('tools').classList.toggle('opts', !!on);
     if (on) { placeOpts(); if (!$('layersPanel').classList.contains('hidden')) { $('layersPanel').classList.add('hidden'); layersBtn(); } }
   }
@@ -1584,11 +1607,18 @@
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
+    if (b.dataset.tf || b.dataset.tls || b.dataset.tps) {
+      var tt = S.canvas && S.canvas.textTarget && S.canvas.textTarget(); if (!tt) return;
+      if (b.dataset.tls) { S.canvas.boxSpacing('ls', +b.dataset.tls === 1.55 ? null : b.dataset.tls); return setTool('type'); }
+      if (b.dataset.tps) { S.canvas.boxSpacing('ps', +b.dataset.tps === 0.35 ? null : b.dataset.tps); return setTool('type'); }
+      return fmtDo(b.dataset.tf, b, tt.ed, !tt.typing);
+    }
     if (b.dataset.tfont != null) { INKOPT.text.font = b.dataset.tfont; applyInk(); savePref(); return setTool('text'); }
   });
   // While artistic text is being written, tapping the Text card's buttons keeps the keyboard and the writing going.
   $('tools').addEventListener('pointerdown', function (e) {
     if (S.canvas && S.canvas.ink().editingText() && e.target.closest('button') && !e.target.closest('[data-act=closeopts]')) e.preventDefault();
+    if (S.canvas && S.canvas.active() && e.target.closest('[data-tf], [data-tls], [data-tps]')) e.preventDefault(); // keep typing (3.28)
   });
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
@@ -1961,8 +1991,28 @@
     if (b && b.dataset.f === 'image') { pickImage(); return; }
     var ed = S.canvas && S.canvas.active();
     if (!b || !ed) return;
-    var c = ed.chain().focus();
-    switch (b.dataset.f) {
+    fmtDo(b.dataset.f, b, ed, false);
+  });
+  // (3.28, #80) The formatting, shared by the bar above the keyboard and the Text tool's card. quiet = not typing:
+  // no caret and no keyboard; letter changes (bold, font, size, colour…) then go on the whole box.
+  var CHAR_F = { bold: 1, italic: 1, underline: 1, strike: 1, highlight: 1, color: 1, font: 1, size: 1, left: 1, center: 1, right: 1, justify: 1, clear: 1 };
+  function fmtDo(f, b, ed, quiet) {
+    function chain() {
+      var x = quiet ? ed.chain() : ed.chain().focus();
+      if (!(quiet && CHAR_F[f])) return x;
+      // The whole box, then back to where the caret was, so a paragraph change next still goes on that line only.
+      var sl = ed.state.selection, from = sl.from, to = sl.to;
+      setTimeout(function () { try { var n = ed.state.doc.content.size; ed.commands.setTextSelection({ from: Math.min(from, n), to: Math.min(to, n) }); } catch (e) {} }, 0);
+      return x.selectAll();
+    }
+    var c = chain();
+    switch (f) {
+      case 'justify': c.setTextAlign('justify').run(); break;
+      case 'para': c.setParagraph().run(); break;
+      case 'h3': c.toggleHeading({ level: 3 }).run(); break;
+      case 'code': c.toggleCodeBlock().run(); break;
+      case 'indent': c.sinkListItem(ed.isActive('taskList') ? 'taskItem' : 'listItem').run(); break;
+      case 'outdent': c.liftListItem(ed.isActive('taskList') ? 'taskItem' : 'listItem').run(); break;
       case 'bold': c.toggleBold().run(); break;
       case 'italic': c.toggleItalic().run(); break;
       case 'underline': c.toggleUnderline().run(); break;
@@ -1980,14 +2030,14 @@
       case 'highlight':
         popAt(b, ['#fde68a', '#bbf7d0', '#bfdbfe', '#fbcfe8'].map(function (x) { return '<button class="swatch" data-v="' + x + '" style="background:' + x + '" aria-label="Highlight colour"></button>'; }).join('') +
           '<button data-v="">None</button>', function (p) {
-          if (p.dataset.v) ed.chain().focus().setHighlight({ color: p.dataset.v }).run(); else ed.chain().focus().unsetHighlight().run();
+          if (p.dataset.v) chain().setHighlight({ color: p.dataset.v }).run(); else chain().unsetHighlight().run();
           $('pop').classList.add('hidden');
         });
         return;
       case 'color':
         popAt(b, ['#c0392b', '#d9822b', '#2f855a', '#2b6cb0', '#7e57c2', '#8a8a8a'].map(function (x) { return '<button class="swatch" data-v="' + x + '" style="background:' + x + '" aria-label="Text colour"></button>'; }).join('') +
           '<button data-v="">Default</button>', function (p) {
-          if (p.dataset.v) ed.chain().focus().setColor(p.dataset.v).run(); else ed.chain().focus().unsetColor().run();
+          if (p.dataset.v) chain().setColor(p.dataset.v).run(); else chain().unsetColor().run();
           $('pop').classList.add('hidden');
         });
         return;
@@ -1995,7 +2045,7 @@
         // With nothing selected, the font goes on the whole text box.
         var FONTS = allFonts();
         popAt(b, FONTS.map(function (f) { return '<button data-v="' + esc(f[0]) + '" style="font-family:' + esc(f[2]) + ';font-size:16px">' + f[1] + '</button>'; }).join(''), function (p) {
-          var chain = ed.chain().focus();
+          var chain = chain();
           if (ed.state.selection.empty) chain = chain.selectAll();
           if (p.dataset.v) chain.setFontFamily(p.dataset.v).run(); else chain.unsetFontFamily().run();
           $('pop').classList.add('hidden');
@@ -2009,7 +2059,7 @@
           '<button data-v="up" aria-label="Bigger">+</button><button data-v="set" class="primary">Set</button></span>', function (p) {
           var v = p.dataset.v, inp = $('fsIn');
           if (v === 'up' || v === 'dn') { inp.value = Math.max(6, Math.min(400, (+inp.value || 16) + (v === 'up' ? 2 : -2))); v = 'set'; }
-          var chain = ed.chain().focus();
+          var chain = chain();
           if (v === 'set') {
             if (ed.state.selection.empty) chain = chain.selectAll();
             chain.setFontSize(Math.max(6, Math.min(400, +inp.value || 16)) + 'px').run();
@@ -2025,16 +2075,17 @@
         var prev = ed.getAttributes('link').href || '';
         popAt(b, '<input type="text" id="linkIn" placeholder="https://…" value="' + esc(prev) + '" style="width:200px"><button data-v="set" class="primary">Set</button>' + (prev ? '<button data-v="rm">Remove</button>' : ''), function (p) {
           var url = $('linkIn').value.trim();
-          if (p.dataset.v === 'rm' || !url) ed.chain().focus().extendMarkRange('link').unsetLink().run();
-          else ed.chain().focus().extendMarkRange('link').setLink({ href: /^[a-z]+:/i.test(url) ? url : 'https://' + url }).run();
+          if (p.dataset.v === 'rm' || !url) chain().extendMarkRange('link').unsetLink().run();
+          else chain().extendMarkRange('link').setLink({ href: /^[a-z]+:/i.test(url) ? url : 'https://' + url }).run();
           $('pop').classList.add('hidden');
         });
         $('pop').onpointerdown = null;
         setTimeout(function () { $('linkIn').focus(); }, 30);
         return;
     }
-    updateFmt(ed);
-  });
+    if (!quiet) updateFmt(ed);
+    if (PREF.tool === 'type' && $('tools').classList.contains('opts')) setTool('type'); // the Text card shows what changed
+  }
 
   // ---------- Images: saved to Notes › Attachments in Drive, shown in the note ----------
   var imgInput = document.createElement('input');

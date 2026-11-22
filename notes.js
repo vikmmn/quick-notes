@@ -55,6 +55,8 @@
         if (o.r) cur.r = +o.r; // turned to how it was written on a turned page
         if (o.g) cur.g = String(o.g); // in a collective with drawings
         if (o.co) cur.co = +o.co;
+        if (o.ls) cur.ls = +o.ls; // (3.28) line spacing of the box
+        if (o.ps != null) cur.ps = +o.ps; // (3.28) space after each paragraph, in em
         if (o.l) cur.l = String(o.l); // the drawing layer the text belongs to (hidden, locked and faded with it)
         if (o.z != null) cur.z = String(o.z); // the drawing item it sits just in front of ('' = the back of its layer)
         boxes.push(cur);
@@ -69,7 +71,7 @@
   function hasInk(n) { return !!(n && window.QNInk && window.QNInk.hasInk(n.ink)); }
   function isPlain(n) {
     var b = n.boxes || [];
-    return !hasInk(n) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w;
+    return !hasInk(n) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w && !b[0].ls && b[0].ps == null;
   }
   function readingOrder(boxes) {
     return (boxes || []).slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); });
@@ -86,6 +88,8 @@
       if (b.r) meta.r = Math.round(b.r * 1000) / 1000;
       if (b.g) meta.g = b.g;
       if (b.co) meta.co = Math.round(b.co * 100) / 100;
+      if (b.ls) meta.ls = b.ls;
+      if (b.ps != null) meta.ps = b.ps;
       if (b.z != null) meta.z = b.z;
       return '<!-- qn:box ' + JSON.stringify(meta) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
