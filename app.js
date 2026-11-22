@@ -309,7 +309,8 @@
     var a = e.target.closest && e.target.closest('.emb-open'); if (!a) return;
     e.preventDefault(); e.stopPropagation();
     var L = noteLinkOf(a.dataset.qn), n = L && noteById(L.id); if (!n) return;
-    openNote(n);
+    if (S.canvas) S.canvas.flush();
+    openNote(n, false, 'tab'); // in a new tab, so the note you came from stays open (#53)
     if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
   }, true);
   // Links in a note's text (3.26): a note link (qn://note/…, as the Obsidian copy makes from [[links]]) opens that
@@ -339,7 +340,7 @@
     var n = noteById(L.id);
     if (!n) { toast('That note isn\'t here (deleted, or not synced yet).'); return; }
     if (S.cur && S.canvas) S.canvas.flush();
-    openNote(n);
+    openNote(n, false, 'tab');
     if (L.r) setTimeout(function () { if (S.canvas && S.cur === n) S.canvas.showRect(L.r); }, 350);
   }, true);
   // Notes that link to this one (3.26): in their text, or as a linked note on their page.
@@ -1029,7 +1030,7 @@
     S.view = 'note'; dockFeedback();
     $('listView').classList.add('hidden'); $('editorView').classList.remove('hidden');
     closeMenu();
-    try { history.pushState({ v: 'note' }, ''); } catch (e) {}
+    try { if (S.tabSwitch) history.replaceState({ v: 'note' }, ''); else history.pushState({ v: 'note' }, ''); } catch (e) {}
     $('noteTitle').value = n.title || '';
     setPin(n.pinned);
     renderLabelsRow(); renderConflict(); renderMeta();
@@ -1046,6 +1047,72 @@
   function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyViewPrefs(); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
   var openNote0 = openNote, showList0 = null;
   openNote = function () { var r = openNote0.apply(this, arguments); renderImportBar(); return r; };
+  // ---------- Tabs (3.29, #53): several notes open at once ----------
+  // A note opened from the list goes in the tab in use; a note link (in text, or Open ↗ on a linked note) opens in a
+  // new tab next to it, and so does ••• › Open another note in a new tab. The strip shows from two tabs on. The tabs
+  // (and the note you were in) come back when the app opens again.
+  var TABS = { ids: [], cur: null, inNote: false, newNext: false };
+  try { var tj = JSON.parse(localStorage.getItem('qn-tabs') || '{}'); TABS.ids = (tj.ids || []).map(String); TABS.cur = tj.cur || null; TABS.inNote = !!tj.inNote; } catch (e) {}
+  function saveTabs() { try { localStorage.setItem('qn-tabs', JSON.stringify({ ids: TABS.ids, cur: TABS.cur, inNote: S.view === 'note' })); } catch (e) {} }
+  function tabName(n) { var t = (n.title || '').trim() || String((n.boxes && n.boxes[0] && n.boxes[0].md) || n.body || '').replace(/[#*_>`\[\]()-]/g, ' ').trim().split('\n')[0]; return (t || 'Untitled').slice(0, 40); }
+  function renderTabs() {
+    var bar = $('tabBar'); if (!bar) return;
+    // Only a deleted note leaves the tabs; one not loaded yet (before the first sync) keeps its place.
+    TABS.ids = TABS.ids.filter(function (id, i, all) { return all.indexOf(id) === i && !(notes[id] && notes[id].deleted); });
+    var shown = TABS.ids.filter(function (id) { return noteById(id) || (S.cur && S.cur.id === id); });
+    var show = S.view === 'note' && shown.length > 1;
+    bar.classList.toggle('hidden', !show);
+    document.body.classList.toggle('has-tabs', show);
+    if (show) {
+      bar.innerHTML = shown.map(function (id) {
+        var n = (S.cur && S.cur.id === id) ? S.cur : noteById(id), on = S.cur && S.cur.id === id;
+        return '<button type="button" class="tab' + (on ? ' on' : '') + '" role="tab" aria-selected="' + !!on + '" data-tab="' + esc(id) + '"><span>' + esc(tabName(n)) + '</span><i data-tclose="' + esc(id) + '" role="button" aria-label="Close this tab" title="Close this tab">×</i></button>';
+      }).join('') + '<button type="button" class="tab-add" data-tadd aria-label="Open another note in a new tab" title="Open another note in a new tab">+</button>';
+      var on = bar.querySelector('.tab.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    var pill = $('tabsPill');
+    if (pill) { var others = shown.length; pill.classList.toggle('hidden', S.view === 'note' || others < 2); pill.textContent = 'Open tabs (' + others + ')'; }
+    saveTabs();
+  }
+  var openNote2 = openNote;
+  openNote = function (n, isNew, how) {
+    if (!n) return;
+    var i = TABS.ids.indexOf(n.id), curI = S.cur ? TABS.ids.indexOf(S.cur.id) : TABS.ids.indexOf(TABS.cur);
+    if (i < 0) {
+      if (how === 'tab' || TABS.newNext || curI < 0) TABS.ids.splice(curI < 0 ? TABS.ids.length : curI + 1, 0, n.id);
+      else TABS.ids[curI] = n.id; // in the tab in use
+      if (TABS.ids.length > 8) { var drop = TABS.ids.filter(function (id) { return id !== n.id; })[0]; TABS.ids.splice(TABS.ids.indexOf(drop), 1); }
+    }
+    TABS.newNext = false; TABS.cur = n.id;
+    S.tabSwitch = S.view === 'note' && !!S.cur; // from one note to another: no extra step for the back button
+    try { return openNote2.apply(this, [n, isNew]); } finally { S.tabSwitch = false; renderTabs(); }
+  };
+  function closeTab(id) {
+    var i = TABS.ids.indexOf(id); if (i < 0) return;
+    TABS.ids.splice(i, 1);
+    if (S.cur && S.cur.id === id) {
+      var next = TABS.ids[Math.min(i, TABS.ids.length - 1)], n = next && noteById(next);
+      if (n) { if (S.canvas) S.canvas.flush(); openNote(n); return; }
+      TABS.cur = null;
+      if (history.state && history.state.v === 'note') history.back(); else { closeNote(); showList(); }
+      return;
+    }
+    renderTabs();
+  }
+  document.addEventListener('click', function (e) {
+    var c = e.target.closest && e.target.closest('#tabBar [data-tclose]');
+    if (c) { e.stopPropagation(); closeTab(c.dataset.tclose); return; }
+    var t = e.target.closest && e.target.closest('#tabBar [data-tab]');
+    if (t) { var n = noteById(t.dataset.tab); if (n && (!S.cur || S.cur.id !== n.id)) { if (S.canvas) S.canvas.flush(); openNote(n); } return; }
+    if (e.target.closest && e.target.closest('#tabBar [data-tadd]')) { newTabPick(); return; }
+    if (e.target.closest && e.target.closest('#tabsPill')) { var m = noteById(TABS.cur) || noteById(TABS.ids[0]); if (m) openNote(m); }
+  });
+  function newTabPick() { // back to the list; the next note opened (or made) goes in a new tab
+    TABS.newNext = true;
+    if (history.state && history.state.v === 'note') history.back(); else { closeNote(); showList(); }
+    toast('Pick a note (or make a new one): it opens in a new tab.', null, null, 3500);
+  }
+  S.newTabPick = newTabPick;
   function closeNote() {
     var n = S.cur;
     if (!n) return;
@@ -1058,6 +1125,7 @@
     sync.run();
   }
   function showList() {
+    setTimeout(function () { if (typeof renderTabs === 'function') renderTabs(); }, 0);
     S.view = 'list'; dockFeedback(); if (S.pick) endPick(); setTimeout(renderImportBar, 0);
     $('editorView').classList.add('hidden'); $('listView').classList.remove('hidden');
     renderList();
@@ -2443,6 +2511,7 @@
     if (b.dataset.m === 'bgg' || b.dataset.m === 'bgt') { closeMenu(); bgSheet(b.dataset.m === 'bgg' ? 'g' : 't'); return; }
     if (b.dataset.m === 'link' && S.cur) copyNoteLink(S.cur, null);
     if (b.dataset.m === 'linked' && S.cur) { closeMenu(); linkedFromSheet(S.cur); return; }
+    if (b.dataset.m === 'newtab' && S.cur) { closeMenu(); newTabPick(); return; }
     if (b.dataset.m === 'move') pickFolder('Move note to…', folderOf(n), function (target) {
       if (target !== folderOf(n)) {
         if (n.fileId && !n.moveFrom) n.moveFrom = n.folderId;
@@ -2695,6 +2764,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Tabs: several notes open at once', d: 'Tap a link to another note and it opens in a new tab; the note you came from stays open. Tabs show as a strip at the top: tap one to switch, × to close it, + (or ••• › Open another note in a new tab) to pick another note. A note opened from the list goes in the tab you were in. The tabs, and the note you were in, come back when the app opens again; from the list, “Open tabs” takes you back.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="30" y="24" width="56" height="20" rx="6" fill="' + SOFT + '"/><rect x="92" y="24" width="56" height="20" rx="6" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="154" y="24" width="40" height="20" rx="6" fill="' + SOFT + '"/><path d="M40 62h150M40 78h120M40 94h136" stroke="' + RULE + '" stroke-width="6" stroke-linecap="round"/>') },
     { t: 'Perspective, isometric and text tools', d: 'Guides now has perspective (1, 2 or 3 vanishing points), an isometric grid and a square grid. With one on, a Pen line heads for the nearest vanishing point (or goes level or upright), or takes the nearest grid direction; a curve stays free. Drag the round points to move them. And the Text tool has its own card (tap T twice): letters (bold, font, size, colour), paragraphs (body, headings, quote, code, lists, indent, alignment incl. justify) and spacing between lines and paragraphs for the box.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M28 56H212" stroke="' + A + '" stroke-width="1.5"/><circle cx="60" cy="56" r="5" fill="none" stroke="' + A + '" stroke-width="2"/><circle cx="180" cy="56" r="5" fill="none" stroke="' + A + '" stroke-width="2"/><path d="M120 40V110M120 40L60 56M120 110L60 56M120 40L180 56M120 110L180 56M96 47V100M146 47V100" stroke="' + INKC + '" stroke-width="2" fill="none"/>') },
     { t: 'Your own fonts, also offline', d: 'Put font files (.ttf, .otf, .woff) in the Fonts folder inside your main folder in Drive, or add them from Settings › Fonts. Each is kept on this phone too, so it works without the internet, and it shows in every font list. The six built-in fonts always work offline. Also new: the side map takes in the screen you are on, so a drawing that runs half here and half to the side can be picked whole; in the Text tool a double tap starts typing; and the app no longer slows down after many notes are opened.',
@@ -3000,6 +3071,8 @@
     S.folder = startFolder();
     try { history.replaceState({ v: 'exit' }, ''); history.pushState(navState(), ''); } catch (e) {}
     showList();
+    // (3.29) Back in the note (and its tabs) you were in when the app was left.
+    if (TABS.inNote && TABS.cur && notes[TABS.cur] && !notes[TABS.cur].deleted && !new URLSearchParams(location.search).has('text')) openNote(notes[TABS.cur]);
 
     // Android "Share to Serendipity": arrives as ?title=…&text=…&url=…
     var p = new URLSearchParams(location.search);
@@ -3018,7 +3091,11 @@
     // Ask the phone to keep this app's data even when storage runs low.
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     renderStatus();
-    sync.run({ pull: true });
+    var t0 = Date.now(), first = sync.run({ pull: true });
+    if (first && first.then) first.then(function () { // a note that was only in Drive yet: open it once it has come in
+      var n = TABS.inNote && TABS.cur && noteById(TABS.cur);
+      if (n && S.view === 'list' && !S.cur && Date.now() - t0 < 10000) openNote(n);
+    }).catch(function () {});
     setTimeout(function () { if (S.view === 'list') whatsNew(false); }, 700);
   })();
 
