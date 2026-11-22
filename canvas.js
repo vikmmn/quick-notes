@@ -24,6 +24,38 @@
   // Loading: each &nbsp; line becomes an empty paragraph again, so the caret starts on a truly empty line.
   function toEditor(md) { return String(md || '').replace(/^&nbsp;[ \t]*$/gm, '<p></p>'); }
 
+  // (3.27.1) The editor has no tables or raw HTML blocks: it flattened a table into one run of words the moment a
+  // note was opened and saved. Now each table (and block of HTML) is set aside before the box loads, shown as one
+  // line like  ⟦table 1: A · B⟧, and put back exactly as written when the box is saved. Delete the line to delete it.
+  var HTMLB = /^\s{0,3}<(div|table|details|iframe|section|center|video|audio|pre|ul|ol|blockquote|figure|p)\b/i;
+  var SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+  function protect(md) {
+    var lines = String(md || '').split('\n'), out = [], keep = [], i = 0, fence = null;
+    function take(kind, from, to, label) {
+      keep.push(lines.slice(from, to).join('\n'));
+      out.push('', '\u27e6' + kind + ' ' + keep.length + (label ? ': ' + label : '') + '\u27e7', '');
+    }
+    while (i < lines.length) {
+      var L = lines[i], f = /^\s*(```|~~~)/.exec(L);
+      if (f) { fence = fence ? (L.indexOf(fence) >= 0 ? null : fence) : f[1]; out.push(L); i++; continue; }
+      if (!fence && /^\s*\|/.test(L) && i + 1 < lines.length && SEP.test(lines[i + 1]) && /\|/.test(lines[i + 1])) {
+        var j = i + 2; while (j < lines.length && /^\s*\|/.test(lines[j])) j++;
+        var cells = L.replace(/^\s*\||\|\s*$/g, '').split('|').map(function (c) { return c.trim(); }).filter(Boolean).slice(0, 3).join(' \u00b7 ');
+        take('table', i, j, cells); i = j; continue;
+      }
+      if (!fence && HTMLB.test(L)) {
+        var k = i; while (k < lines.length && lines[k].trim() !== '') k++;
+        take('html', i, k, ''); i = k; continue;
+      }
+      out.push(L); i++;
+    }
+    return { text: keep.length ? out.join('\n') : String(md || ''), keep: keep };
+  }
+  function unprotect(md, keep) {
+    if (!keep || !keep.length) return md;
+    return md.replace(/\u27e6(?:table|html) (\d+)[^\u27e7]*\u27e7/g, function (m, n) { return keep[+n - 1] != null ? keep[+n - 1] : m; });
+  }
+
   function el(tag, cls, parent) { var e = document.createElement(tag); if (cls) e.className = cls; if (parent) parent.appendChild(e); return e; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -118,7 +150,7 @@
         view.y += want - (r.top + r.bottom) / 2; clampPage(); applyView();
       });
     }
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { if (active) keepCaret(); });
+    if (window.visualViewport) on(window.visualViewport, 'resize', function () { if (active) keepCaret(); });
     // Page mode (3.23): a phone held upright opens notes like a page, only scrolling up and down (no sideways moving
     // or zooming), as in Keep. Turned sideways, or on a tablet, it is the open canvas. View › Free canvas switches.
     // (3.24.1: in Auto, a note with drawings, pictures or text boxes out to the side of the page opens as the free canvas,
@@ -275,7 +307,8 @@
       var mount = el('div', 'ed', e);
       el('div', 'resize', e).title = 'Drag to change the width';
       var isFirst = boxes[0] === b;
-      var ed = LIB().makeEditor(mount, toEditor(b.md), {
+      var pr = protect(b.md);
+      var ed = LIB().makeEditor(mount, toEditor(pr.text), {
         placeholder: isFirst ? 'Note' : 'Text',
         onUpdate: function () {
           clearTimeout(mdTimer);
@@ -305,13 +338,13 @@
         onSelectionUpdate: function () { hooks.selection(ed); keepCaret(); },
         onTransaction: function () { hooks.selection(ed); }
       });
-      editors[b.id] = { el: e, ed: ed };
+      editors[b.id] = { el: e, ed: ed, keep: pr.keep };
       return editors[b.id];
     }
     function flushText(id) {
       var b = boxes.filter(function (x) { return x.id === id; })[0], e = editors[id];
       if (!b || !e) return;
-      var md = getMd(e.ed);
+      var md = unprotect(getMd(e.ed), e.keep);
       if (md !== b.md) { b.md = md; hooks.change('text'); }
     }
     function flushAll() { if (eng && eng.finishText) eng.finishText(); clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
@@ -1313,6 +1346,7 @@
       Object.keys(editors).forEach(function (id) { editors[id].ed.destroy(); });
       if (head) { if (headRO) headRO.disconnect(); head.classList.remove('in-page'); head.style.width = head.style.top = ''; wrap.insertBefore(head, host); }
       clearTimeout(navTimer); clearTimeout(viewTimer);
+      if (eng && eng.destroy) eng.destroy();
       try { localStorage.setItem(VKEY, JSON.stringify(view)); } catch (e) {} // the view as left, Linear or free (3.27)
       editors = {}; host.innerHTML = ''; if (self._unbind) self._unbind();
     };
@@ -1327,5 +1361,5 @@
     self._unbind = function () { offs.forEach(function (f) { f(); }); offs = []; };
   }
 
-  window.QNCanvas = { NoteCanvas: NoteCanvas, inkSvg: function (ink, w, h) { return window.QNInk.thumb(ink, w, h); } };
+  window.QNCanvas = { NoteCanvas: NoteCanvas, protect: protect, unprotect: unprotect, inkSvg: function (ink, w, h) { return window.QNInk.thumb(ink, w, h); } };
 })();
