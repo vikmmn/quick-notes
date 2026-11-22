@@ -11,7 +11,7 @@
   var store = N.Store();
   var S = { view: 'list', cur: null, canvas: null, folder: null, label: null, q: '', scopeAll: false, expanded: {}, saveTimer: null, lastOpened: null };
   try { S.expanded = JSON.parse(localStorage.getItem('qn-expanded') || '{}'); } catch (e) {}
-  var PREF = { tool: 'type', pen: { c: 'ink', s: 3 }, hl: '#f2c94c' };
+  var PREF = { tool: 'hand', pen: { c: 'ink', s: 3 }, hl: '#f2c94c' };
   try { Object.assign(PREF, JSON.parse(localStorage.getItem('qn-pen') || '{}')); } catch (e) {}
 
   function $(id) { return document.getElementById(id); }
@@ -127,7 +127,8 @@
     progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; },
     folders: function () { if (S.view === 'list') renderList(); if (!$('drawer').classList.contains('hidden')) renderTree(); renderMeta(); }
   });
-  function editingNow() { return document.activeElement && $('editorView').contains(document.activeElement) && document.activeElement !== document.body; }
+  // (3.27) Also while typing waits to carry on after coming back from another app: the caret was only taken away.
+  function editingNow() { return !!(S.canvas && S.canvas.resuming && S.canvas.resuming()) || document.activeElement && $('editorView').contains(document.activeElement) && document.activeElement !== document.body; }
 
   // ---------- Is everything in Drive? ----------
   // A small cloud at the top answers that at a glance: a tick when every note is in Drive, an arrow while
@@ -1035,7 +1036,9 @@
     $('canvasWrap').scrollTo(0, 0);
     S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks);
     applyViewPrefs();
-    setTool(isNew || !PREF.showTools ? 'type' : (PREF.tool === 'erase' || PREF.tool === 'select' || PREF.tool === 'lasso' ? 'type' : PREF.tool));
+    // A new note types straight away; others open with the tool last picked on the rail (the Hand at first).
+    var pk = PREF.picked || 'hand';
+    setTool(isNew || !PREF.showTools ? 'type' : (pk === 'erase' || pk === 'select' || pk === 'lasso' ? 'hand' : pk));
     renderLayers();
     $('undoBtn').disabled = true; $('redoBtn').disabled = true;
     if (isNew) setTimeout(function () { S.canvas.focusStart(); }, 50);
@@ -1294,6 +1297,12 @@
     else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
     if (PREF.tool === 'highlighter') { PREF.tool = 'pen'; INKOPT.pen.b = 'highlighter'; INKOPT.pen.c = PREF.hl || '#f2c94c'; INKOPT.pen.o = 1; }
     if (PREF.tool === 'eraser') PREF.tool = 'erase';
+    // 3.27: the Hand and Text are two tools now ('hand' moves around, 'type' types). The old Hand was 'type'.
+    if (!PREF.hand2) {
+      PREF.hand2 = 1;
+      if (PREF.tool === 'type') PREF.tool = 'hand';
+      if (PREF.toolOrder && PREF.toolOrder.indexOf('hand') < 0) { var ti = PREF.toolOrder.indexOf('type'); PREF.toolOrder.splice(ti < 0 ? 0 : ti, 0, 'hand'); }
+    }
     PREF.ink = INKOPT;
   })();
   function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
@@ -1375,8 +1384,10 @@
       html = G(TF.map(function (f) { return chip('<span style="font-family:' + esc(f[0]) + '">' + f[1] + '</span>', 'data-tfont="' + esc(f[0]) + '"', o.text.font === f[0]); }).join('')) +
         G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
-    } else if (t === 'type') html = G(HINT('Your finger moves the page; tap text to edit it, double-tap anywhere to start new text.')) +
+    } else if (t === 'type') html = G(HINT('Tap text to type in it; double tap empty space to start new text. One finger moves the page.')) +
         G(HINT('Writing with the pen switches to Pen by itself.'));
+    else if (t === 'hand') html = G(HINT('One finger moves the page; a tap does nothing. Double tap a thing to pick it (Select). Triple tap to type: in the text you tap, or new text on empty space.')) +
+        G(HINT('Two fingers move, zoom and turn the page with every tool. Writing with the pen switches to Pen by itself.'));
     else if (t === 'guide') {
       var CI = S.canvas && S.canvas.ink();
       html = G(HINT('Tap to put one on the page; tap again to take it away.')) +
@@ -1386,7 +1397,7 @@
         G(chip('Clear all', 'data-gclear'));
     }
     else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
-    var NAMES = { type: 'Hand', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', guide: 'Guides', select: 'Move' };
+    var NAMES = { hand: 'Hand', type: 'Text', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', guide: 'Guides', select: 'Move' };
     if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
       '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
@@ -1548,7 +1559,7 @@
     if (b.dataset.act === 'side') return setSide(!PREF.toolsLeft);
     if (b.dataset.tool) {
       if (b.dataset.tool === PREF.tool) return showOpts(!$('tools').classList.contains('opts'));
-      setTool(b.dataset.tool); showOpts(false);
+      PREF.picked = b.dataset.tool; setTool(b.dataset.tool); showOpts(false);
       if (!PREF.optsHint && $('penOpts').innerHTML) { PREF.optsHint = true; savePref(); toast('Tap the tool again for its settings.', null, null, 3000); }
       return;
     }
@@ -2539,6 +2550,10 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'The Hand and Text are two tools', d: 'The Hand only moves the page: one finger drags it, and a tap does nothing. Double tap a drawing, picture or text to pick it (Select opens with it picked). Triple tap to type: in the text you tap, or new text on empty space; the rail switches to Text. Text (the T under the Hand) is for typing: tap text to type in it. With every tool, two fingers move, zoom and turn the page. Typing also carries on after you come back from another app.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="28" width="40" height="84" rx="10" fill="' + SOFT + '" stroke="' + RULE + '"/><circle cx="54" cy="48" r="12" fill="' + A + '"/><text x="54" y="96" text-anchor="middle" font-size="26" font-weight="700" fill="' + INKC + '">T</text><path d="M96 52h104M96 68h80M96 84h92" stroke="' + RULE + '" stroke-width="3"/><circle cx="150" cy="70" r="5" fill="' + A + '"/><circle cx="150" cy="70" r="12" fill="none" stroke="' + A + '" stroke-width="2"/><circle cx="150" cy="70" r="19" fill="none" stroke="' + A + '" stroke-width="1.5" opacity=".6"/>') },
+    { t: 'Linear mode: see a whole side', d: 'Tap an arrow at the edge and a map opens of everything that way: the whole right side, left side, above, below or a corner, not only the nearest part. Scroll it, and double tap a part to bring it into the column. The dashed outline shows where you are. A double tap on the arrow still goes straight to the nearest part. A note now opens in Linear mode or as a free canvas, the way you left it.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="24" width="70" height="92" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="122" y="24" width="86" height="92" rx="8" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="128" y="40" width="40" height="30" rx="6" fill="none" stroke="' + A + '" stroke-dasharray="5 4"/><path d="M132 86h60M132 98h44" stroke="' + RULE + '" stroke-width="3"/><path d="M108 70l8-6v12z" fill="' + A + '"/>') },
     { t: 'Your Obsidian vault, copied in', d: 'Settings › Copy notes in › From Obsidian copies a whole vault from your computer into Second brain, keeping its folders. [[Links]] become note links: tap one to open that note (while writing, tap it twice). ••• › Linked from… lists the notes that link to the one you are in. Excalidraw drawings and canvases come in as sharp pictures, with their words below for search. The vault itself is only read, never changed.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="64" height="80" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="142" y="30" width="64" height="80" rx="8" fill="' + SOFT + '" stroke="' + A + '" stroke-width="2"/><path d="M98 70h40" stroke="' + A + '" stroke-width="3"/><path d="M130 62l8 8-8 8" fill="none" stroke="' + A + '" stroke-width="3"/><path d="M44 46h44M44 58h34M44 70h40" stroke="' + RULE + '" stroke-width="3"/>') },
     { t: 'Choose how a link shows', d: 'When you add a web link you now choose how it shows: a link card that opens the page in your browser, the page itself in a window, or a picture of the page (made by a free screenshot service, so the address is sent to it). Select the link later and tap its mode button to change it any time.',
