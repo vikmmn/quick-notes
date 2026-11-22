@@ -2021,10 +2021,13 @@
     };
     self.editingText = function () { return !!editing; };
     // Fonts arrive a moment after the page: measure and draw text again with them.
-    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', function () {
+    // (3.27.1) Taken off again when the note closes: left on, every note ever opened stayed in memory.
+    function onFonts() {
       var any = false; layers.forEach(function (l) { l.items.forEach(function (it) { if (it.t === 'x') { invalidate(it); any = true; } }); });
       if (any) { soon(); if (sel) { refreshBox(); drawUi(); } }
-    });
+    }
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', onFonts);
+    self.destroy = function () { if (document.fonts && document.fonts.removeEventListener) document.fonts.removeEventListener('loadingdone', onFonts); };
     self.bounds = function () {
       var all = []; layers.forEach(function (l) { all = all.concat(l.items); });
       var b = unionBox(all); return b ? { r: b.x + b.w, b: b.y + b.h } : { r: 0, b: 0 };
