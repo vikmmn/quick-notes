@@ -572,7 +572,7 @@
     });
 
     // ---- Pointer handling ----
-    var drag = null, taps = [], panV = null, panMoved = false;
+    var drag = null, taps = [], typeTaps = [], panV = null, panMoved = false;
     on(host, 'pointerdown', function (ev) {
       // With the Hand, a video's buttons, a sound's player, a link and a live page work as themselves.
       if ((tool === 'type' || tool === 'hand') && ev.target.closest && ev.target.closest('.emb-live')) return;
@@ -627,7 +627,18 @@
       }
       if (tool === 'hand') { handDown(ev, p, onBox); return; }
       if (onBox) { // typing, selecting text: leave it to the editor, but a finger drag over the text still scrolls
-        if (isFinger && tool === 'type') startPan(ev);
+        if (isFinger && tool === 'type') {
+          // (3.27.1, #79) With a finger, a double tap starts typing in a text box, as it does for a new box on empty
+          // space. One tap only scrolls or does nothing, so the keyboard doesn't jump up while moving around.
+          var tb = editors[onBox.dataset.id];
+          if (tb && tb.el.contains(document.activeElement)) { startPan(ev); return; } // already typing here: the caret moves
+          ev.preventDefault();
+          var nw = Date.now(), lt = typeTaps[typeTaps.length - 1];
+          if (!lt || nw - lt.t > 400 || Math.hypot(lt.cx - ev.clientX, lt.cy - ev.clientY) > 32) typeTaps = [];
+          typeTaps.push({ t: nw, cx: ev.clientX, cy: ev.clientY });
+          startPan(ev);
+          if (drag) drag.typeTap = { n: typeTaps.length, box: onBox.dataset.id, cx: ev.clientX, cy: ev.clientY };
+        }
         return;
       }
       // Empty space, finger (or mouse), any tool: a double-tap starts writing there (a new text box, Type tool);
@@ -638,11 +649,14 @@
       if (last && Math.abs(last.x - p[0]) < 40 / view.z && Math.abs(last.y - p[1]) < 40 / view.z) {
         taps = []; clearTimeout(self._tapTimer); ev.preventDefault();
         if (tool !== 'type' && hooks.autoTool) { hooks.autoTool('type'); tool = 'type'; }
+        // Just below the first text, a double tap carries on at its end (like Keep); elsewhere it starts new text.
+        var f0 = editors[boxes[0].id], b0 = boxes[0];
+        if (f0 && p[1] > b0.y + f0.el.offsetHeight - 10 && p[1] < b0.y + f0.el.offsetHeight + 90 && p[0] > b0.x - 20 && p[0] < b0.x + f0.el.offsetWidth) { f0.ed.commands.focus('end'); return; }
         addBox(p[0] - 4, p[1] - 14); changed('layout');
         return;
       }
       taps.push({ t: now, x: p[0], y: p[1] });
-      if (tool === 'type') {
+      if (tool === 'type' && !isFinger) { // a mouse: one click below the text carries on (a finger double taps)
         var wasTyping = !!(document.activeElement && stage.contains(document.activeElement) && document.activeElement.closest('.box'));
         panMoved = false;
         var pDown = p;
@@ -745,10 +759,15 @@
         if (Object.keys(drag.fingers).length) return;
         var vx = drag.vx || 0, vy = drag.vy || 0;
         if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; handTaps = []; clearTimeout(handTimer); }
-        var tapAt = !drag.moved && drag.textTap, handTap = !drag.moved && drag.hand;
+        var tapAt = !drag.moved && drag.textTap, handTap = !drag.moved && drag.hand, typeTap = !drag.moved && drag.typeTap;
+        if (drag.moved) typeTaps = [];
         drag = null;
         if (tapAt && tool === 'text') { eng.textAt(tapAt, -(view.r || 0)); return; }
         if (handTap && tool === 'hand') { handUp(handTap); return; }
+        if (typeTap && tool === 'type') {
+          if (typeTap.n >= 2) { typeTaps = []; var te = editors[typeTap.box]; if (te) { var tp = null; try { tp = te.ed.view.posAtCoords({ left: typeTap.cx, top: typeTap.cy }); } catch (x) {} te.ed.commands.focus(tp ? tp.pos : 'end'); } }
+          return;
+        }
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };
           var step = function () {
@@ -1106,9 +1125,9 @@
       var a = toWorld(0, 0), b = toWorld(W, H); // the part on screen now, in page coordinates
       var R = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       list.forEach(function (q) { R.x0 = Math.min(R.x0, q.x); R.y0 = Math.min(R.y0, q.y); R.x1 = Math.max(R.x1, q.x + q.w); R.y1 = Math.max(R.y1, q.y + q.h); });
-      // Take in the screen's own span along the side, so the outline of "here" shows where the rest is from it.
-      if (d === 'e' || d === 'w') { R.y0 = Math.min(R.y0, a[1]); R.y1 = Math.max(R.y1, b[1]); }
-      if (d === 'n' || d === 's') { R.x0 = Math.min(R.x0, a[0]); R.x1 = Math.max(R.x1, b[0]); }
+      // (3.27.1, #82/#83) The map always takes in the screen you are on too, so a part that lies half here and half
+      // to the side can be picked as a whole, and the outline of "here" is never cut off at the map's edge.
+      R.x0 = Math.min(R.x0, a[0]); R.x1 = Math.max(R.x1, b[0]); R.y0 = Math.min(R.y0, a[1]); R.y1 = Math.max(R.y1, b[1]);
       R.x0 -= pad; R.y0 -= pad; R.x1 += pad; R.y1 += pad;
       var rw = R.x1 - R.x0, rh = R.y1 - R.y0;
       var dr = parseFloat(dirEl.style.getPropertyValue('--dr')) || 8; // the tool rail's room on the right
@@ -1129,18 +1148,21 @@
       sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Double tap a part to go there</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
         '<div class="sd-scroll"><svg width="' + Math.round(rw * s) + '" height="' + Math.round(rh * s) + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + rw + ' ' + rh + '">' +
         txt + window.QNInk.svgFor(ink, 'sd-', M, M, true) + here + '</svg></div>';
+      pw = Math.max(200, Math.min(pw, Math.round(rw * s) + 2)); // no empty strip beside a narrow map
       sideEl.style.width = pw + 'px';
       var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 44) + 'px';
+      sc.querySelector('svg').style.margin = '0 auto'; sc.querySelector('svg').style.display = 'block';
       var v = d.charAt(0), h0 = d.length === 2 ? d.charAt(1) : d;
       if (v === 'n') sideEl.style.top = '56px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(56, (H - ph) / 2) + 'px';
       // Beside its arrow, and never under the tool rail or off the screen.
       var lx = h0 === 'e' ? W - dr - 48 - pw : h0 === 'w' ? 56 : (W - dr - pw) / 2;
       sideEl.style.left = Math.max(8, Math.min(W - dr - pw - 4, lx)) + 'px';
-      // Open on the part nearest to here.
-      var cx = (Math.max(R.x0, Math.min(R.x1, (a[0] + b[0]) / 2)) - R.x0) * s, cy = (Math.max(R.y0, Math.min(R.y1, (a[1] + b[1]) / 2)) - R.y0) * s;
-      if (v === 'n') cy = rh * s; else if (v === 's') cy = 0;
-      if (h0 === 'w') cx = rw * s; else if (h0 === 'e') cx = 0;
-      sc.scrollTop = Math.max(0, cy - sc.clientHeight / 2); sc.scrollLeft = Math.max(0, cx - sc.clientWidth / 2);
+      // Open where the screen meets that side: the edge of "here" a third of the way in, the side beyond it.
+      var cw = sc.clientWidth, ch = sc.clientHeight;
+      var cx = ((a[0] + b[0]) / 2 - R.x0) * s - cw / 2, cy = ((a[1] + b[1]) / 2 - R.y0) * s - ch / 2;
+      if (h0 === 'e') cx = (b[0] - R.x0) * s - cw * 0.3; else if (h0 === 'w') cx = (a[0] - R.x0) * s - cw * 0.7;
+      if (v === 's') cy = (b[1] - R.y0) * s - ch * 0.3; else if (v === 'n') cy = (a[1] - R.y0) * s - ch * 0.7;
+      sc.scrollTop = Math.max(0, cy); sc.scrollLeft = Math.max(0, cx);
       sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
       sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
       var lastTap = null;
@@ -1150,20 +1172,18 @@
         if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
         var t = Date.now(), r = sc.querySelector('svg').getBoundingClientRect();
         var px = R.x0 + (ev.clientX - r.left) / s, py = R.y0 + (ev.clientY - r.top) / s;
-        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; hideSide(); goToPoint(px, py, d, list); return; }
+        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; hideSide(); goToPoint(px, py, d, blocks()); return; }
         lastTap = { t: t, x: ev.clientX, y: ev.clientY };
       });
     }
-    function goToPoint(px, py, d, list) { // that part fills the column: its left edge at the margin, the tapped point a third down
-      var W = host.clientWidth, H = host.clientHeight, lx1 = view.lx || 0;
-      if (/[ew]/.test(d)) {
-        var hit = null, best = Infinity;
-        list.forEach(function (q) {
-          var dx = Math.max(0, q.x - px, px - q.x - q.w), dy = Math.max(0, q.y - py, py - q.y - q.h), dist = Math.hypot(dx, dy) - (q.box ? 1 : 0);
-          if (dist < best) { best = dist; hit = q; }
-        });
-        lx1 = hit && best < 120 && hit.w < W ? (Math.abs(M - hit.x) < 40 ? 0 : M - hit.x) : W / 2 - px;
-      }
+    function goToPoint(px, py, d, list) {
+      // (3.27.1, #82) A text box tapped on: its left edge goes to the margin. Anything else (a drawing that may run
+      // across the screen and the side): the tapped point comes to the middle of the screen, a third of the way down.
+      var W = host.clientWidth, H = host.clientHeight, lx1 = view.lx || 0, hit = null;
+      list.forEach(function (q) { if (q.box && px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + q.h) hit = q; });
+      var a = toWorld(0, 0), b = toWorld(W, H), onScreenX = px >= a[0] && px <= b[0];
+      if (hit && hit.w < W) lx1 = Math.abs(M - hit.x) < 40 ? 0 : M - hit.x;
+      else if (/[ew]/.test(d) || !onScreenX) lx1 = W / 2 - px;
       glide(lx1, H * 0.3 - py);
     }
     on(host, 'pointerdown', function (ev) { if (sideEl && !sideEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.qn-dir'))) hideSide(); }, true);

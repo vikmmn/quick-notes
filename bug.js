@@ -57,6 +57,7 @@
     '@keyframes qnfade{from{opacity:0}to{opacity:1}}' +
     '.qn-bugview canvas{position:absolute;left:0;top:0;touch-action:none}' +
     '.qn-bugview .stg{position:absolute;left:0;top:0;transform-origin:0 0}' +
+    '.qn-bugview .kbgap{position:absolute;left:0;right:0;bottom:0;display:none;place-items:center;text-align:center;padding:16px;box-sizing:border-box;color:rgba(255,255,255,.6);font:13px var(--font,system-ui);background:repeating-linear-gradient(135deg,#1b1c1f 0 10px,#222327 10px 20px);pointer-events:none}' +
     '.qn-bugview .bt{position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:6px 8px;' +
     'background:rgba(32,33,36,.94);border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);white-space:nowrap;max-width:calc(100vw - 16px);overflow-x:auto}' +
     '.qn-bugview .bt button{min-height:34px;padding:5px 12px;font-size:14px;border-radius:10px;color:#fff;background:transparent;border:1px solid rgba(255,255,255,.18)}' +
@@ -228,11 +229,17 @@
     view.insertBefore(stg, view.firstChild); stg.appendChild(cv);
     cv.width = w; cv.height = h; cv.style.width = W0 + 'px'; cv.style.height = H0 + 'px';
     var k = w / W0;
+    // (3.27.1, #79) The picture was taken with the keyboard up; once it goes down, its place is empty (a screen
+    // picture can't include the keyboard). Say so there instead of leaving a blank strip.
+    var gap = document.createElement('div'); gap.className = 'kbgap'; gap.textContent = 'The keyboard was here (a screen picture can\u2019t include it).';
+    view.appendChild(gap);
+    function showGap() { var bot = oy + H0 * sc, rest = innerHeight - bot; gap.style.display = rest > 80 ? 'grid' : 'none'; gap.style.height = Math.max(0, rest) + 'px'; }
     function fit() {
       sc = Math.min(innerWidth / W0, innerHeight / H0); ox = (innerWidth - W0 * sc) / 2; oy = (innerHeight - H0 * sc) / 2;
       stg.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + sc + ')';
+      showGap();
     }
-    var onTurn = function () { if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; fit(); } }; // (the keyboard changes only the height)
+    var onTurn = function () { if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; fit(); } else showGap(); }; // (the keyboard changes only the height)
     fit(); window.addEventListener('resize', onTurn); view._off = function () { window.removeEventListener('resize', onTurn); };
     var marks = [], notes = [], done = [], undone = [], cur = null, tool = 'pen', color = COLORS[0], size = 2, lastTap = null, lastMulti = null;
     function paint(withNotes) {
