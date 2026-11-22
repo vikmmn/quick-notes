@@ -1685,7 +1685,7 @@
         if (pen.cs && DEFS[pen.cs]) it.cs = pen.cs; // a home-made tip or line style
         if (pen.st != null) it.st = pen.st;
         if (isPen) { it.f = 1; if (pen.th != null) it.th = pen.th; }
-        drag = { stroke: it, layer: L, lock: lk };
+        drag = { stroke: it, layer: L, lock: lk, dirFrom: !lk && G && opt.guide.snap !== false && G.dirKind && G.dirKind() ? [p1[0], p1[1]] : null };
         startLive(drag); liveSoon();
         return true;
       }
@@ -1727,7 +1727,22 @@
             drag.hold = { x: p[0], y: p[1], t: setTimeout(function () { snapShape(); }, 550) };
           }
         }
-        var lockPt = function (q) { if (!drag.lock) return q; var w = G.follow(drag.lock, q); return [w[0], w[1]].concat(q.slice(2)); };
+        if (drag.dirFrom && !drag.lock && Math.hypot(p[0] - drag.dirFrom[0], p[1] - drag.dirFrom[1]) > 12 / Z()) {
+          // (3.28) A perspective / isometric guide is on: the line takes the nearest of its directions, or stays free.
+          drag.lock = G.dirLock(drag.dirFrom, p); drag.dirFrom = null;
+          if (drag.lock) { drag.raw = sp.map(function (q) { return q.slice(); }); sp.forEach(function (q) { var w = G.follow(drag.lock, q); q[0] = w[0]; q[1] = w[1]; }); G.highlight(drag.lock); drawUi(); }
+        }
+        var lockPt = function (q) {
+          if (drag.lock && drag.lock.t === 'r' && drag.raw) { // a perspective/grid direction: let go if the pen clearly leaves it
+            drag.raw.push(q.slice());
+            var w0 = G.follow(drag.lock, q);
+            if (Math.hypot(q[0] - w0[0], q[1] - w0[1]) > 28 / Z()) {
+              drag.lock = null; G.highlight(null); drawUi();
+              var keep = drag.raw; drag.raw = null; sp.length = 0; keep.slice(0, -1).forEach(function (x) { sp.push(x); });
+              return q;
+            }
+          }
+          if (!drag.lock) return q; var w = G.follow(drag.lock, q); return [w[0], w[1]].concat(q.slice(2)); };
         (pts || [p]).map(function (q) { return lockPt(shapePt(q, isPen)); }).forEach(function (q) {
           var last = sp[sp.length - 1];
           if (last && Math.abs(q[0] - last[0]) + Math.abs(q[1] - last[1]) < 0.15 / Z()) { last[2] = Math.max(last[2], q[2]); return; } // no movement
@@ -1913,9 +1928,10 @@
     self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
     // Guides (3.24): put one on the page (or take it away), ask which are there, clear them all.
-    self.guideToggle = function (k) { var c = o.center ? o.center() : [200, 200, 0]; var on = G.toggle(k, c, c[2] || 0); drawUi(); return on; };
+    self.guideToggle = function (k) { var c = (o.center ? o.center() : [200, 200, 0]).slice(); c[3] = 1 / Z(); var on = G.toggle(k, c, c[2] || 0); drawUi(); return on; };
     self.guideHas = function (k) { return !!G && G.has(k); };
     self.guideKinds = function () { return G ? G.kinds().map(function (k) { return [k, G.label(k)]; }) : []; };
+    self.guideDirKinds = function () { return G && G.dirKinds ? G.dirKinds().map(function (k) { return [k, G.label(k)]; }) : []; };
     self.guideClear = function () { if (G) { G.clear(); drawUi(); } };
     self.opts = function (k, v) {
       // A setting the app has taken away (no home-made tip any more: plain) goes here too; before 3.18 it stayed.

@@ -29,6 +29,11 @@
     SHAPES.prot.dy = -r / 2; // the shape's middle, so it sits in the middle of the screen
   })();
 
+  // (3.28) Direction guides: they don't sit on the page as objects but steer lines. A line drawn while one is on
+  // takes the nearest of its directions once it has started (within about 20°): towards a vanishing point, or one of
+  // the isometric (30°, 90°, 150°) or square (0°, 90°) directions. A curve that starts off any of them stays free.
+  var DIRK = { p1: { label: '1-point perspective', n: 1 }, p2: { label: '2-point perspective', n: 2 }, p3: { label: '3-point perspective', n: 3 },
+    iso: { label: 'Isometric', a: [30, 90, 150] }, ortho: { label: 'Square (0° and 90°)', a: [0, 90] } };
   function rot(v, a) { var c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c]; }
   function top(sh) { var m = 0; (sh.poly || []).forEach(function (q) { if (q[1] < m) m = q[1]; }); return m; }
   function inPoly(p, poly) {
@@ -54,13 +59,25 @@
     function toL(g, p) { var r = rot([p[0] - g.x, p[1] - g.y], -g.a); return [r[0] / g.s, r[1] / g.s]; }
     function polyW(g) { return shape(g).poly.map(function (q) { return toW(g, q); }); }
 
-    self.count = function () { return list.length; };
-    self.has = function (k) { return list.some(function (g) { return g.k === k; }); };
+    var dir = null; // the one direction guide: { k, v: [[x, y]…] vanishing points, or { k, x, y } for iso/square }
+    self.count = function () { return list.length + (dir ? 1 : 0); };
+    self.dirKind = function () { return dir ? dir.k : null; };
+    self.has = function (k) { return DIRK[k] ? !!(dir && dir.k === k) : list.some(function (g) { return g.k === k; }); };
     self.kinds = function () { return Object.keys(SHAPES); };
-    self.label = function (k) { return SHAPES[k].label; };
-    self.clear = function () { list = []; hl = null; badge = null; };
+    self.dirKinds = function () { return Object.keys(DIRK); };
+    self.label = function (k) { return (SHAPES[k] || DIRK[k]).label; };
+    self.clear = function () { list = []; dir = null; hl = null; badge = null; };
     // Put one on the page (c: the middle of what is on screen), or take it away if it is already there.
     self.toggle = function (k, c, a) {
+      if (DIRK[k]) { // one at a time: picking another replaces it; picking the same takes it away
+        if (dir && dir.k === k) { dir = null; return false; }
+        var u = c[3] || 1; // screen px in note units
+        if (k === 'p1') dir = { k: k, v: [[c[0], c[1] - 120 * u]] };
+        else if (k === 'p2') dir = { k: k, v: [[c[0] - 360 * u, c[1] - 120 * u], [c[0] + 360 * u, c[1] - 120 * u]] };
+        else if (k === 'p3') dir = { k: k, v: [[c[0] - 360 * u, c[1] - 160 * u], [c[0] + 360 * u, c[1] - 160 * u], [c[0], c[1] + 520 * u]] };
+        else dir = { k: k, x: c[0], y: c[1] };
+        return true;
+      }
       for (var i = 0; i < list.length; i++) if (list[i].k === k) { list.splice(i, 1); return false; }
       var sh = SHAPES[k], n = list.length;
       list.push({ k: k, x: c[0] + n * 24, y: c[1] - (sh.dy || 0) + n * 24, a: a || 0, s: 1 });
@@ -71,6 +88,10 @@
     function knob(g, k) { var r = rot([0, top(shape(g)) * g.s - 36 * k], g.a); return [g.x + r[0], g.y + r[1]]; } // 36 screen px above its top edge
     function grip(g) { return toW(g, shape(g).grip); }
     self.hit = function (p, tol) {
+      if (dir) {
+        var pts = dir.v || [[dir.x, dir.y]];
+        for (var q = 0; q < pts.length; q++) if (Math.hypot(p[0] - pts[q][0], p[1] - pts[q][1]) < tol * 1.2) return { dirv: q, p0: [p[0], p[1]], v0: pts.map(function (z) { return z.slice(); }) };
+      }
       for (var i = list.length - 1; i >= 0; i--) {
         var g = list[i], kn = knob(g, tol / 18), gp = grip(g), mode = null;
         if (Math.hypot(p[0] - kn[0], p[1] - kn[1]) < tol) mode = 'rot';
@@ -85,6 +106,13 @@
       return null;
     };
     self.drag = function (h, p) {
+      if (h.dirv != null) { // a vanishing point (or the grid's anchor): 1- and 2-point keep the horizon level
+        var dx = p[0] - h.p0[0], dy = p[1] - h.p0[1];
+        if (!dir.v) { dir.x = h.v0[0][0] + dx; dir.y = h.v0[0][1] + dy; return; }
+        dir.v[h.dirv] = [h.v0[h.dirv][0] + dx, h.v0[h.dirv][1] + dy];
+        if (h.dirv < 2) for (var j = 0; j < Math.min(2, dir.v.length); j++) dir.v[j][1] = h.v0[j][1] + dy;
+        return;
+      }
       var g = h.g;
       if (h.mode === 'move') { g.x = h.x0 + p[0] - h.p0[0]; g.y = h.y0 + p[1] - h.p0[1]; }
       else if (h.mode === 'size') { g.s = Math.max(0.4, Math.min(3, h.s0 * Math.hypot(p[0] - g.x, p[1] - g.y) / h.d0)); }
@@ -112,7 +140,27 @@
       });
       return best;
     };
+    // The directions a line starting at p may take (angles in radians), or null with no direction guide on.
+    self.dirs = function (p) {
+      if (!dir) return null;
+      if (!dir.v) return DIRK[dir.k].a.map(function (d) { return -d * Math.PI / 180; });
+      var out = dir.v.map(function (v) { return Math.atan2(v[1] - p[1], v[0] - p[0]); });
+      if (dir.k === 'p1') out.push(0, Math.PI / 2); // 1-point: also level and upright
+      if (dir.k === 'p2') out.push(Math.PI / 2); // 2-point: also upright
+      return out;
+    };
+    // A line that has started (from a to b): the direction it locks to, if one is near enough.
+    self.dirLock = function (a, b) {
+      var ds = self.dirs(a); if (!ds) return null;
+      var m = Math.atan2(b[1] - a[1], b[0] - a[0]), best = null;
+      ds.forEach(function (d) {
+        var diff = Math.abs(((m - d) % Math.PI + Math.PI * 1.5) % Math.PI - Math.PI / 2); // the same line either way along it
+        if (diff < Math.PI / 9 && (!best || diff < best.diff)) best = { diff: diff, d: d };
+      });
+      return best ? { t: 'r', a: [a[0], a[1]], u: [Math.cos(best.d), Math.sin(best.d)] } : null;
+    };
     self.follow = function (lock, q) {
+      if (lock.t === 'r') { var t0 = (q[0] - lock.a[0]) * lock.u[0] + (q[1] - lock.a[1]) * lock.u[1]; return [lock.a[0] + t0 * lock.u[0], lock.a[1] + t0 * lock.u[1]]; }
       if (lock.t === 'l') {
         var dx = lock.b[0] - lock.a[0], dy = lock.b[1] - lock.a[1], l2 = dx * dx + dy * dy, t = l2 ? ((q[0] - lock.a[0]) * dx + (q[1] - lock.a[1]) * dy) / l2 : 0;
         t = Math.max(0, Math.min(1, t));
@@ -123,12 +171,43 @@
       var w = rot([lock.r * Math.cos(th), lock.r * Math.sin(th)], lock.g.a);
       return [lock.c[0] + w[0], lock.c[1] + w[1]];
     };
-    self.highlight = function (lock) { hl = lock ? { gi: lock.gi, ei: lock.ei, arc: lock.t === 'a' } : null; };
+    var ray = null;
+    self.highlight = function (lock) { ray = lock && lock.t === 'r' ? lock : null; hl = lock && lock.t !== 'r' ? { gi: lock.gi, ei: lock.ei, arc: lock.t === 'a' } : null; };
 
     // How they look: drawn in the note's overlay (M: the margin the overlay has around the note).
+    function dirSvg(Z, M) {
+      var k = 1 / Z, h = '', ns = ' vector-effect="non-scaling-stroke"', L = 60000;
+      if (dir.v) {
+        if (dir.k !== 'p3' || true) { // the horizon through the first two points (or the one point)
+          var h0 = dir.v[0], h1 = dir.v[1] || [h0[0] + 1, h0[1]], an = Math.atan2(h1[1] - h0[1], h1[0] - h0[0]);
+          h += '<line x1="' + f(h0[0] + M - Math.cos(an) * L) + '" y1="' + f(h0[1] + M - Math.sin(an) * L) + '" x2="' + f(h0[0] + M + Math.cos(an) * L) + '" y2="' + f(h0[1] + M + Math.sin(an) * L) + '" stroke="var(--accent)" stroke-opacity=".55" stroke-width="1.2"' + ns + '/>';
+        }
+        dir.v.forEach(function (v) { // a fan of lines from each vanishing point
+          for (var d = 0; d < 360; d += 7.5) {
+            var r = d * Math.PI / 180;
+            h += '<line x1="' + f(v[0] + M) + '" y1="' + f(v[1] + M) + '" x2="' + f(v[0] + M + Math.cos(r) * L) + '" y2="' + f(v[1] + M + Math.sin(r) * L) + '" stroke="var(--accent)" stroke-opacity=".16" stroke-width="1"' + ns + '/>';
+          }
+        });
+      } else { // an isometric or square grid, as repeating lines around its anchor
+        var sp = 48;
+        DIRK[dir.k].a.forEach(function (deg, i) {
+          var id = 'qn-dg' + i;
+          h += '<defs><pattern id="' + id + '" patternUnits="userSpaceOnUse" width="' + sp + '" height="' + sp + '" patternTransform="translate(' + f(dir.x + M) + ' ' + f(dir.y + M) + ') rotate(' + (-deg) + ')">' +
+            '<line x1="0" y1="0" x2="' + sp + '" y2="0" stroke="var(--accent)" stroke-opacity=".22" stroke-width="' + f(k) + '"/></pattern></defs>' +
+            '<rect x="' + f(dir.x + M - 20000) + '" y="' + f(dir.y + M - 20000) + '" width="40000" height="40000" fill="url(#' + id + ')" pointer-events="none"/>';
+        });
+      }
+      (dir.v || [[dir.x, dir.y]]).forEach(function (v) { // the handles, the same size at any zoom
+        h += '<circle cx="' + f(v[0] + M) + '" cy="' + f(v[1] + M) + '" r="' + f(10 * k) + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + f(2.4 * k) + '"/>' +
+          '<circle cx="' + f(v[0] + M) + '" cy="' + f(v[1] + M) + '" r="' + f(3 * k) + '" fill="var(--accent)"/>';
+      });
+      if (ray) h += '<line x1="' + f(ray.a[0] + M - ray.u[0] * L) + '" y1="' + f(ray.a[1] + M - ray.u[1] * L) + '" x2="' + f(ray.a[0] + M + ray.u[0] * L) + '" y2="' + f(ray.a[1] + M + ray.u[1] * L) + '" stroke="var(--accent)" stroke-opacity=".7" stroke-width="1.6"' + ns + '/>';
+      return h;
+    }
     self.svg = function (Z, M) {
-      if (!list.length) return '';
-      var k = 1 / Z, h = '', ns = ' vector-effect="non-scaling-stroke"';
+      var pre = dir ? dirSvg(Z, M) : '';
+      if (!list.length) return pre;
+      var k = 1 / Z, h = pre, ns = ' vector-effect="non-scaling-stroke"';
       list.forEach(function (g, gi) {
         var sh = shape(g), deg = g.a * 180 / Math.PI, tf = 'translate(' + f(g.x + M) + ' ' + f(g.y + M) + ') rotate(' + f(deg) + ') scale(' + g.s + ')', body = '';
         if (g.k === 'prot') {
