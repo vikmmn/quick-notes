@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script>/* (3.30) Look, shade and motion set before anything is drawn, so there is no flash of the wrong colours */
 try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'), r = document.documentElement;
-  if (p.skin && p.skin !== 'paper') r.dataset.skin = p.skin; if (p.shade && p.shade !== 'auto') r.dataset.shade = p.shade; r.dataset.motion = p.motion || 'gentle'; })(); } catch (e) {}</script>
+  if (p.skin && p.skin !== 'paper') r.dataset.skin = p.skin; if (p.shade && p.shade !== 'auto') r.dataset.shade = p.shade; r.dataset.motion = p.motion || 'gentle'; r.dataset.tl = p.tl || 'rail'; })(); } catch (e) {}</script>
 <style>
   /* Two views: the notes grid (opens first) and a note's canvas. System fonts only, so it opens fast. */
   :root {
@@ -80,6 +80,90 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
     --shadow: 0 1px 3px rgba(0,0,0,.35), 0 4px 10px 3px rgba(0,0,0,.18); color-scheme: dark; } }
 
 
+
+  /* Tool layouts (3.31): Rail / Wheel / Pucks / Pen first, each fitted to the screen (data-dev: phone-p, phone-l,
+     tab-p, tab-l, desk). The parts are .tlx boxes inside #tools, fixed on the screen. */
+  :root { --puck: #26272b; --puck-ink: #ececef; }
+  .tlx { position: fixed; z-index: 31; }
+  .tlx button { min-height: 0; padding: 0; border: 0; letter-spacing: 0; }
+  :root:not([data-tl=rail]) .tools .tool-opts { z-index: 33; }
+  /* Rail on phones: an upright phone gets a tall, narrow card (the page stays visible beside it); a sideways
+     phone a wide, short one and a rail that uses the whole height. */
+  :root[data-dev=phone-p] .tool-opts { width: 236px; max-height: calc(100vh - 150px); }
+  :root[data-dev=phone-l] .tools { top: calc(54px + env(safe-area-inset-top)); }
+  :root[data-dev=phone-l] .tool-row { max-height: calc(100vh - 64px); }
+  :root[data-dev=phone-l] .tool-opts { width: min(560px, calc(100vw - 120px)); max-height: calc(100vh - 66px); }
+  /* Wheel */
+  :root[data-tl=wheel] .tool-row, :root[data-tl=pen1] .tool-row { display: none; }
+  .tl-wheel { pointer-events: none; transition: transform .22s var(--m-ease, ease), opacity .2s; }
+  .tl-wheel > button, .tl-wheel .tl-disc, .tl-wheel .tl-hit { pointer-events: auto; }
+  .tl-wsvg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  .tl-disc { fill: color-mix(in srgb, var(--surface) 95%, transparent); stroke: var(--rule); stroke-width: 1; filter: drop-shadow(0 8px 18px rgba(0,0,0,.22)); cursor: grab; }
+  :root[data-skin=studio] .tl-disc { fill: var(--puck); stroke: var(--puck); }
+  .tl-wheel .tl-ring { position: absolute; border-radius: 50%; background: transparent; color: var(--ink); display: grid; place-items: center; }
+  :root[data-skin=studio] .tl-wheel .tl-ring { color: var(--puck-ink); }
+  .tl-wheel .tl-ring[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .tl-wheel .tl-ring svg.i { width: 20px; height: 20px; }
+  .tl-sw { position: absolute; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); }
+  .tl-centre { position: absolute; border-radius: 50%; background: var(--field); color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font: 600 11px/1.1 var(--font); }
+  .tl-centre svg.i { width: 24px; height: 24px; }
+  .tl-centre span { max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-track { fill: none; stroke: var(--rule); stroke-width: 7; stroke-linecap: round; }
+  .tl-fill { fill: none; stroke: var(--accent); stroke-width: 7; stroke-linecap: round; }
+  .tl-hit { fill: none; stroke: transparent; stroke-width: 34; pointer-events: stroke; cursor: pointer; }
+  .tl-knob { fill: var(--surface); stroke: var(--accent); stroke-width: 3; }
+  .tl-lab { font: 500 11px var(--font); fill: var(--muted); }
+  .tl-wheel.mini { transform: scale(.42); }
+  .tl-wheel.mini > :not(.tl-centre) { opacity: 0; pointer-events: none !important; }
+  .tl-wheel.mini .tl-centre { background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 16px rgba(0,0,0,.3); }
+  .tl-wheel.mini .tl-centre span { display: none; }
+  .tl-wheel.mini .tl-centre svg.i { width: 44px; height: 44px; }
+  /* Pucks: the rail becomes a bar along the top (along the bottom on an upright phone) */
+  :root[data-tl=pucks] .tools { left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; }
+  :root[data-tl=pucks] .tools > * { pointer-events: auto; }
+  :root[data-tl=pucks] .tool-row { flex-direction: row; width: auto; max-width: calc(100vw - 24px); max-height: none; overflow-x: auto; overflow-y: hidden; border-radius: 16px; background: var(--puck); border-color: var(--puck); }
+  :root[data-tl=pucks] .tools .tool { color: var(--puck-ink); border-radius: 11px; }
+  :root[data-tl=pucks] .tools .tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  :root[data-tl=pucks][data-dev=phone-p] .tools { top: auto; bottom: calc(10px + env(safe-area-inset-bottom)); }
+  :root[data-tl=pucks][data-dev=phone-l] .tools { top: calc(50px + env(safe-area-inset-top)); }
+  :root[data-tl=pucks][data-dev=phone-l] .tools .tool { width: 36px; height: 36px; }
+  .tl-pucks-l, .tl-pucks-r { top: 50%; transform: translateY(-50%); }
+  .tl-pucks-l { left: 10px; } .tl-pucks-r { right: 10px; }
+  :root[data-dev=phone-l] .tl-pucks-l, :root[data-dev=phone-l] .tl-pucks-r { top: 36%; }
+  .tl-puck { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; box-shadow: 0 10px 24px rgba(0,0,0,.25); touch-action: none; }
+  :root[data-dev^=phone] .tl-puck { width: 56px; height: 56px; }
+  .tl-sizepuck { background: var(--puck); cursor: ns-resize; }
+  .tl-sizepuck i { display: block; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #fff; }
+  .tl-colpuck { background: conic-gradient(#c63b2b,#e39b0b,#f2c230,#7bb53b,#1f9e95,#2f6bff,#6a4c93,#c2459a,#c63b2b); }
+  .tl-colpuck i { display: block; width: 58%; height: 58%; border-radius: 50%; border: 4px solid #fff; box-sizing: border-box; }
+  .tl-bubble { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%); white-space: nowrap; padding: 6px 10px; border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; box-shadow: var(--shadow); }
+  .tl-corner { left: 0; bottom: 0; border-top-right-radius: 100%; background: color-mix(in srgb, var(--puck) 92%, transparent); box-shadow: 0 0 22px rgba(0,0,0,.18); }
+  .tl-cm { position: absolute; border-radius: 50%; background: transparent; color: var(--puck-ink); display: grid; place-items: center; }
+  .tl-cm:active { background: var(--accent); }
+  .tl-cm .tl-colour { width: 22px; height: 22px; border: 3px solid #fff; }
+  :root[data-tl=pucks]:not([data-dev=phone-p]) #menuFab { bottom: calc(170px + env(safe-area-inset-bottom)); }
+  :root[data-tl=pucks][data-dev=phone-l] #menuFab { bottom: calc(128px + env(safe-area-inset-bottom)); }
+  :root[data-tl=pucks] #penQuick { display: none !important; }
+  :root[data-tl=pucks]:not([data-dev=phone-p]) #toolQuick { bottom: calc(236px + env(safe-area-inset-bottom)); }
+  :root[data-tl=pucks][data-dev=phone-p] #menuFab, :root[data-tl=pucks][data-dev=phone-p] #toolQuick, :root[data-tl=pucks][data-dev=phone-p] #penQuick { bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .tl-colour { display: inline-block; border-radius: 50%; }
+  .tl-colpop { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 16px 40px rgba(0,0,0,.2); z-index: 34; }
+  .tl-sw2 { width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .tl-sw2[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+  .tl-more { padding: 6px 12px !important; border-radius: 15px; background: var(--field); color: var(--ink); font-size: 13px; }
+  /* Pen first: a small palette of the last tools; hold a finger on the page for the rest */
+  .tl-pal { right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 3px; padding: 5px; background: var(--puck); border-radius: 26px; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+  :root[data-dev=phone-l] .tl-pal { top: auto; bottom: 10px; transform: none; flex-direction: row; right: 96px; }
+  .tlb { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--puck-ink); }
+  :root[data-dev^=phone] .tlb { width: 38px; height: 38px; }
+  .tlb[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .tlb .tl-colour { width: 22px; height: 22px; border: 3px solid #fff; }
+  .tl-radial { z-index: 35; pointer-events: none; }
+  .tl-radial button { pointer-events: auto; position: absolute; border-radius: 50%; background: var(--puck); color: var(--puck-ink); display: grid; place-items: center; box-shadow: 0 6px 16px rgba(0,0,0,.28); transition: transform .12s; }
+  .tl-radial button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .tl-radial button.hot { transform: scale(1.18); box-shadow: 0 0 0 3px var(--accent), 0 8px 18px rgba(0,0,0,.3); }
+  .tl-radial .tl-rc { width: 44px; height: 44px; background: var(--surface); color: var(--ink); }
+  :root:not([data-motion=off]) .tl-radial button { animation: qn-pop var(--m-dur) var(--m-ease) both; }
   /* Motion. Gentle (default): panels and notes ease in with a little give. Lively: they pop and settle, list
      cards rise in turn, buttons squish when pressed. Off: nothing moves (also when the system asks for less). */
   :root { --m-dur: .2s; --m-ease: cubic-bezier(.25,1.15,.45,1); }
