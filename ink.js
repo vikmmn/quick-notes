@@ -1871,6 +1871,7 @@
       if (G) { G.end(); G.highlight(null); }
       drag = null; cursor = null; drawUi();
     };
+    self.pickPending = function () { return !!(drag && drag.pick && !drag.far); }; // (3.32, #85) a Tap-mode touch that began on empty space
     self.busy = function () { return !!drag; };
     self.leave = function () { if (!drag) { cursor = null; drawUi(); } };
 
