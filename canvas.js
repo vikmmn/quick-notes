@@ -341,13 +341,16 @@
         onTransaction: function () { hooks.selection(ed); }
       });
       editors[b.id] = { el: e, ed: ed, keep: pr.keep };
+      // (3.30) What the editor makes of the text as it loads (its own way of writing the same Markdown). Saving that
+      // back unchanged made opening a note count as an edit, which could collide with an edit on another device.
+      try { editors[b.id].base = unprotect(getMd(ed), pr.keep); } catch (x) {}
       return editors[b.id];
     }
     function flushText(id) {
       var b = boxes.filter(function (x) { return x.id === id; })[0], e = editors[id];
       if (!b || !e) return;
       var md = unprotect(getMd(e.ed), e.keep);
-      if (md !== b.md) { b.md = md; hooks.change('text'); }
+      if (md !== b.md && md !== e.base) { b.md = md; e.base = null; hooks.change('text'); }
     }
     function flushAll() { if (eng && eng.finishText) eng.finishText(); clearTimeout(mdTimer); boxes.forEach(function (b) { flushText(b.id); }); }
     // What the Lasso needs from the text boxes: find them, move them, copy, delete, change layer.

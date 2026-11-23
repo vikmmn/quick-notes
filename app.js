@@ -1060,7 +1060,7 @@
     // Only a deleted note leaves the tabs; one not loaded yet (before the first sync) keeps its place.
     TABS.ids = TABS.ids.filter(function (id, i, all) { return all.indexOf(id) === i && !(notes[id] && notes[id].deleted); });
     var shown = TABS.ids.filter(function (id) { return noteById(id) || (S.cur && S.cur.id === id); });
-    var show = S.view === 'note' && shown.length > 1;
+    var show = S.view === 'note' && shown.length > 0;
     bar.classList.toggle('hidden', !show);
     document.body.classList.toggle('has-tabs', show);
     if (show) {
@@ -1071,7 +1071,7 @@
       var on = bar.querySelector('.tab.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
     var pill = $('tabsPill');
-    if (pill) { var others = shown.length; pill.classList.toggle('hidden', S.view === 'note' || others < 2); pill.textContent = 'Open tabs (' + others + ')'; }
+    if (pill) { var others = shown.length; pill.classList.toggle('hidden', S.view === 'note' || others < 1); pill.textContent = 'Open tabs (' + others + ')'; }
     saveTabs();
   }
   var openNote2 = openNote;
@@ -1079,9 +1079,10 @@
     if (!n) return;
     var i = TABS.ids.indexOf(n.id), curI = S.cur ? TABS.ids.indexOf(S.cur.id) : TABS.ids.indexOf(TABS.cur);
     if (i < 0) {
-      if (how === 'tab' || TABS.newNext || curI < 0) TABS.ids.splice(curI < 0 ? TABS.ids.length : curI + 1, 0, n.id);
-      else TABS.ids[curI] = n.id; // in the tab in use
-      if (TABS.ids.length > 8) { var drop = TABS.ids.filter(function (id) { return id !== n.id; })[0]; TABS.ids.splice(TABS.ids.indexOf(drop), 1); }
+      // (3.30) Every note opened gets its own tab, next to the one in use (the user's wish: tabs are the normal way).
+      if (how === 'replace' && curI >= 0) TABS.ids[curI] = n.id;
+      else TABS.ids.splice(curI < 0 ? TABS.ids.length : curI + 1, 0, n.id);
+      if (TABS.ids.length > 12) { var drop = TABS.ids.filter(function (id) { return id !== n.id; })[0]; TABS.ids.splice(TABS.ids.indexOf(drop), 1); }
     }
     TABS.newNext = false; TABS.cur = n.id;
     S.tabSwitch = S.view === 'note' && !!S.cur; // from one note to another: no extra step for the back button
@@ -2700,6 +2701,29 @@
     if (i < 0 || j < 0 || j >= names.length) return;
     names.splice(j, 0, names.splice(i, 1)[0]); PREF.toolOrder = names; savePref(); applyToolOrder();
   }
+  // ---------- Look (3.30): skin, shade and motion ----------
+  var LOOKS = [['paper', 'Paper', 'Warm paper, as before'], ['sketch', 'Sketchbook', 'Handmade: grainy paper, card panels, handwritten titles'],
+    ['studio', 'Studio', 'Clean and crisp, a dark tool puck, one bright accent'], ['play', 'Playful', 'Motley colours, chunky round shapes, coloured tools']];
+  function applyLook() {
+    var r = document.documentElement;
+    if (PREF.skin && PREF.skin !== 'paper') r.dataset.skin = PREF.skin; else delete r.dataset.skin;
+    if (PREF.shade && PREF.shade !== 'auto') r.dataset.shade = PREF.shade; else delete r.dataset.shade;
+    r.dataset.motion = PREF.motion || 'gentle';
+    var m = document.querySelector('meta[name=theme-color]:not([media])') || document.createElement('meta');
+    m.name = 'theme-color'; m.content = getComputedStyle(r).getPropertyValue('--paper').trim() || '#f8f4ec';
+    if (!m.parentNode) document.head.appendChild(m);
+    if (S.canvas && S.canvas.redraw) S.canvas.redraw();
+  }
+  function lookHtml() {
+    var sk = PREF.skin || 'paper', sh = PREF.shade || 'auto', mo = PREF.motion || 'gentle';
+    function opt(act, v, label, on, note) { return '<button type="button" data-act="' + act + '" data-v="' + v + '" aria-pressed="' + on + '">' + (on ? '◉ ' : '○ ') + label + (note ? ' <span style="color:var(--muted);font-weight:400">· ' + note + '</span>' : '') + '</button>'; }
+    return '<div class="set"><b>Look</b><div class="pick" style="margin:0">' + LOOKS.map(function (l) { return opt('skin', l[0], l[1], sk === l[0], l[2]); }).join('') + '</div>' +
+      '<p style="margin-top:10px !important">Shade</p><div class="pick" style="margin:0">' + opt('shade', 'auto', 'Follow the phone', sh === 'auto', 'light by day, grey when the phone is dark') +
+      opt('shade', 'light', 'Light', sh === 'light') + opt('shade', 'grey', 'Grey', sh === 'grey') + '</div>' +
+      '<p style="margin-top:10px !important">Motion</p><div class="pick" style="margin:0">' + opt('motion', 'off', 'Off', mo === 'off', 'nothing moves') +
+      opt('motion', 'gentle', 'Gentle', mo === 'gentle', 'panels ease in with a little give') + opt('motion', 'lively', 'Lively', mo === 'lively', 'pop, bounce and squish') + '</div></div>';
+  }
+  applyLook();
   function settingsSheet() {
     var st = sync.status(), h = health(st), who = Drive.account ? Drive.account() : '';
     var signin = Drive.demo ? 'Demo mode: a pretend Drive that resets when the page reloads.' :
@@ -2718,7 +2742,7 @@
         [['all', 'All notes'], ['default', 'The default folder'], ['last', 'The folder I was last in'], ['lastnote', 'The folder of the note I last edited']].map(function (o) {
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
-      toolOrderHtml() + fontsHtml() +
+      lookHtml() + toolOrderHtml() + fontsHtml() +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button> <button type="button" data-act="vault">From Obsidian</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
@@ -2733,6 +2757,7 @@
       if (act === 'addfont') { fontInput.click(); return; }
       if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
+      if (act === 'skin' || act === 'shade' || act === 'motion') { PREF[act] = b.dataset.v; savePref(); applyLook(); settingsSheet(); return; }
       if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
       });
@@ -2764,6 +2789,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Looks, grey, motion, and every note in a tab', d: 'Settings › Look: four looks (Paper, Sketchbook, Studio, Playful), each in Light or Grey (grey replaces the old near-black dark), and Motion: Off, Gentle or Lively. Every note you open now gets its own tab. And when a note was changed on two devices, the newer change is kept by itself; the other version stays in ••• › Version history.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="38" height="80" rx="10" fill="#f2ebdd" stroke="#d6c8ae"/><rect x="80" y="30" width="38" height="80" rx="10" fill="#eeeeec" stroke="#26272b" stroke-width="3"/><rect x="126" y="30" width="38" height="80" rx="14" fill="#fff6e8" stroke="#e4572e" stroke-width="2"/><rect x="172" y="30" width="38" height="80" rx="10" fill="#3d3e42"/>') },
     { t: 'Tabs: several notes open at once', d: 'Tap a link to another note and it opens in a new tab; the note you came from stays open. Tabs show as a strip at the top: tap one to switch, × to close it, + (or ••• › Open another note in a new tab) to pick another note. A note opened from the list goes in the tab you were in. The tabs, and the note you were in, come back when the app opens again; from the list, “Open tabs” takes you back.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="30" y="24" width="56" height="20" rx="6" fill="' + SOFT + '"/><rect x="92" y="24" width="56" height="20" rx="6" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="154" y="24" width="40" height="20" rx="6" fill="' + SOFT + '"/><path d="M40 62h150M40 78h120M40 94h136" stroke="' + RULE + '" stroke-width="6" stroke-linecap="round"/>') },
     { t: 'Perspective, isometric and text tools', d: 'Guides now has perspective (1, 2 or 3 vanishing points), an isometric grid and a square grid. With one on, a Pen line heads for the nearest vanishing point (or goes level or upright), or takes the nearest grid direction; a curve stays free. Drag the round points to move them. And the Text tool has its own card (tap T twice): letters (bold, font, size, colour), paragraphs (body, headings, quote, code, lists, indent, alignment incl. justify) and spacing between lines and paragraphs for the box.',

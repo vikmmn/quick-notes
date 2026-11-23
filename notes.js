@@ -444,6 +444,33 @@
       return false; // still being sent; try again in a moment
     }
 
+    // (3.30) Changed on two devices: the newer change wins by itself, no question. The other version is not lost:
+    // it goes into the file's history in Drive (••• › Version history). A note deleted elsewhere but edited here
+    // keeps this device's version.
+    async function settle() {
+      var list = all().filter(function (n) { return n.conflict; }), changed = [], pushAgain = false;
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i], c = n.conflict;
+        try {
+          var mine = Date.parse(n.updated) || 0, theirs = Date.parse(c.modifiedTime) || 0;
+          if (c.trashed || mine >= theirs) {
+            if (c.trashed) { n.fileId = null; n.md5 = null; } else n.md5 = c.md5;
+            n.conflict = null; n.dirty = true; n.v++; pushAgain = true;
+          } else {
+            var f = await Drive.get(n.fileId), txt = await Drive.readText(n.fileId);
+            var r1 = await Drive.saveText(n.fileId, serialize(n), f.md5Checksum); // this device's version, into the history
+            if (r1.conflict) continue; // changed again meanwhile: next sync
+            var r2 = await Drive.saveText(n.fileId, txt, r1.file.md5Checksum); // and the newer one back on top
+            var fresh = parse(txt, f);
+            FIELDS_COPY.forEach(function (k) { n[k] = fresh[k]; });
+            n.md5 = r2.file && r2.file.md5Checksum || f.md5Checksum; n.dirty = false; n.conflict = null; n.v++;
+          }
+          await store.put(n); changed.push(n.id);
+        } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
+      }
+      if (changed.length) hooks.changed(changed);
+      if (pushAgain) await push();
+    }
     async function run(opts) {
       opts = opts || {};
       clearTimeout(timer); timer = null;
@@ -459,6 +486,7 @@
         try { var nm = (await Drive.get(folders.notes)).name; if (nm && nm !== folders.rootName) { folders.rootName = nm; saveFolders(); hooks.folders(); } } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
         await push();
         if (opts.pull || !state.lastSynced) { await pull(); await push(); }
+        if (all().some(function (n) { return n.conflict; })) await settle();
         state.phase = 'idle'; state.lastSynced = Date.now();
       } catch (e) {
         if (e.code === 'notfound') { folders = null; tree = {}; saveFolders(); }
