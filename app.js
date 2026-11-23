@@ -1633,6 +1633,12 @@
   }
   // The settings card opens beside the tool, when the chosen tool is tapped again.
   function placeOpts() {
+    var card0 = $('penOpts');
+    if ((PREF.tl || 'rail') !== 'rail' && typeof tlAnchor === 'function') {
+      var an = tlAnchor() || ($('tools').querySelector('.tlx') || card0).getBoundingClientRect();
+      return placeFloat(an);
+    }
+    ['position', 'width', 'left', 'right', 'bottom', 'maxHeight'].forEach(function (k) { card0.style[k] = ''; });
     var on = $('tools').querySelector('.tool[aria-pressed="true"]'), card = $('penOpts');
     card.style.top = on ? Math.max(0, on.offsetTop - $('tools').querySelector('.tool-row').scrollTop - 8) + 'px' : '0px';
   }
@@ -1641,8 +1647,289 @@
     $('tools').classList.toggle('opts', !!on);
     if (on) { placeOpts(); if (!$('layersPanel').classList.contains('hidden')) { $('layersPanel').classList.add('hidden'); layersBtn(); } }
   }
+  // ---------- Tool layouts (3.31): Rail, Wheel, Pucks, Pen first ----------
+  // The same tools and settings cards, laid out four ways (Settings › Look › Tool layout), and each fitted to the
+  // screen: phone upright / sideways, tablet upright / sideways, computer. Everything lives inside #tools, so the
+  // rail's own click handling (tap a tool; tap it again for its card) works for every layout.
+  var TL = { dev: '', els: [], radial: null, hold: null, wpos: null };
+  function devClass() {
+    var w = innerWidth, h = innerHeight, phone = Math.min(w, h) < 600;
+    var desk = !phone && matchMedia('(hover: hover) and (pointer: fine)').matches;
+    return phone ? (w > h ? 'phone-l' : 'phone-p') : desk ? 'desk' : (w > h ? 'tab-l' : 'tab-p');
+  }
+  function tlItems() { // the rail's buttons, in the user's order
+    return [].slice.call($('tools').querySelectorAll('.tool-row > button.tool')).filter(function (b) { return b.dataset.tool || b.dataset.act; }).map(function (b) {
+      return { tool: b.dataset.tool, act: b.dataset.act, label: b.getAttribute('aria-label') || b.title || '', icon: (b.querySelector('svg') || {}).outerHTML || '' };
+    });
+  }
+  function tlBtn(it, cls, style) {
+    var attr = it.tool ? 'data-tool="' + it.tool + '" aria-pressed="' + (it.tool === PREF.tool) + '"' : 'data-act="' + it.act + '"';
+    return '<button type="button" class="tlb ' + (cls || '') + '" ' + attr + ' aria-label="' + esc(it.label) + '" title="' + esc(it.label) + '" style="' + (style || '') + '">' + it.icon + '</button>';
+  }
+  function tlKey() { var t = PREF.tool; return INKOPT[t] && ('s' in INKOPT[t] || 'c' in INKOPT[t]) ? t : 'pen'; }
+  function tlColour() { var k = tlKey(), c = INKOPT[k] && INKOPT[k].c; return !c || c === 'ink' ? 'var(--ink)' : c; }
+  function setQuickColour(c) { var k = INKOPT[PREF.tool] && 'c' in INKOPT[PREF.tool] ? PREF.tool : 'pen'; INKOPT[k].c = c; applyInk(); savePref(); setTool(PREF.tool); }
+  function tlRange(k, f) { // what a puck or an arc changes, and its range
+    if (f === 'o') return [0.05, 1];
+    if (k === 'erase') return [4, 80];
+    if (k === 'text') return [10, 160];
+    return [1, SIZE_MAX()];
+  }
+  function tlSet(f, frac) {
+    var k = tlKey(), r = tlRange(k, f), o = INKOPT[k]; if (!o) return;
+    var v = r[0] + (r[1] - r[0]) * Math.max(0, Math.min(1, frac));
+    if (k === 'text' && f === 's') o.fs = Math.round(v); else o[f] = f === 'o' ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10;
+    applyInk(); savePref(); tlRefresh();
+  }
+  function tlGet(f) { var k = tlKey(), r = tlRange(k, f), o = INKOPT[k] || {}, v = k === 'text' && f === 's' ? o.fs : o[f]; if (v == null) v = f === 'o' ? 1 : r[0]; return (v - r[0]) / (r[1] - r[0]); }
+  function tlClear() { TL.els.forEach(function (e) { e.remove(); }); TL.els = []; closeRadial(); }
+  function tlAdd(html, cls) { var d = document.createElement('div'); d.className = 'tlx ' + cls; d.innerHTML = html; $('tools').appendChild(d); TL.els.push(d); return d; }
+  function applyLayout() {
+    var tl = PREF.tl || 'rail', dev = devClass(), r = document.documentElement;
+    r.dataset.tl = tl; r.dataset.dev = dev; TL.dev = dev;
+    tlClear();
+    if (tl === 'wheel') buildWheel(); else if (tl === 'pucks') buildPucks(); else if (tl === 'pen1') buildPal();
+    if ($('tools').classList.contains('opts')) placeOpts();
+  }
+  function tlRefresh() { // after a tool, colour or size change: the parts that show them
+    var c = tlColour();
+    Array.prototype.forEach.call($('tools').querySelectorAll('.tl-colour'), function (e) { e.style.background = c; });
+    var w = $('tools').querySelector('.tl-wheel'); if (w) drawWheelArcs(w);
+    var pk = $('tools').querySelector('.tl-sizepuck i'); if (pk) { var d = 8 + 26 * tlGet('s'); pk.style.width = pk.style.height = d + 'px'; pk.style.opacity = 0.25 + 0.75 * tlGet('o'); pk.style.background = c; }
+    var cen = $('tools').querySelector('.tl-centre'), it = tlItems().filter(function (x) { return x.tool === PREF.tool; })[0];
+    if (cen && it) cen.innerHTML = it.icon + '<span>' + esc(it.label.split(':')[0]) + '</span>';
+  }
+  // Where the settings card goes when it isn't beside the rail: next to what opened it, on the side with room,
+  // tall and narrow on an upright phone, wide and short on a sideways one.
+  function placeFloat(a) {
+    var c = $('penOpts'), W = innerWidth, H = innerHeight, dev = TL.dev;
+    var w = dev === 'phone-p' ? Math.min(250, W - 24) : dev === 'phone-l' ? Math.min(560, Math.round(W * 0.62)) : Math.min(340, W - 24);
+    c.style.position = 'fixed'; c.style.width = w + 'px'; c.style.right = 'auto'; c.style.bottom = 'auto';
+    var top, left, wide = a.width > W * 0.45, mx = (a.left + a.right) / 2;
+    if (wide) { // a bar: below it, or above it when it sits low
+      left = Math.max(8, Math.min(W - w - 8, mx - w / 2));
+      if (a.top > H / 2) { c.style.top = 'auto'; c.style.bottom = (H - a.top + 8) + 'px'; c.style.maxHeight = (a.top - 70) + 'px'; c.style.left = left + 'px'; return; }
+      top = a.bottom + 8;
+    } else {
+      left = mx > W / 2 ? a.left - w - 10 : a.right + 10;
+      if (left < 8 || left + w > W - 8) left = mx > W / 2 ? 8 : W - w - 8; // no room beside it: the far side
+      top = dev === 'phone-p' ? 64 : Math.max(dev === 'phone-l' ? 6 : 64, Math.min(a.top, H - 320));
+    }
+    c.style.left = Math.round(left) + 'px'; c.style.top = Math.round(top) + 'px'; c.style.maxHeight = Math.max(160, H - top - 10) + 'px';
+  }
+  function tlAnchor() { var a = $('tools').querySelector('.tlx.anchor'); return a && a.getBoundingClientRect(); }
+
+  // --- Wheel (like Concepts): tools round a ring, colours on the rim, size and opacity on two arcs ---
+  function wheelSize() { return { 'phone-p': 214, 'phone-l': 196, 'tab-p': 280, 'tab-l': 280, 'desk': 270 }[TL.dev] || 260; }
+  function wheelHome(D) { // where it sits first on each kind of screen (the thumb or the free hand)
+    var W = innerWidth, H = innerHeight, m = 34 + D / 2, top = document.body.classList.contains('has-tabs') ? 150 : 110;
+    if (TL.dev === 'phone-p' || TL.dev === 'tab-p') return [W - m + 8, H - m - 70];
+    if (TL.dev === 'phone-l') return [W - m + 6, H / 2 + 10];
+    return [W - m + 8, Math.max(top + D / 2 - 20, H / 2 + 20)]; // the right side, where the rail was
+  }
+  function buildWheel() {
+    var D = wheelSize(), R = D / 2, items = tlItems(), n = items.length, bs = D < 240 ? 32 : 40, rt = R * 0.64;
+    var saved = PREF.wheelAt && PREF.wheelAt[TL.dev], at = saved ? [saved[0] * innerWidth, saved[1] * innerHeight] : wheelHome(D);
+    var h = '<svg class="tl-wsvg" width="' + (D + 70) + '" height="' + (D + 70) + '" viewBox="' + (-35) + ' ' + (-35) + ' ' + (D + 70) + ' ' + (D + 70) + '" aria-hidden="true">' +
+      '<circle cx="' + R + '" cy="' + R + '" r="' + R + '" class="tl-disc"/><g class="tl-arcs"></g></svg>';
+    items.forEach(function (it, i) {
+      var a = -Math.PI / 2 + i * 2 * Math.PI / n, x = R + rt * Math.cos(a) - bs / 2 + 35, y = R + rt * Math.sin(a) - bs / 2 + 35;
+      h += tlBtn(it, 'tl-ring', 'left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;width:' + bs + 'px;height:' + bs + 'px');
+    });
+    SWATCH.slice(0, 12).forEach(function (c, i, all) {
+      var a = -Math.PI / 2 + (i + 0.5) * 2 * Math.PI / all.length, rr = R - (D < 240 ? 9 : 11), s = D < 240 ? 14 : 17;
+      h += '<button type="button" class="tl-sw" data-qc="' + c + '" aria-label="Colour ' + c + '" style="left:' + (R + rr * Math.cos(a) - s / 2 + 35).toFixed(1) + 'px;top:' + (R + rr * Math.sin(a) - s / 2 + 35).toFixed(1) + 'px;width:' + s + 'px;height:' + s + 'px;background:' + (c === 'ink' ? 'var(--ink)' : c) + '"></button>';
+    });
+    var cr = R * 0.38;
+    h += '<button type="button" class="tl-centre" data-wc aria-label="This tool’s settings" title="Tap: this tool’s settings. Drag the ring to move the wheel." style="left:' + (R - cr + 35) + 'px;top:' + (R - cr + 35) + 'px;width:' + 2 * cr + 'px;height:' + 2 * cr + 'px"></button>';
+    var w = tlAdd(h, 'tl-wheel anchor');
+    w.style.width = w.style.height = (D + 70) + 'px';
+    TL.wpos = at; placeWheel(w);
+    tlRefresh();
+    wheelDrag(w);
+  }
+  function placeWheel(w) {
+    var D = wheelSize(), S = D + 70, W = innerWidth, H = innerHeight, x = Math.max(D / 2 - 20, Math.min(W - D / 2 + 20, TL.wpos[0])), y = Math.max(D / 2 + 30, Math.min(H - D / 2 + 20, TL.wpos[1]));
+    TL.wpos = [x, y]; w.style.left = Math.round(x - S / 2) + 'px'; w.style.top = Math.round(y - S / 2) + 'px';
+    drawWheelArcs(w);
+  }
+  function arcPath(cx, cy, r, a0, a1) { var x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0), x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1); return 'M' + x0.toFixed(1) + ' ' + y0.toFixed(1) + 'A' + r + ' ' + r + ' 0 0 1 ' + x1.toFixed(1) + ' ' + y1.toFixed(1); }
+  function wheelArcs() { // the two arcs face the middle of the screen, where there is room
+    var D = wheelSize(), R = D / 2, toMid = Math.atan2(innerHeight / 2 - TL.wpos[1], innerWidth / 2 - TL.wpos[0]);
+    return [{ f: 's', label: 'Size', a0: toMid - 1.05, a1: toMid - 0.12 }, { f: 'o', label: 'Opacity', a0: toMid + 0.12, a1: toMid + 1.05 }].map(function (x) { x.r = R + 16; x.cx = R; x.cy = R; return x; });
+  }
+  function drawWheelArcs(w) {
+    var g = w.querySelector('.tl-arcs'); if (!g) return;
+    g.innerHTML = wheelArcs().map(function (x) {
+      var v = tlGet(x.f), am = x.a0 + (x.a1 - x.a0) * v, kx = x.cx + x.r * Math.cos(am), ky = x.cy + x.r * Math.sin(am), lm = (x.a0 + x.a1) / 2;
+      return '<path d="' + arcPath(x.cx, x.cy, x.r, x.a0, x.a1) + '" class="tl-track"/><path d="' + arcPath(x.cx, x.cy, x.r, x.a0, Math.max(x.a0 + 0.001, am)) + '" class="tl-fill"/>' +
+        '<path d="' + arcPath(x.cx, x.cy, x.r, x.a0, x.a1) + '" class="tl-hit" data-arc="' + x.f + '"/>' +
+        '<circle cx="' + kx.toFixed(1) + '" cy="' + ky.toFixed(1) + '" r="9" class="tl-knob"/>' +
+        '<text x="' + (x.cx + (x.r + 20) * Math.cos(lm)).toFixed(1) + '" y="' + (x.cy + (x.r + 20) * Math.sin(lm) + 4).toFixed(1) + '" text-anchor="middle" class="tl-lab">' + x.label + '</text>';
+    }).join('');
+  }
+  function wheelDrag(w) {
+    var st = null;
+    w.addEventListener('pointerdown', function (e) {
+      var arc = e.target.closest && e.target.closest('[data-arc]');
+      if (w.classList.contains('mini')) return;
+      if (arc) { e.preventDefault(); st = { arc: arc.dataset.arc }; w.setPointerCapture(e.pointerId); return; }
+      if (e.target.closest('button')) return;
+      st = { x: e.clientX, y: e.clientY, at: TL.wpos.slice(), moved: false }; w.setPointerCapture(e.pointerId);
+    });
+    w.addEventListener('pointermove', function (e) {
+      if (!st) return;
+      if (st.arc) {
+        var x = wheelArcs().filter(function (q) { return q.f === st.arc; })[0], r = w.getBoundingClientRect();
+        var a = Math.atan2(e.clientY - (r.top + 35 + x.cy), e.clientX - (r.left + 35 + x.cx)), d = a - x.a0;
+        while (d < -Math.PI) d += 2 * Math.PI; while (d > Math.PI) d -= 2 * Math.PI;
+        tlSet(st.arc, d / (x.a1 - x.a0)); return;
+      }
+      var dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (!st.moved && Math.hypot(dx, dy) < 6) return;
+      st.moved = true; TL.wpos = [st.at[0] + dx, st.at[1] + dy]; placeWheel(w); if ($('tools').classList.contains('opts')) placeOpts();
+    });
+    function up() {
+      if (st && st.moved) { PREF.wheelAt = PREF.wheelAt || {}; PREF.wheelAt[TL.dev] = [TL.wpos[0] / innerWidth, TL.wpos[1] / innerHeight]; savePref(); }
+      if (st && st.arc) setTool(PREF.tool);
+      st = null;
+    }
+    w.addEventListener('pointerup', up); w.addEventListener('pointercancel', up);
+  }
+
+  // --- Pucks and corner menu (like Sketchbook) ---
+  function buildPucks() {
+    var dev = TL.dev;
+    tlAdd('<button type="button" class="tl-puck tl-sizepuck" data-puck aria-label="Pen puck: drag up or down for size, sideways for opacity; tap for settings" title="Drag ↕ size · ↔ opacity · tap: settings"><i></i></button><span class="tl-bubble hidden"></span>', 'tl-pucks-l');
+    tlAdd('<button type="button" class="tl-puck tl-colpuck" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>', 'tl-pucks-r');
+    if (dev !== 'phone-p') {
+      var it = [['undo', '#i-undo', 'Undo'], ['opts', '#i-tools', 'This tool’s settings'], ['colpop', '', 'Colours'], ['act:layers', '#i-layers', 'Layers'], ['redo', '#i-redo', 'Redo']];
+      var Rr = dev === 'phone-l' ? 92 : 118, s = dev === 'phone-l' ? 38 : 44, h = '';
+      // A quarter disc in the corner with its five buttons on an arc.
+      it.forEach(function (x, i) {
+        var a = (i + 0.5) * (Math.PI / 2) / it.length, bx = Math.round(Rr * Math.cos(a) - s / 2), by = Math.round(Rr * Math.sin(a) - s / 2);
+        var attr = x[0].indexOf('act:') === 0 ? 'data-act="' + x[0].slice(4) + '"' : x[0] === 'colpop' ? 'data-colpop' : 'data-cm="' + x[0] + '"';
+        h += '<button type="button" class="tl-cm" ' + attr + ' aria-label="' + x[2] + '" title="' + x[2] + '" style="left:' + bx + 'px;bottom:' + by + 'px;width:' + s + 'px;height:' + s + 'px">' + (x[1] ? '<svg class="i"><use href="' + x[1] + '"/></svg>' : '<i class="tl-colour"></i>') + '</button>';
+      });
+      var cm = tlAdd(h, 'tl-corner'); cm.style.width = cm.style.height = (Rr + s / 2 + 14) + 'px';
+    }
+    tlRefresh();
+    var pk = $('tools').querySelector('.tl-sizepuck'), bub = $('tools').querySelector('.tl-bubble'), ps = null;
+    pk.addEventListener('pointerdown', function (e) { e.preventDefault(); pk.setPointerCapture(e.pointerId); ps = { x: e.clientX, y: e.clientY, s: tlGet('s'), o: tlGet('o'), moved: false, ax: null }; });
+    pk.addEventListener('pointermove', function (e) {
+      if (!ps) return; var dx = e.clientX - ps.x, dy = e.clientY - ps.y;
+      if (!ps.moved && Math.hypot(dx, dy) < 6) return;
+      ps.moved = true; if (!ps.ax) ps.ax = Math.abs(dy) >= Math.abs(dx) ? 's' : 'o';
+      if (ps.ax === 's') tlSet('s', ps.s - dy / 220); else tlSet('o', ps.o + dx / 220);
+      var k = tlKey(), o = INKOPT[k] || {};
+      bub.classList.remove('hidden'); bub.textContent = ps.ax === 's' ? 'Size ' + (k === 'text' ? o.fs : o.s) : 'Opacity ' + Math.round((o.o == null ? 1 : o.o) * 100) + '%';
+    });
+    function pup() { if (ps && !ps.moved) showOpts(!$('tools').classList.contains('opts')); else if (ps) setTool(PREF.tool); ps = null; bub.classList.add('hidden'); }
+    pk.addEventListener('pointerup', pup); pk.addEventListener('pointercancel', pup);
+    pk.addEventListener('click', function (e) { e.stopPropagation(); }, true);
+  }
+  function colourPop(anchor) {
+    var old = $('tools').querySelector('.tl-colpop'); if (old) { old.remove(); return; }
+    var k = INKOPT[PREF.tool] && 'c' in INKOPT[PREF.tool] ? PREF.tool : 'pen', cur = INKOPT[k].c;
+    var p = tlAdd(SWATCH.map(function (c) { return '<button type="button" class="tl-sw2" data-qc="' + c + '" aria-pressed="' + (c === cur) + '" aria-label="Colour ' + c + '" style="background:' + (c === 'ink' ? 'var(--ink)' : c) + '"></button>'; }).join('') +
+      '<button type="button" class="tl-more" data-wc>More…</button>', 'tl-colpop');
+    var a = anchor.getBoundingClientRect(), W = innerWidth, pw = Math.min(232, W - 16);
+    p.style.width = pw + 'px';
+    p.style.left = Math.round(a.left + a.width / 2 > W / 2 ? Math.max(8, a.left - pw - 10) : Math.min(W - pw - 8, a.right + 10)) + 'px';
+    p.style.top = Math.round(Math.max(60, Math.min(innerHeight - 200, a.top - 40))) + 'px';
+  }
+
+  // --- Pen first: a small palette of the last tools, and the tools come to your finger ---
+  function recentTools() {
+    var r = (PREF.recent || ['pen', 'erase', 'lasso', 'hand']).filter(function (t) { return $('tools').querySelector('.tool-row [data-tool="' + t + '"]'); });
+    return r.slice(0, TL.dev === 'phone-l' ? 3 : 4);
+  }
+  function buildPal() {
+    var all = tlItems(), h = recentTools().map(function (t) { return tlBtn(all.filter(function (x) { return x.tool === t; })[0]); }).join('');
+    h += '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>' +
+      '<button type="button" class="tlb" data-radial aria-label="All tools (or hold a finger on the page)" title="All tools (or hold a finger on the page; right-click with a mouse)"><svg class="i"><use href="#i-tools"/></svg></button>';
+    tlAdd(h, 'tl-pal anchor'); tlRefresh();
+  }
+  function openRadial(x, y, touchId) {
+    closeRadial();
+    var all = tlItems(), want = ['hand', 'type', 'pen', 'erase', 'lasso', 'fill', 'guide'], items = want.map(function (t) { return all.filter(function (z) { return z.tool === t; })[0]; }).filter(Boolean);
+    items.push(all.filter(function (z) { return z.act === 'layers'; })[0]); items = items.filter(Boolean);
+    var R = TL.dev.indexOf('phone') === 0 ? 74 : 90, s = TL.dev.indexOf('phone') === 0 ? 44 : 50, W = innerWidth, H = innerHeight;
+    x = Math.max(R + s / 2 + 6, Math.min(W - R - s / 2 - 6, x)); y = Math.max(R + s / 2 + 6, Math.min(H - R - s / 2 - 6, y));
+    var h = items.map(function (it, i) {
+      var a = -Math.PI / 2 + i * 2 * Math.PI / items.length;
+      return tlBtn(it, 'tl-rb', 'left:' + Math.round(R + R * Math.cos(a) - s / 2 + s / 2) + 'px;top:' + Math.round(R + R * Math.sin(a) - s / 2 + s / 2) + 'px;width:' + s + 'px;height:' + s + 'px');
+    }).join('') + '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
+    var r = tlAdd(h, 'tl-radial'); var S = 2 * R + s;
+    r.style.width = r.style.height = S + 'px'; r.style.left = Math.round(x - S / 2) + 'px'; r.style.top = Math.round(y - S / 2) + 'px';
+    TL.radial = { el: r, id: touchId };
+  }
+  function closeRadial() { if (TL.radial) { TL.radial.el.remove(); TL.els = TL.els.filter(function (e) { return e !== TL.radial.el; }); TL.radial = null; } }
+  // Hold one finger still on the page (half a second): the tools come round it. Slide onto one and lift to pick
+  // it, or lift and tap. Not while picking or typing (holding means something there). Right-click with a mouse.
+  document.addEventListener('pointerdown', function (e) {
+    if ((PREF.tl || 'rail') !== 'pen1' || S.view !== 'note' || !e.target.closest || !e.target.closest('#canvasWrap')) return;
+    if (TL.radial && !e.target.closest('.tl-radial')) { closeRadial(); return; }
+    if (e.pointerType !== 'touch' || PREF.tool === 'lasso' || PREF.tool === 'type' || e.target.closest('.box, .ProseMirror')) return;
+    if (TL.hold) { clearTimeout(TL.hold.t); TL.hold = null; return; } // a second finger: a gesture, not a hold
+    var h = TL.hold = { x: e.clientX, y: e.clientY, id: e.pointerId, target: e.target };
+    h.t = setTimeout(function () {
+      if (TL.hold !== h) return; TL.hold = null;
+      try { h.target.dispatchEvent(new PointerEvent('pointercancel', { pointerId: h.id, pointerType: 'touch', bubbles: true })); } catch (x) {}
+      openRadial(h.x, h.y, h.id); TL.dragging = h.id;
+      if (navigator.vibrate) try { navigator.vibrate(12); } catch (x) {}
+    }, 480);
+  }, true);
+  document.addEventListener('pointermove', function (e) {
+    if (TL.hold && e.pointerId === TL.hold.id && Math.hypot(e.clientX - TL.hold.x, e.clientY - TL.hold.y) > 10) { clearTimeout(TL.hold.t); TL.hold = null; }
+    if (TL.radial && TL.dragging === e.pointerId) {
+      var on = document.elementFromPoint(e.clientX, e.clientY), b = on && on.closest && on.closest('.tl-radial button');
+      Array.prototype.forEach.call(TL.radial.el.querySelectorAll('button'), function (x) { x.classList.toggle('hot', x === b); });
+      e.preventDefault(); e.stopPropagation();
+    }
+  }, true);
+  document.addEventListener('pointerup', function (e) {
+    if (TL.hold && e.pointerId === TL.hold.id) { clearTimeout(TL.hold.t); TL.hold = null; }
+    if (TL.radial && TL.dragging === e.pointerId) {
+      TL.dragging = null; var hot = TL.radial.el.querySelector('.hot');
+      e.preventDefault(); e.stopPropagation();
+      if (hot) { hot.click(); closeRadial(); }
+    }
+  }, true);
+  document.addEventListener('contextmenu', function (e) {
+    if ((PREF.tl || 'rail') !== 'pen1' || S.view !== 'note' || !e.target.closest || !e.target.closest('#canvasWrap') || e.target.closest('.box, .ProseMirror')) return;
+    e.preventDefault(); openRadial(e.clientX, e.clientY, null);
+  });
+  // The wheel shrinks to a small dot while you draw; tap the dot to bring it back.
+  document.addEventListener('pointerdown', function (e) {
+    var w = $('tools').querySelector('.tl-wheel'); if (!w || !e.target.closest) return;
+    if (e.target.closest('#canvasWrap') && !e.target.closest('#tools')) { if (!w.classList.contains('mini')) { w.classList.add('mini'); } }
+  }, true);
+  $('tools').addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('button'); if (!b) return;
+    var w = b.closest('.tl-wheel');
+    if (w && w.classList.contains('mini')) { e.stopPropagation(); e.preventDefault(); w.classList.remove('mini'); return; }
+    if (b.dataset.qc) { e.stopPropagation(); setQuickColour(b.dataset.qc); var p = $('tools').querySelector('.tl-colpop'); if (p) p.remove(); return; }
+    if (b.hasAttribute('data-wc')) { e.stopPropagation(); var p2 = $('tools').querySelector('.tl-colpop'); if (p2) p2.remove(); closeRadial(); showOpts(!$('tools').classList.contains('opts')); return; }
+    if (b.hasAttribute('data-colpop')) { e.stopPropagation(); showOpts(false); colourPop(b); return; }
+    if (b.hasAttribute('data-radial')) { e.stopPropagation(); var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 110, null); else openRadial(r.left - 120, r.top + r.height / 2, null); return; }
+    if (b.dataset.cm === 'undo') { e.stopPropagation(); $('undoBtn').click(); return; }
+    if (b.dataset.cm === 'redo') { e.stopPropagation(); $('redoBtn').click(); return; }
+    if (b.dataset.cm === 'opts') { e.stopPropagation(); showOpts(!$('tools').classList.contains('opts')); return; }
+    if (b.closest('.tl-radial') && (b.dataset.tool || b.dataset.act)) setTimeout(closeRadial, 0);
+  }, true);
+  var tlResize = null;
+  addEventListener('resize', function () { clearTimeout(tlResize); tlResize = setTimeout(function () { if (devClass() !== TL.dev || (PREF.tl || 'rail') !== 'rail') applyLayout(); }, 150); });
+  var setTool1 = setTool;
+  setTool = function (t) {
+    setTool1(t);
+    if (t && $('tools').querySelector('.tool-row [data-tool="' + t + '"]')) { var r = (PREF.recent || ['pen', 'erase', 'lasso', 'hand']).filter(function (x) { return x !== t; }); r.unshift(t); PREF.recent = r.slice(0, 6); }
+    if ((PREF.tl || 'rail') === 'pen1' && $('tools').querySelector('.tl-pal')) { applyLayout(); return; }
+    tlRefresh();
+  };
   function setSide(left) { PREF.toolsLeft = !!left; savePref(); $('tools').classList.toggle('left', !!left); if (!$('layersPanel').classList.contains('hidden')) renderLayers(); }
   setSide(PREF.toolsLeft);
+  applyLayout();
   document.addEventListener('pointerdown', function (e) {
     if ($('tools').classList.contains('opts') && !e.target.closest('#tools')) showOpts(false);
   }, true);
@@ -1752,6 +2039,7 @@
     var p = $('layersPanel');
     if (!S.canvas || p.classList.contains('hidden')) return;
     var rail = $('tools').querySelector('.tool-row').getBoundingClientRect();
+    if (!rail.width) { var an = $('tools').querySelector('.tlx.anchor, .tl-pucks-r'); rail = an ? an.getBoundingClientRect() : { top: 70, left: innerWidth - 12, right: innerWidth - 12 }; if (rail.top > innerHeight - 300) rail = { top: 70, left: rail.left, right: rail.right }; }
     p.style.top = Math.round(rail.top) + 'px';
     if (PREF.toolsLeft) { p.style.left = Math.round(rail.right + 8) + 'px'; p.style.right = 'auto'; }
     else { p.style.right = Math.round(innerWidth - rail.left + 8) + 'px'; p.style.left = 'auto'; }
@@ -2702,8 +2990,8 @@
     names.splice(j, 0, names.splice(i, 1)[0]); PREF.toolOrder = names; savePref(); applyToolOrder();
   }
   // ---------- Look (3.30): skin, shade and motion ----------
-  var LOOKS = [['paper', 'Paper', 'Warm paper, as before'], ['sketch', 'Sketchbook', 'Handmade: grainy paper, card panels, handwritten titles'],
-    ['studio', 'Studio', 'Clean and crisp, a dark tool puck, one bright accent'], ['play', 'Playful', 'Motley colours, chunky round shapes, coloured tools']];
+  var LOOKS = [['paper', 'Paper', 'Warm paper, as before'], ['studio', 'Studio', 'Clean and crisp, a dark tool puck, one bright accent']]; // (3.31) the user kept these two
+  if (PREF.skin === 'sketch' || PREF.skin === 'play') { PREF.skin = 'paper'; savePref(); }
   function applyLook() {
     var r = document.documentElement;
     if (PREF.skin && PREF.skin !== 'paper') r.dataset.skin = PREF.skin; else delete r.dataset.skin;
@@ -2721,7 +3009,11 @@
       '<p style="margin-top:10px !important">Shade</p><div class="pick" style="margin:0">' + opt('shade', 'auto', 'Follow the phone', sh === 'auto', 'light by day, grey when the phone is dark') +
       opt('shade', 'light', 'Light', sh === 'light') + opt('shade', 'grey', 'Grey', sh === 'grey') + '</div>' +
       '<p style="margin-top:10px !important">Motion</p><div class="pick" style="margin:0">' + opt('motion', 'off', 'Off', mo === 'off', 'nothing moves') +
-      opt('motion', 'gentle', 'Gentle', mo === 'gentle', 'panels ease in with a little give') + opt('motion', 'lively', 'Lively', mo === 'lively', 'pop, bounce and squish') + '</div></div>';
+      opt('motion', 'gentle', 'Gentle', mo === 'gentle', 'panels ease in with a little give') + opt('motion', 'lively', 'Lively', mo === 'lively', 'pop, bounce and squish') + '</div>' +
+      '<p style="margin-top:10px !important">Tool layout (fits itself to phone, tablet and computer, upright or sideways)</p><div class="pick" style="margin:0">' +
+      [['rail', 'Rail', 'a column of tools at the side; tap a tool again for its card'], ['wheel', 'Wheel', 'like Concepts: tools, colours, size and opacity on one wheel; drag it anywhere; it shrinks while you draw'],
+       ['pucks', 'Pucks', 'like Sketchbook: a tool bar, a size puck (drag ↕ size, ↔ opacity), a colour puck and a corner menu'], ['pen1', 'Pen first', 'almost nothing on screen: your last tools, and hold a finger on the page for the rest']]
+        .map(function (o) { return opt('tl', o[0], o[1], (PREF.tl || 'rail') === o[0], o[2]); }).join('') + '</div></div>';
   }
   applyLook();
   function settingsSheet() {
@@ -2758,6 +3050,7 @@
       if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
       if (act === 'skin' || act === 'shade' || act === 'motion') { PREF[act] = b.dataset.v; savePref(); applyLook(); settingsSheet(); return; }
+      if (act === 'tl') { PREF.tl = b.dataset.v; savePref(); applyLayout(); settingsSheet(); toast({ rail: 'Rail: tap a tool again for its settings.', wheel: 'Wheel: tap the middle for settings; drag the ring to move it; it shrinks to a dot while you draw.', pucks: 'Pucks: drag the left puck up/down for size, sideways for opacity; the right one is colour.', pen1: 'Pen first: hold one finger still on the page (or right-click) for all the tools.' }[PREF.tl], null, null, 5000); return; }
       if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
       });
@@ -2789,6 +3082,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Four ways to lay out the tools', d: 'Settings › Look › Tool layout. Rail: the column you know. Wheel (like Concepts): tools, colours, size and opacity on one wheel; tap the middle for settings, drag the ring to move it, it shrinks to a dot while you draw. Pucks (like Sketchbook): a tool bar, a size puck (drag up/down for size, sideways for opacity), a colour puck and a corner menu. Pen first: just your last tools; hold one finger still on the page (or right-click) and all the tools come to it. Each fits itself to phone, tablet and computer, upright or sideways; on an upright phone the settings card is tall and narrow so the page stays in view.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="70" cy="70" r="36" fill="#26272b"/><circle cx="70" cy="70" r="14" fill="' + SURF + '"/><rect x="122" y="28" width="84" height="16" rx="8" fill="#26272b"/><circle cx="134" cy="92" r="14" fill="#26272b"/><circle cx="182" cy="92" r="14" fill="' + A + '"/>') },
     { t: 'Looks, grey, motion, and every note in a tab', d: 'Settings › Look: four looks (Paper, Sketchbook, Studio, Playful), each in Light or Grey (grey replaces the old near-black dark), and Motion: Off, Gentle or Lively. Every note you open now gets its own tab. And when a note was changed on two devices, the newer change is kept by itself; the other version stays in ••• › Version history.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="30" width="38" height="80" rx="10" fill="#f2ebdd" stroke="#d6c8ae"/><rect x="80" y="30" width="38" height="80" rx="10" fill="#eeeeec" stroke="#26272b" stroke-width="3"/><rect x="126" y="30" width="38" height="80" rx="14" fill="#fff6e8" stroke="#e4572e" stroke-width="2"/><rect x="172" y="30" width="38" height="80" rx="10" fill="#3d3e42"/>') },
     { t: 'Tabs: several notes open at once', d: 'Tap a link to another note and it opens in a new tab; the note you came from stays open. Tabs show as a strip at the top: tap one to switch, × to close it, + (or ••• › Open another note in a new tab) to pick another note. A note opened from the list goes in the tab you were in. The tabs, and the note you were in, come back when the app opens again; from the list, “Open tabs” takes you back.',
