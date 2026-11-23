@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Serendipity</title>
 <meta name="theme-color" content="#f8f4ec" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1b1b1f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#56575c" media="(prefers-color-scheme: dark)">
 <meta name="description" content="Quick notes saved as Markdown files in Google Drive.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script>/* (3.30) Look, shade and motion set before anything is drawn, so there is no flash of the wrong colours */
+try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'), r = document.documentElement;
+  if (p.skin && p.skin !== 'paper') r.dataset.skin = p.skin; if (p.shade && p.shade !== 'auto') r.dataset.shade = p.shade; r.dataset.motion = p.motion || 'gentle'; })(); } catch (e) {}</script>
 <style>
   /* Two views: the notes grid (opens first) and a note's canvas. System fonts only, so it opens fast. */
   :root {
@@ -20,14 +23,86 @@
     --radius: 12px; --shadow: 0 1px 3px rgba(60,48,36,.22), 0 4px 10px 3px rgba(60,48,36,.10);
     color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #1b1b1f; --surface: #232327; --field: #2e2d31; --ink: #f1ece3; --muted: #aaa398; --rule: #3e3c40;
-      --accent: #f0846f; --accent-soft: #3d2620; --accent-ink: #2a0d06; --sun: #f2b134; --sun-soft: #3d3220; --warn-bg: #3d3214; --warn-ink: #f6dd9a; --bad: #f2b8b5; --mark: #6b5414;
-      --shadow: 0 1px 3px rgba(0,0,0,.6), 0 4px 8px 3px rgba(0,0,0,.35);
-      color-scheme: dark;
-    }
-  }
+  /* (3.30) Looks: Paper (as before), Sketchbook, Studio, Playful; each in Light and Grey (grey instead of the old
+     near-black dark). Shade follows the system unless Settings › Look sets it. Motion: Off / Gentle / Lively. */
+  /* Sketchbook: handmade and tangible. Warm drawing paper with a little grain, cardstock panels with a soft paper
+     shadow, blue-pencil accent, slightly uneven corners, handwritten titles. */
+  :root[data-skin=sketch] { --paper: #f2ebdd; --surface: #fbf6ea; --field: #e9dfcb; --ink: #2a2622; --muted: #75695a; --rule: #d6c8ae;
+    --accent: #3b66b0; --accent-soft: #dbe4f4; --accent-ink: #fff; --sun: #e2a93b; --sun-soft: #f6e6bf; --radius: 14px 11px 15px 10px;
+    --shadow: 2px 3px 0 rgba(90,70,40,.10), 0 6px 14px rgba(90,70,40,.10); }
+  :root[data-skin=sketch][data-shade=grey] { --paper: #5b5853; --surface: #66625b; --field: #706b64; --ink: #f3ecdf; --muted: #dbd1c0; --rule: #7a756c; --accent: #9cb8ee; --accent-soft: #4f5d78; --accent-ink: #14203a; }
+  @media (prefers-color-scheme: dark) { :root[data-skin=sketch]:not([data-shade]) { --paper: #5b5853; --surface: #66625b; --field: #706b64; --ink: #f3ecdf; --muted: #dbd1c0; --rule: #7a756c; --accent: #9cb8ee; --accent-soft: #4f5d78; --accent-ink: #14203a; } }
+  :root[data-skin=sketch] body { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .28 0 0 0 0 .18 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  :root[data-skin=sketch] .card { border-radius: var(--radius); border-width: 1.5px; box-shadow: var(--shadow); }
+  :root[data-skin=sketch] .card:nth-child(3n+1) { transform: rotate(-.35deg); } :root[data-skin=sketch] .card:nth-child(3n+2) { transform: rotate(.3deg); }
+  :root[data-skin=sketch] .bar h1, :root[data-skin=sketch] .sheet h2, :root[data-skin=sketch] #noteTitle { font-family: Caveat, var(--font); font-size: 30px; font-weight: 600; }
+  :root[data-skin=sketch] .tool-row, :root[data-skin=sketch] .tool-opts, :root[data-skin=sketch] .sheet { border-width: 1.5px; box-shadow: var(--shadow); }
+  :root[data-skin=sketch] .tool-opts { border-radius: 16px 12px 18px 12px; }
+  :root[data-skin=sketch] button.primary, :root[data-skin=sketch] .fab { box-shadow: 2px 3px 0 rgba(40,30,20,.25); }
+
+  /* Studio: like a design studio's tools (Concepts, Sketchbook): a cool neutral page, crisp white panels and a
+     dark floating tool puck with one bright accent. */
+  :root[data-skin=studio] { --paper: #eeeeec; --surface: #ffffff; --field: #e3e3e0; --ink: #1f2023; --muted: #686b70; --rule: #d9d9d6;
+    --accent: #2f6bff; --accent-soft: #dce6ff; --accent-ink: #fff; --sun: #ffb81c; --sun-soft: #fff0c9; --radius: 16px;
+    --shadow: 0 1px 2px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.08); }
+  :root[data-skin=studio][data-shade=grey] { --paper: #545558; --surface: #5f6064; --field: #696a6e; --ink: #f2f2f0; --muted: #d3d5d9; --rule: #717276; --accent: #7aa2ff; --accent-soft: #4a5780; --accent-ink: #0c1a3d; }
+  @media (prefers-color-scheme: dark) { :root[data-skin=studio]:not([data-shade]) { --paper: #545558; --surface: #5f6064; --field: #696a6e; --ink: #f2f2f0; --muted: #d3d5d9; --rule: #717276; --accent: #7aa2ff; --accent-soft: #4a5780; --accent-ink: #0c1a3d; } }
+  :root[data-skin=studio] .tool-row { background: #26272b; border-color: #26272b; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+  :root[data-skin=studio] .tools .tool { color: #e9e9ec; }
+  :root[data-skin=studio] .tools .tool[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  :root[data-skin=studio] .tools .tool[data-act="layers"][aria-pressed="true"] { background: #3a3b40; color: #fff; }
+  :root[data-skin=studio] .tools .tool .pdot { border-color: #26272b; background: #fff; }
+  :root[data-skin=studio] .card { border-color: transparent; box-shadow: var(--shadow); border-radius: 16px; }
+  :root[data-skin=studio] .tool-opts { border-radius: 20px; border-color: transparent; box-shadow: 0 16px 40px rgba(0,0,0,.18); }
+
+  /* Playful: Motley's colours out loud: chunky round shapes, each tool its own colour, a bouncier feel. */
+  :root[data-skin=play] { --paper: #fff6e8; --surface: #ffffff; --field: #ffe9cc; --ink: #241c2b; --muted: #75687d; --rule: #f1dcc0;
+    --accent: #e4572e; --accent-soft: #ffe0d4; --accent-ink: #fff; --sun: #ffc233; --sun-soft: #fff0c2; --radius: 20px;
+    --shadow: 0 2px 0 rgba(36,28,43,.10), 0 8px 18px rgba(228,87,46,.12); }
+  :root[data-skin=play][data-shade=grey] { --paper: #58535c; --surface: #635d69; --field: #6d6676; --ink: #fbf3ff; --muted: #ddd4e3; --rule: #7a7282; --accent: #ff8a65; --accent-soft: #735359; --accent-ink: #2b0c03; }
+  @media (prefers-color-scheme: dark) { :root[data-skin=play]:not([data-shade]) { --paper: #58535c; --surface: #635d69; --field: #6d6676; --ink: #fbf3ff; --muted: #ddd4e3; --rule: #7a7282; --accent: #ff8a65; --accent-soft: #735359; --accent-ink: #2b0c03; } }
+  :root[data-skin=play] .card { border-radius: 20px; border-width: 2px; }
+  :root[data-skin=play] .tool-row { border-radius: 28px; border-width: 2px; }
+  :root[data-skin=play] .tools .tool:nth-child(5n+1) { color: #e4572e; } :root[data-skin=play] .tools .tool:nth-child(5n+2) { color: #e39b0b; }
+  :root[data-skin=play] .tools .tool:nth-child(5n+3) { color: #1f9e95; } :root[data-skin=play] .tools .tool:nth-child(5n+4) { color: #6a4c93; }
+  :root[data-skin=play] .tools .tool:nth-child(5n+5) { color: #3a86ff; }
+  :root[data-skin=play] .tools .tool[aria-pressed="true"] { color: #fff; }
+  :root[data-skin=play] .tool-opts, :root[data-skin=play] .sheet { border-width: 2px; border-radius: 24px; }
+  :root[data-skin=play] .sheet { border-radius: 28px 28px 0 0; }
+  :root[data-skin=play] button.primary { box-shadow: 0 3px 0 rgba(0,0,0,.18); }
+
+  /* Grey shade for any look; each look's own grey (above, more specific) still wins where it sets a colour */
+  :root[data-shade=grey] { --paper: #56575c; --surface: #616267; --field: #6b6c71; --ink: #f0eee9; --muted: #d6d3cc; --rule: #76777c;
+    --accent: #f4937e; --accent-soft: #6e5450; --accent-ink: #2a0d06; --sun: #f2b134; --sun-soft: #6e6040; --warn-bg: #6e6033; --warn-ink: #f6dd9a; --bad: #f6bcb8; --mark: #8a7228;
+    --shadow: 0 1px 3px rgba(0,0,0,.35), 0 4px 10px 3px rgba(0,0,0,.18); color-scheme: dark; }
+  @media (prefers-color-scheme: dark) { :root:not([data-shade]) { --paper: #56575c; --surface: #616267; --field: #6b6c71; --ink: #f0eee9; --muted: #d6d3cc; --rule: #76777c;
+    --accent: #f4937e; --accent-soft: #6e5450; --accent-ink: #2a0d06; --sun: #f2b134; --sun-soft: #6e6040; --warn-bg: #6e6033; --warn-ink: #f6dd9a; --bad: #f6bcb8; --mark: #8a7228;
+    --shadow: 0 1px 3px rgba(0,0,0,.35), 0 4px 10px 3px rgba(0,0,0,.18); color-scheme: dark; } }
+
+
+  /* Motion. Gentle (default): panels and notes ease in with a little give. Lively: they pop and settle, list
+     cards rise in turn, buttons squish when pressed. Off: nothing moves (also when the system asks for less). */
+  :root { --m-dur: .2s; --m-ease: cubic-bezier(.25,1.15,.45,1); }
+  :root[data-motion=lively] { --m-dur: .32s; --m-ease: cubic-bezier(.3,1.6,.45,1); }
+  @keyframes qn-pop { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+  @keyframes qn-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes qn-sheet { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+  @keyframes qn-slide { from { transform: translateX(-24px); opacity: .3; } to { transform: none; opacity: 1; } }
+  :root:not([data-motion=off]) .tools.opts .tool-opts { animation: qn-pop var(--m-dur) var(--m-ease); }
+  :root:not([data-motion=off]) #noteMenu:not(.hidden), :root:not([data-motion=off]) #layersPanel:not(.hidden) { animation: qn-pop var(--m-dur) var(--m-ease); transform-origin: top right; }
+  :root:not([data-motion=off]) .sheet-back:not(.hidden) .sheet { animation: qn-sheet calc(var(--m-dur) * 1.2) var(--m-ease); }
+  :root:not([data-motion=off]) .drawer:not(.hidden) { animation: qn-slide var(--m-dur) var(--m-ease); }
+  :root:not([data-motion=off]) #editorView:not(.hidden) { animation: qn-rise calc(var(--m-dur) * .9) ease-out; }
+  :root:not([data-motion=off]) .wn:not(.hidden) > * { animation: qn-pop var(--m-dur) var(--m-ease); }
+  :root:not([data-motion=off]) .tools .tool { transition: background-color .15s, transform .15s var(--m-ease); }
+  :root[data-motion=lively] .card { animation: qn-rise .38s var(--m-ease) both; }
+  :root[data-motion=lively] .card:nth-child(2) { animation-delay: .03s; } :root[data-motion=lively] .card:nth-child(3) { animation-delay: .06s; }
+  :root[data-motion=lively] .card:nth-child(4) { animation-delay: .09s; } :root[data-motion=lively] .card:nth-child(n+5) { animation-delay: .12s; }
+  :root[data-motion=lively] button:active, :root[data-motion=lively] .card:active { transform: scale(.95); transition: transform .08s; }
+  :root[data-motion=lively] .tools .tool[aria-pressed="true"] { animation: qn-pop .3s var(--m-ease); }
+  :root[data-motion=off] *, :root[data-motion=off] *::before, :root[data-motion=off] *::after { animation: none !important; transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { :root:not([data-motion=lively]) * { animation: none !important; transition: none !important; } }
+
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   /* Fonts for text, kept in the app so they work offline (SIL Open Font License, see fonts/OFL-LICENSE.txt) */

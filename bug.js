@@ -449,7 +449,7 @@
       'Device: ' + navigator.userAgent,
       'Screen: ' + innerWidth + '×' + innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x · ' +
         (matchMedia('(display-mode: standalone)').matches ? 'installed app' : 'browser tab') + ' · ' + (navigator.onLine ? 'online' : 'offline') +
-        ' · ' + (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') + ' theme'
+        ' · ' + (document.documentElement.dataset.skin || 'paper') + ' look, ' + (document.documentElement.dataset.shade || (matchMedia('(prefers-color-scheme: dark)').matches ? 'auto grey' : 'auto light')) + ', motion ' + (document.documentElement.dataset.motion || 'gentle')
     ];
     Object.keys(ctx).forEach(function (k) { if (ctx[k] !== undefined && ctx[k] !== '') lines.push(k + ': ' + ctx[k]); });
     lines.push('', 'Last taps:'); lines = lines.concat(actions.length ? actions.slice(-20) : ['(none)']);
