@@ -140,6 +140,9 @@
       cancelAnimationFrame(caretRaf);
       caretRaf = requestAnimationFrame(function () {
         var s = window.getSelection(); if (!s || !s.rangeCount || !active) return;
+        // (3.32, #84) Only while a text box really has the caret. After a tap outside, the keyboard closes and this ran on
+        // a leftover selection, moving the page so the text jumped away from where it was left.
+        var fe = document.activeElement; if (!fe || !fe.closest || !fe.closest('.box') || !stage.contains(fe)) return;
         var r = s.getRangeAt(0).getBoundingClientRect(); if (!r || (!r.height && !r.top)) return;
         var vv = window.visualViewport, top = (vv ? vv.offsetTop : 0), hgt = vv ? vv.height : innerHeight, hr = host.getBoundingClientRect();
         var lo = Math.max(hr.top, top) + 70, hi = Math.min(hr.bottom, top + hgt) - 60;
@@ -626,6 +629,8 @@
           ev.preventDefault();
           if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
           drag = { type: 'ink', id: ev.pointerId, finger: isFinger, t: ev.timeStamp };
+          // (3.32, #85) Tap-to-pick: a finger that starts on empty space and moves is panning (only the Lasso needs two fingers).
+          if (isFinger && tool === 'lasso' && eng.pickPending && eng.pickPending()) drag.pickPan = { x: ev.clientX, y: ev.clientY };
           host.setPointerCapture(ev.pointerId);
           return;
         }
@@ -731,6 +736,13 @@
     if ('onpointerrawupdate' in window) on(host, 'pointerrawupdate', function (ev) { if (drag && drag.type === 'ink') inkMove(ev); });
     on(host, 'pointermove', function (ev) {
       if (!drag) { if (INK[tool]) eng.move(point(ev), ev); return; } // the eraser/nudge circle follows a hovering pen
+      if (drag.type === 'ink' && drag.pickPan && ev.pointerId === drag.id) {
+        if (Math.hypot(ev.clientX - drag.pickPan.x, ev.clientY - drag.pickPan.y) > 8) {
+          var pp = drag.pickPan; eng.cancel(); drag = null;
+          startPan({ pointerId: ev.pointerId, pointerType: 'touch', clientX: pp.x, clientY: pp.y });
+          drag.moved = true; taps = []; // from here on it is the same as any one-finger pan
+        } else return;
+      }
       if (drag.type === 'ink') { inkMove(ev); return; }
       if (drag.type === 'pan') {
         if (!(ev.pointerId in drag.fingers)) return;
@@ -1168,7 +1180,7 @@
       if (h0 === 'e') cx = (b[0] - R.x0) * s - cw * 0.3; else if (h0 === 'w') cx = (a[0] - R.x0) * s - cw * 0.7;
       if (v === 's') cy = (b[1] - R.y0) * s - ch * 0.3; else if (v === 'n') cy = (a[1] - R.y0) * s - ch * 0.7;
       sc.scrollTop = Math.max(0, cy); sc.scrollLeft = Math.max(0, cx);
-      sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); if (ev.pointerType !== 'mouse') ev.preventDefault(); }); // (3.32, #87) no stray tap events reach the page under the map
       sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
       var lastTap = null;
       sc.addEventListener('pointerdown', function (ev) { sc._down = { x: ev.clientX, y: ev.clientY }; });
@@ -1177,9 +1189,20 @@
         if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
         var t = Date.now(), r = sc.querySelector('svg').getBoundingClientRect();
         var px = R.x0 + (ev.clientX - r.left) / s, py = R.y0 + (ev.clientY - r.top) / s;
-        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; hideSide(); goToPoint(px, py, d, blocks()); return; }
+        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; swallowTap(); hideSide(); goToPoint(px, py, d, blocks()); return; }
         lastTap = { t: t, x: ev.clientX, y: ev.clientY };
       });
+    }
+    // (3.32, #87) The double tap that jumps there must not also start typing in the text box now under the finger:
+    // for a moment, the page ignores the click that follows and takes the focus back if a box grabbed it.
+    function swallowTap() {
+      var eat = function (e) { e.preventDefault(); e.stopPropagation(); };
+      var had = !!(document.activeElement && stage.contains(document.activeElement) && document.activeElement.closest('.box'));
+      ['click', 'mousedown', 'mouseup', 'dblclick'].forEach(function (k) { document.addEventListener(k, eat, true); });
+      setTimeout(function () {
+        ['click', 'mousedown', 'mouseup', 'dblclick'].forEach(function (k) { document.removeEventListener(k, eat, true); });
+        var ae = document.activeElement; if (ae && stage.contains(ae) && ae.closest('.box') && !had) ae.blur();
+      }, 450);
     }
     function goToPoint(px, py, d, list) {
       // (3.27.1, #82) A text box tapped on: its left edge goes to the margin. Anything else (a drawing that may run

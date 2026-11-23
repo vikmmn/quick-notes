@@ -1054,7 +1054,15 @@
   var TABS = { ids: [], cur: null, inNote: false, newNext: false };
   try { var tj = JSON.parse(localStorage.getItem('qn-tabs') || '{}'); TABS.ids = (tj.ids || []).map(String); TABS.cur = tj.cur || null; TABS.inNote = !!tj.inNote; } catch (e) {}
   function saveTabs() { try { localStorage.setItem('qn-tabs', JSON.stringify({ ids: TABS.ids, cur: TABS.cur, inNote: S.view === 'note' })); } catch (e) {} }
-  function tabName(n) { var t = (n.title || '').trim() || String((n.boxes && n.boxes[0] && n.boxes[0].md) || n.body || '').replace(/[#*_>`\[\]()-]/g, ' ').trim().split('\n')[0]; return (t || 'Untitled').slice(0, 40); }
+  function tabName(n) {
+    var t = (n.title || '').trim();
+    if (!t) {
+      // (3.32) No title: use the first line of the text, without HTML tags or Markdown marks (a tab once showed "<u Driti</u").
+      var src = String((n.boxes && n.boxes[0] && n.boxes[0].md) || n.body || '').replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '');
+      t = src.split('\n').map(function (l) { return l.replace(/^[#>\s*_`\-]+|[*_`\[\]()]/g, ' ').replace(/\s+/g, ' ').trim(); }).filter(Boolean)[0] || '';
+    }
+    return (t || 'Untitled').slice(0, 40);
+  }
   function renderTabs() {
     var bar = $('tabBar'); if (!bar) return;
     // Only a deleted note leaves the tabs; one not loaded yet (before the first sync) keeps its place.
@@ -1161,7 +1169,11 @@
     $('pinBtn').innerHTML = icon(on ? 'pin-fill' : 'pin');
   }
   $('pinBtn').onclick = function () { S.cur.pinned = !S.cur.pinned; setPin(S.cur.pinned); touchNote(S.cur); };
-  $('noteTitle').addEventListener('input', function () { S.cur.title = this.value; touchNote(S.cur); });
+  $('noteTitle').addEventListener('input', function () {
+    S.cur.title = this.value; touchNote(S.cur);
+    // (3.32) The tab shows the title as it is typed (it used to stay "Untitled" until the note was reopened).
+    var tb = $('tabBar') && $('tabBar').querySelector('.tab.on span'); if (tb) tb.textContent = tabName(S.cur);
+  });
   $('noteTitle').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); S.canvas.focusStart(); } });
 
   function renderMeta() {
@@ -3082,6 +3094,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Fixes from your feedback', d: 'The tab now shows a note\u2019s name as you type it (and no stray tags when it has no title). Text stays where you left it when you tap outside. In Tap-to-pick, one finger pans. Double tapping a spot on the side map just moves there; it no longer starts typing.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="26" width="64" height="18" rx="6" fill="' + SOFT + '"/><rect x="104" y="26" width="64" height="18" rx="6" fill="' + SURF + '" stroke="' + A + '"/><rect x="40" y="62" width="120" height="8" rx="4" fill="' + RULE + '"/><rect x="40" y="80" width="90" height="8" rx="4" fill="' + RULE + '"/><circle cx="178" cy="96" r="10" fill="' + A + '" opacity=".25"/>') },
     { t: 'Four ways to lay out the tools', d: 'Settings › Look › Tool layout. Rail: the column you know. Wheel (like Concepts): tools, colours, size and opacity on one wheel; tap the middle for settings, drag the ring to move it, it shrinks to a dot while you draw. Pucks (like Sketchbook): a tool bar, a size puck (drag up/down for size, sideways for opacity), a colour puck and a corner menu. Pen first: just your last tools; hold one finger still on the page (or right-click) and all the tools come to it. Each fits itself to phone, tablet and computer, upright or sideways; on an upright phone the settings card is tall and narrow so the page stays in view.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="70" cy="70" r="36" fill="#26272b"/><circle cx="70" cy="70" r="14" fill="' + SURF + '"/><rect x="122" y="28" width="84" height="16" rx="8" fill="#26272b"/><circle cx="134" cy="92" r="14" fill="#26272b"/><circle cx="182" cy="92" r="14" fill="' + A + '"/>') },
     { t: 'Looks, grey, motion, and every note in a tab', d: 'Settings › Look: four looks (Paper, Sketchbook, Studio, Playful), each in Light or Grey (grey replaces the old near-black dark), and Motion: Off, Gentle or Lively. Every note you open now gets its own tab. And when a note was changed on two devices, the newer change is kept by itself; the other version stays in ••• › Version history.',
