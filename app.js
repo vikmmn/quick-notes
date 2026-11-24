@@ -1104,6 +1104,38 @@
     if (pill) { var others = shown.length; pill.classList.toggle('hidden', S.view === 'note' || others < 1); pill.textContent = 'Open tabs (' + others + ')'; }
     saveTabs();
   }
+  // (3.34) Drag a tab to change its place: hold a tab (a mouse: just drag) and slide it along the strip.
+  (function () {
+    var bar = $('tabBar'), dg = null;
+    function clear() { if (!dg) return; clearTimeout(dg.t); if (dg.on) { dg.el.classList.remove('dragging'); dg.el.style.transform = ''; bar.style.touchAction = ''; } dg = null; }
+    bar.addEventListener('pointerdown', function (e) {
+      var t = e.target.closest('.tab[data-tab]'); if (!t || e.target.closest('[data-tclose]')) return;
+      dg = { el: t, id: t.dataset.tab, x0: e.clientX, id2: e.pointerId, on: false, mouse: e.pointerType === 'mouse' };
+      if (!dg.mouse) dg.t = setTimeout(function () { if (dg) { dg.on = true; t.classList.add('dragging'); bar.style.touchAction = 'none'; try { bar.setPointerCapture(dg.id2); } catch (x) {} if (navigator.vibrate) navigator.vibrate(8); } }, 350);
+    });
+    bar.addEventListener('pointermove', function (e) {
+      if (!dg || e.pointerId !== dg.id2) return;
+      var dx = e.clientX - dg.x0;
+      if (!dg.on) { if (dg.mouse && Math.abs(dx) > 6) { dg.on = true; dg.el.classList.add('dragging'); try { bar.setPointerCapture(dg.id2); } catch (x) {} } else { if (!dg.mouse && Math.abs(dx) > 8) { clearTimeout(dg.t); dg = null; } return; } }
+      dg.el.style.transform = 'translateX(' + dx + 'px)';
+      // Passing the middle of a neighbour swaps places with it.
+      var tabs = [].slice.call(bar.querySelectorAll('.tab[data-tab]')), me = dg.el.getBoundingClientRect(), mid = me.left + me.width / 2, i = tabs.indexOf(dg.el);
+      var j = tabs.findIndex(function (o) { if (o === dg.el) return false; var r = o.getBoundingClientRect(); return mid > r.left && mid < r.right; });
+      if (j >= 0 && j !== i) {
+        var ids = TABS.ids, a = ids.indexOf(dg.id), b = ids.indexOf(tabs[j].dataset.tab);
+        if (a >= 0 && b >= 0) {
+          var before = dg.el.getBoundingClientRect().left;
+          ids.splice(b, 0, ids.splice(a, 1)[0]);
+          if (j > i) bar.insertBefore(dg.el, tabs[j].nextSibling); else bar.insertBefore(dg.el, tabs[j]);
+          dg.x0 += dg.el.getBoundingClientRect().left - before; // the tab stays under the finger
+          dg.el.style.transform = 'translateX(' + (e.clientX - dg.x0) + 'px)'; dg.moved = true; saveTabs();
+        }
+      }
+    });
+    function up(e) { if (!dg) return; var was = dg.on; clear(); if (was) { bar._noClick = Date.now(); renderTabs(); } }
+    bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
+    bar.addEventListener('click', function (e) { if (bar._noClick && Date.now() - bar._noClick < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
+  })();
   var openNote2 = openNote;
   openNote = function (n, isNew, how) {
     if (!n) return;
@@ -1419,7 +1451,7 @@
     function on(f) { try { return FMT_STATE[f] ? FMT_STATE[f](ed) : false; } catch (e) { return false; } }
     function tc(f, label, name, pressed) { return '<button type="button" class="ochip" data-tf="' + f + '" aria-label="' + name + '" title="' + name + '" aria-pressed="' + !!pressed + '">' + label + '</button>'; }
     var ff = ed.getAttributes('textStyle').fontFamily || '', fn = (allFonts().filter(function (x) { return x[0] === ff; })[0] || ['', 'Sans'])[1].replace(' (standard)', '');
-    var fs = parseInt(ed.getAttributes('textStyle').fontSize, 10) || 17, ls = tt.ls || 1.55, ps = tt.ps == null ? 0.35 : tt.ps;
+    var fs = parseInt(ed.getAttributes('textStyle').fontSize, 10) || 17, ls = tt.ls || 1.55, ps = tt.ps == null ? 0.35 : tt.ps, tk = tt.tk || 0;
     var para = !on('h1') && !on('h2') && !ed.isActive('heading', { level: 3 }) && !on('quote') && !ed.isActive('codeBlock');
     return '<div class="olabel">Letters</div>' + G(tc('bold', '<b>B</b>', 'Bold', on('bold')) + tc('italic', '<i style="font-family:Georgia,serif">I</i>', 'Italic', on('italic')) + tc('underline', '<u>U</u>', 'Underline', on('underline')) + tc('strike', '<s>S</s>', 'Strikethrough', on('strike'))) +
       G(tc('font', '<span style="font-family:' + esc(ff || 'var(--font)') + '">' + esc(fn) + '</span> ▾', 'Font') + tc('size', fs + ' ▾', 'Size') + tc('color', '<span style="font-weight:700;border-bottom:3px solid #c0392b">A</span>', 'Text colour') + tc('highlight', '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#fde68a;vertical-align:middle"></span>', 'Highlight', on('highlight'))) +
@@ -1428,6 +1460,7 @@
       G(tc('left', '⇤', 'Align left', !on('center') && !on('right') && !ed.isActive({ textAlign: 'justify' })) + tc('center', '↔', 'Centre', on('center')) + tc('right', '⇥', 'Align right', on('right')) + tc('justify', '☰', 'Justify', ed.isActive({ textAlign: 'justify' }))) +
       '<div class="olabel">Spacing (this box)</div>' + G('<span class="olab2">Lines</span>' + [[1.2, 'Tight'], [1.55, 'Normal'], [1.9, 'Airy'], [2.3, 'Double']].map(function (o) { return '<button type="button" class="ochip" data-tls="' + o[0] + '" aria-pressed="' + (Math.abs(ls - o[0]) < 0.01) + '">' + o[1] + '</button>'; }).join('')) +
       G('<span class="olab2">Gaps</span>' + [[0, 'None'], [0.35, 'Small'], [0.8, 'Medium'], [1.4, 'Big']].map(function (o) { return '<button type="button" class="ochip" data-tps="' + o[0] + '" aria-pressed="' + (Math.abs(ps - o[0]) < 0.01) + '">' + o[1] + '</button>'; }).join('')) +
+      G('<span class="olab2">Letters</span>' + [[-0.02, 'Tight'], [0, 'Normal'], [0.05, 'Wide'], [0.12, 'Wider']].map(function (o) { return '<button type="button" class="ochip" data-ttk="' + o[0] + '" aria-pressed="' + (Math.abs(tk - o[0]) < 0.001) + '">' + o[1] + '</button>'; }).join('')) +
       G(tc('clear', 'Clear', 'Clear formatting') ) +
       G(HINT(tt.typing ? 'Changes the words picked, or the line you are on.' : 'Not typing now: letter changes go on the whole box; paragraph changes on the line typed in last.'));
   }
@@ -2000,9 +2033,10 @@
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
-    if (b.dataset.tf || b.dataset.tls || b.dataset.tps) {
+    if (b.dataset.tf || b.dataset.tls || b.dataset.tps || b.dataset.ttk) {
       var tt = S.canvas && S.canvas.textTarget && S.canvas.textTarget(); if (!tt) return;
       if (b.dataset.tls) { S.canvas.boxSpacing('ls', +b.dataset.tls === 1.55 ? null : b.dataset.tls); return setTool('type'); }
+      if (b.dataset.ttk) { S.canvas.boxSpacing('tk', +b.dataset.ttk === 0 ? null : b.dataset.ttk); return setTool('type'); }
       if (b.dataset.tps) { S.canvas.boxSpacing('ps', +b.dataset.tps === 0.35 ? null : b.dataset.tps); return setTool('type'); }
       return fmtDo(b.dataset.tf, b, tt.ed, !tt.typing);
     }
@@ -2011,7 +2045,7 @@
   // While artistic text is being written, tapping the Text card's buttons keeps the keyboard and the writing going.
   $('tools').addEventListener('pointerdown', function (e) {
     if (S.canvas && S.canvas.ink().editingText() && e.target.closest('button') && !e.target.closest('[data-act=closeopts]')) e.preventDefault();
-    if (S.canvas && S.canvas.active() && e.target.closest('[data-tf], [data-tls], [data-tps]')) e.preventDefault(); // keep typing (3.28)
+    if (S.canvas && S.canvas.active() && e.target.closest('[data-tf], [data-tls], [data-tps], [data-ttk]')) e.preventDefault(); // keep typing (3.28)
   });
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
@@ -2616,7 +2650,17 @@
     return '<div class="set"><b>Fonts</b><p>Built in, and work offline: ' + CORE_FONTS.map(function (f) { return '<span style="font-family:' + esc(f[2]) + '">' + f[1].replace(' (standard)', '') + '</span>'; }).join(', ') + '.</p>' +
       '<p>Your own: put font files (.ttf, .otf, .woff) in Drive › ' + esc(sync.rootName()) + ' › Fonts, or add them here. Each is kept on this device too, so it works offline.</p>' +
       (userFonts.length ? '<p>' + userFonts.map(function (f) { return '<span style="font-family:' + esc(fontCss(f)) + ';font-size:17px">' + esc(f.family) + '</span>'; }).join(' · ') + '</p>' : '') +
-      '<button type="button" data-act="addfont">Add font files</button></div>';
+      '<button type="button" data-act="addfont">Add font files</button>' +
+      // (3.34) What text looks like when nothing else is chosen: all text boxes, new and old.
+      '<p style="margin-top:12px !important">Default text (every note)</p><div class="pick" style="margin:0">' +
+      allFonts().map(function (f) { var on = (PREF.defFont || '') === f[0]; return '<button type="button" data-act="deffont" data-v="' + esc(f[0]) + '" aria-pressed="' + on + '" style="font-family:' + esc(f[2]) + '">' + (on ? '◉ ' : '○ ') + esc(f[1].replace(' (standard)', '')) + '</button>'; }).join('') + '</div>' +
+      '<div class="pick" style="margin:6px 0 0">' + [[15, 'Small'], [17, 'Normal'], [19, 'Large'], [22, 'Larger']].map(function (o) { var on = (PREF.defSize || 17) === o[0]; return '<button type="button" data-act="defsize" data-v="' + o[0] + '" aria-pressed="' + on + '">' + (on ? '◉ ' : '○ ') + o[1] + ' (' + o[0] + ')</button>'; }).join('') + '</div></div>';
+  }
+  function applyTextDefault() {
+    var r = document.documentElement.style;
+    if (PREF.defFont) r.setProperty('--qn-font', PREF.defFont); else r.removeProperty('--qn-font');
+    if (PREF.defSize && PREF.defSize !== 17) r.setProperty('--qn-fs', PREF.defSize + 'px'); else r.removeProperty('--qn-fs');
+    if (S.canvas && S.canvas.redraw) S.canvas.redraw();
   }
   // Photos from a phone camera are huge: keep them sharp on screen but small in Drive (longest side 2000 px).
   // ---------- Files on the page: saved once in Attachments, named by what is in them (3.20) ----------
@@ -3050,6 +3094,7 @@
         .map(function (o) { return opt('tl', o[0], o[1], (PREF.tl || 'rail') === o[0], o[2]); }).join('') + '</div></div>';
   }
   applyLook();
+  applyTextDefault();
   function settingsSheet() {
     var st = sync.status(), h = health(st), who = Drive.account ? Drive.account() : '';
     var signin = Drive.demo ? 'Demo mode: a pretend Drive that resets when the page reloads.' :
@@ -3081,6 +3126,10 @@
     function (act, b) {
       if (act === 'tup' || act === 'tdown') { moveTool(b.dataset.v, act === 'tup' ? -1 : 1); var sc = $('sheet'); var y = sc ? sc.scrollTop : 0; settingsSheet(); sc = $('sheet'); if (sc) sc.scrollTop = y; return; }
       if (act === 'addfont') { fontInput.click(); return; }
+      if (act === 'deffont' || act === 'defsize') {
+        if (act === 'deffont') PREF.defFont = b.dataset.v || ''; else PREF.defSize = +b.dataset.v;
+        savePref(); applyTextDefault(); var sc2 = $('sheet'), y2 = sc2 ? sc2.scrollTop : 0; settingsSheet(); sc2 = $('sheet'); if (sc2) sc2.scrollTop = y2; return;
+      }
       if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
       if (act === 'skin' || act === 'shade' || act === 'motion') { PREF[act] = b.dataset.v; savePref(); applyLook(); settingsSheet(); return; }
@@ -3116,6 +3165,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Small touches', d: 'Drag a tab (hold it first on a phone) to change its place. Text card › Spacing now has Letters (tight to wider) for a text box. Settings › Fonts › Default text sets the font and size of all text. On a computer the pen-size slider stays faint until you point at it.',
+      a: art('<rect x="20" y="40" width="64" height="30" rx="9" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="92" y="34" width="64" height="30" rx="9" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="164" y="40" width="56" height="30" rx="9" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M110 98 h60 M170 98 l-8 -6 M170 98 l-8 6" stroke="' + A + '" stroke-width="3" fill="none" stroke-linecap="round"/><text x="28" y="124" font-size="16" fill="' + INKC + '" letter-spacing="3">A B C</text>') },
     { t: 'More room, easier moves', d: 'The page now runs under the top buttons and tabs, and a button fades away while you draw or move something under it. With Text, one tap picks a text box: drag it to move it, tap outside to let go, double tap to type. In the side map, drag the frame (or tap a part) to choose what the screen will show, then double tap to go there.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="196" cy="30" r="9" fill="' + SOFT + '" opacity=".35"/><rect x="40" y="46" width="110" height="40" rx="6" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="6 4"/><rect x="48" y="56" width="80" height="7" rx="3" fill="' + RULE + '"/><rect x="48" y="70" width="60" height="7" rx="3" fill="' + RULE + '"/><path d="M150 96 q20 -30 46 -60" stroke="' + A + '" stroke-width="3" fill="none" stroke-linecap="round"/>') },
     { t: 'Fixes from your feedback', d: 'The tab now shows a note\u2019s name as you type it (and no stray tags when it has no title). Text stays where you left it when you tap outside. In Tap-to-pick, one finger pans. Double tapping a spot on the side map just moves there; it no longer starts typing.',
