@@ -1906,8 +1906,16 @@
   // workspace (and Colours in every tool's card); each workspace adds its own tools. "All tools" shows everything,
   // so no tool is ever out of reach. Only which tools show changes: the page, and what is on it, stays the same.
   var WS = { write: ['type', 'text'], draw: ['pen', 'erase', 'nudge', 'fill', 'guide'], board: ['type', 'link', 'pen', 'erase', 'image'], all: null }; // (3.41.1, #121/#123/#126/#127) tidied; Links folded into Board
-  var WS_ORDER = ['write', 'draw', 'board', 'all'];
+  var WS_ORDER = ['write', 'draw', 'board', 'all'], WS_ABOVE = { write: 3 }; // how many tools sit above the workspace button (the rest, and Colours, below); others: half
   var WS_SHARED = ['hand', 'lasso', 'layers'], WS_NAMES = { all: 'All tools', write: 'Write', draw: 'Draw', links: 'Links', board: 'Board' }, WS_SHORT = { all: 'All', write: 'W', draw: 'D', links: 'L', board: 'B' };
+  // (3.41.3, #129) Each workspace has its own little picture and colour on its button (and in its list)
+  var WS_ICON = {
+    write: '<path d="M4 6h16M4 11h16M4 16h10"/><path d="M15 19l1.2-3.6 3.3-3.3a1.3 1.3 0 011.8 1.8l-3.3 3.3z"/>',
+    draw: '<path d="M12 3a9 9 0 100 18c1.5 0 2-1.2 1.4-2.2-.7-1.2.1-2.6 1.6-2.6H17a4 4 0 004-4c0-5-4-9.2-9-9.2z"/><circle cx="7.8" cy="11" r="1.1"/><circle cx="10.5" cy="7.3" r="1.1"/><circle cx="15" cy="7.8" r="1.1"/>',
+    board: '<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/>',
+    all: '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>'
+  };
+  function wsIcon(k, sz) { return '<svg viewBox="0 0 24 24" width="' + (sz || 20) + '" height="' + (sz || 20) + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (WS_ICON[k] || '') + '</svg>'; }
   function wsCur() { return WS.hasOwnProperty(PREF.ws) ? PREF.ws : 'draw'; }
   function wsHas(k) { var l = WS[wsCur()]; return !l || WS_SHARED.indexOf(k) > -1 || l.indexOf(k) > -1; }
   function wsBtnHtml(id) { var w = wsCur(); return '<button type="button" class="tool tlb wsbtn"' + (id ? ' id="wsBtn"' : '') + ' data-wspick aria-label="Workspace: ' + WS_NAMES[w] + '" title="Workspace: ' + WS_NAMES[w] + '"><b>' + WS_SHORT[w] + '</b></button>'; }
@@ -1993,10 +2001,10 @@
   // there; Layers alone on the right edge. Tap the workspace button: the next workspace. Hold it: the list opens;
   // slide onto one and lift (or tap one). Tap a tool again: its sub-tools in a small panel that scrolls. ---
   function buildWs() {
-    var items = tlItems().filter(function (x) { return x.act !== 'layers'; }), w = wsCur(), half = Math.ceil(items.length / 2);
+    var items = tlItems().filter(function (x) { return x.act !== 'layers'; }), w = wsCur(), half = WS_ABOVE.hasOwnProperty(w) ? Math.min(WS_ABOVE[w], items.length) : Math.ceil(items.length / 2); // (3.41.3, #133) Write: three tools above its button, two below
     var btn = function (it) { return tlBtn(it); };
     var h = items.slice(0, half).map(btn).join('') +
-      '<button type="button" class="tlb wsb" data-wscycle aria-label="Workspace: ' + WS_NAMES[w] + ' (tap: next; hold: choose)" title="Workspace: ' + WS_NAMES[w] + ' (tap: next; hold: choose)"><b>' + WS_SHORT[w] + '</b><small>' + esc(WS_NAMES[w].split(' ')[0]) + '</small></button>' +
+      '<button type="button" class="tlb wsb" data-ws="' + w + '" data-wscycle aria-label="Workspace: ' + WS_NAMES[w] + ' (tap: next; hold: choose)" title="Workspace: ' + WS_NAMES[w] + ' (tap: next; hold: choose)">' + wsIcon(w, 20) + '<small>' + esc(WS_NAMES[w].split(' ')[0]) + '</small></button>' +
       items.slice(half).map(btn).join('') +
       '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>';
     tlAdd(h, 'tl-wscol anchor');
@@ -2005,7 +2013,7 @@
   }
   function wsList(btn) {
     wsListClose();
-    var p = tlAdd(WS_ORDER.map(function (k) { return '<button type="button" data-wsv="' + k + '" aria-pressed="' + (wsCur() === k) + '"><b>' + WS_SHORT[k] + '</b> ' + WS_NAMES[k] + '</button>'; }).join(''), 'tl-wspop');
+    var p = tlAdd(WS_ORDER.map(function (k) { return '<button type="button" data-ws="' + k + '" data-wsv="' + k + '" aria-pressed="' + (wsCur() === k) + '"><b>' + wsIcon(k, 18) + '</b> ' + WS_NAMES[k] + '</button>'; }).join(''), 'tl-wspop');
     var r = btn.getBoundingClientRect(), ph = p.offsetHeight;
     p.style.left = Math.round(r.right + 10) + 'px'; p.style.top = Math.round(Math.max(8, Math.min(innerHeight - ph - 8, r.top + r.height / 2 - ph / 2))) + 'px';
     return p;
@@ -2436,12 +2444,13 @@
     var rail = $('tools').querySelector('.tool-row').getBoundingClientRect();
     if (!rail.width) { var an = $('tools').querySelector('.tlx.anchor, .tl-pucks-r'); rail = an ? an.getBoundingClientRect() : { top: 70, left: innerWidth - 12, right: innerWidth - 12 }; if (rail.top > innerHeight - 300) rail = { top: 70, left: rail.left, right: rail.right }; }
     var wl = document.documentElement.dataset.tl === 'ws' && $('tools').querySelector('.tl-wslayers'); // (3.41.1, #122) Workspaces: Layers is alone on the right edge, so the panel opens beside that button
-    if (wl) { var lr = wl.getBoundingClientRect(); if (lr.width) { p.style.top = Math.round(Math.max(70, Math.min(innerHeight - 340, lr.top - 120))) + 'px'; p.style.right = Math.round(innerWidth - lr.left + 8) + 'px'; p.style.left = 'auto'; rail = null; } }
+    p.style.maxHeight = '';
+    if (wl) { var lr = wl.getBoundingClientRect(); if (lr.width) { p.style.top = Math.round(lr.bottom + 8) + 'px'; p.style.right = Math.round(Math.max(8, innerWidth - lr.right)) + 'px'; p.style.left = 'auto'; p.style.maxHeight = Math.round(Math.max(160, Math.min(innerHeight * 0.66, innerHeight - lr.bottom - 20))) + 'px'; rail = null; } } // (3.41.3) Workspaces: the panel opens just under the Layers button
     if (rail) p.style.top = Math.round(rail.top) + 'px';
     if (!rail) { /* placed above */ } else if (PREF.toolsLeft) { p.style.left = Math.round(rail.right + 8) + 'px'; p.style.right = 'auto'; }
     else { p.style.right = Math.round(innerWidth - rail.left + 8) + 'px'; p.style.left = 'auto'; }
     showOpts(false);
-    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(64, 44), tc = S.canvas.textCounts ? S.canvas.textCounts() : {};
+    var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(92, 52), tc = S.canvas.textCounts ? S.canvas.textCounts() : {};
     var sel = S.lsel, html = '';
     if (sel) {
       var ids = Object.keys(sel), anyG = list.some(function (l) { return sel[l.id] && l.gid; });
@@ -2463,11 +2472,10 @@
       if (l.clip) parts.push('masked');
       var s = '<div class="lcard' + (l.active ? ' on' : '') + (l.vis ? '' : ' hid') + (inGroup ? ' ing' : '') + (sel && sel[l.id] ? ' picked' : '') + '" data-id="' + l.id + '" data-gid="' + (l.gid || '') + '">' +
         (sel ? '<span class="lpick">' + (sel[l.id] ? '✓' : '') + '</span>' : '') +
-        '<div class="lthumb">' + (th[l.id] || '') + '</div>' +
-        '<div class="lmeta"><b>' + esc(l.name) + '</b><small>' + parts.join(' · ') + '</small></div>' +
-        (sel ? '' : lic(l.vis ? 'eye' : 'eyeOff', 'data-lo="vis"', l.vis ? 'Hide' : 'Show', l.vis ? '' : 'off') +
-          lic(l.lock ? 'lock' : 'unlock', 'data-lo="lock"', l.lock ? 'Unlock' : 'Lock', l.lock ? '' : 'off')) + '</div>';
-      if (!sel && l.active && S.lopen === l.id) s += '<div class="ltools" data-id="' + l.id + '">' +
+        '<div class="lthumb" title="' + esc(l.name + ' · ' + parts.join(' · ')) + '">' + (th[l.id] || '') + '<b class="lname">' + esc(l.name) + '</b></div>' +
+        (sel ? '' : '<span class="lvl">' + lic(l.vis ? 'eye' : 'eyeOff', 'data-lo="vis"', l.vis ? 'Hide' : 'Show', l.vis ? '' : 'off') +
+          lic(l.lock ? 'lock' : 'unlock', 'data-lo="lock"', l.lock ? 'Unlock' : 'Lock', l.lock ? '' : 'off') + '</span>') + '</div>'; // (3.41.3) the name sits on the picture; eye over lock; the counts moved into the layer's settings
+      if (!sel && l.active && S.lopen === l.id) s += '<div class="ltools" data-id="' + l.id + '"><small class="linfo">' + esc(parts.join(' · ')) + '</small>' +
         '<label class="lop">Opacity<input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop><output>' + Math.round(l.op * 100) + '%</output></label>' +
         '<div class="lrow2"><select data-lblend aria-label="Blend">' + blends.map(function (b) { return '<option value="' + b + '"' + (b === l.blend ? ' selected' : '') + '>' + b.replace('-', ' ') + '</option>'; }).join('') + '</select>' +
         '<button type="button" class="lmask" data-lo="clip" aria-pressed="' + !!l.clip + '"' + (i === list.length - 1 ? ' disabled' : '') + ' title="Only show this layer where the layer below has paint">Mask</button></div>' +
@@ -2485,7 +2493,7 @@
         var allHid = members.every(function (k) { return !list[k].vis; }), allLock = members.every(function (k) { return list[k].lock; }), closed = !!S.gclosed[gid];
         html += '<div class="lgroup" data-gid="' + gid + '"><button type="button" class="lgtw" data-lo="gtoggle" aria-label="' + (closed ? 'Open group' : 'Close group') + '">' + (closed ? '▸' : '▾') + '</button>' +
           '<b data-lo="grename" title="Rename group">' + esc(l.gname || 'Group') + '</b><small>' + members.length + '</small>' +
-          (sel ? '' : lic(allHid ? 'eyeOff' : 'eye', 'data-lo="gvis"', allHid ? 'Show group' : 'Hide group', allHid ? 'off' : '') + lic(allLock ? 'lock' : 'unlock', 'data-lo="glock"', allLock ? 'Unlock group' : 'Lock group', allLock ? '' : 'off')) + '</div>';
+          (sel ? '' : '<span class="lvl">' + lic(allHid ? 'eyeOff' : 'eye', 'data-lo="gvis"', allHid ? 'Show group' : 'Hide group', allHid ? 'off' : '') + lic(allLock ? 'lock' : 'unlock', 'data-lo="glock"', allLock ? 'Unlock group' : 'Lock group', allLock ? '' : 'off') + '</span>') + '</div>';
         if (!closed) members.forEach(function (k) { html += card(list[k], k, true); });
         i = j - 1;
       } else html += card(l, i, false);
@@ -2494,8 +2502,8 @@
     if (!sel && window.QNBg) {
       var B = window.QNBg.parse(S.cur && S.cur.page), GN = B.g && window.QNBg.GRIDS.filter(function (g) { return g[0] === B.g; })[0], TN = B.t && window.QNBg.TEXTURES.filter(function (t) { return t[0] === B.t; })[0];
       var bgCard = function (kind, name, sub, on, thumb) {
-        return '<div class="lcard lbg' + (on ? '' : ' hid') + '" data-bg="' + kind + '"><div class="lthumb">' + thumb + '</div><div class="lmeta"><b>' + name + '</b><small>' + sub + '</small></div>' +
-          lic(on ? 'eye' : 'eyeOff', 'data-lo="bgvis" data-k="' + kind + '"', on ? 'Hide' : 'Show', on ? '' : 'off') + '</div>';
+        return '<div class="lcard lbg' + (on ? '' : ' hid') + '" data-bg="' + kind + '"><div class="lthumb" title="' + name + ': ' + sub + '">' + thumb + '<b class="lname">' + name + (/^None/.test(sub) ? '' : ' · ' + sub) + '</b></div>' +
+          '<span class="lvl">' + lic(on ? 'eye' : 'eyeOff', 'data-lo="bgvis" data-k="' + kind + '"', on ? 'Hide' : 'Show', on ? '' : 'off') + '</span></div>';
       };
       html += '<div class="lbgs"><small class="lbgh">Background</small>' +
         bgCard('g', 'Grid', GN ? GN[1] : 'None (tap to choose)', B.gv !== false && !!GN, GN ? bgThumb(B, 'g') : '') +
@@ -2679,6 +2687,45 @@
     renderLayers();
   });
 
+  // ---------- Names on pen hover (3.41.3, #136) ----------
+  // A pen held over a button sends hover events but never shows the browser's own title text, so the tool rails, panels
+  // and the selection icons got no name. This little label shows it. It only reacts to a pen that is hovering (no button
+  // pressed), and only on these panels (never on the page being drawn on), so drawing is untouched.
+  (function () {
+    var tip = document.createElement('div'); tip.className = 'inktip hidden'; tip.setAttribute('aria-hidden', 'true');
+    tip.style.cssText = 'position:fixed;z-index:70;left:0;top:0;'; document.body.appendChild(tip);
+    var on = null;
+    function nameOf(b) { return b.getAttribute('data-tip') || b.getAttribute('aria-label') || b.getAttribute('title') || ''; }
+    function hide() { on = null; tip.classList.add('hidden'); }
+    function show(b) {
+      var tx = nameOf(b); if (!tx) return hide();
+      on = b; tip.textContent = tx.length > 90 ? tx.slice(0, 87) + '…' : tx; tip.classList.remove('hidden');
+      var r = b.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight, side = !!b.closest('#tools, .tl-wscol, .tl-wslayers'), x, y;
+      if (side) { x = r.left + r.width / 2 < innerWidth / 2 ? r.right + 8 : r.left - w - 8; y = r.top + r.height / 2 - h / 2; }
+      else { x = r.left + r.width / 2 - w / 2; y = r.top - h - 8; if (y < 4) y = r.bottom + 8; }
+      tip.style.left = Math.round(Math.max(6, Math.min(innerWidth - w - 6, x))) + 'px'; tip.style.top = Math.round(Math.max(4, Math.min(innerHeight - h - 4, y))) + 'px';
+    }
+    function over(e) {
+      if (e.pointerType !== 'pen' || e.buttons) return;
+      var b = e.target.closest && e.target.closest('button, [data-tip]'); if (!b) { if (on) hide(); return; }
+      if (b !== on) show(b);
+    }
+    ['#tools', '#penOpts', '#toolQuick', '#penQuick', '#layersPanel', '#topChrome', '#fmtBar', '#viewCtl', '#menuFab'].forEach(function (q) {
+      var e = document.querySelector(q); if (!e) return;
+      e.addEventListener('pointerover', over, { passive: true }); e.addEventListener('pointermove', over, { passive: true });
+      e.addEventListener('pointerout', function (ev) { if (ev.pointerType === 'pen') hide(); }, { passive: true });
+    });
+    // the selection icons and other bars made later: pointerover only fires when the pen moves onto another button
+    // (the selection icons already have their own label; this one steps in only if that one has not appeared after a moment)
+    document.addEventListener('pointerover', function (e) {
+      if (e.pointerType === 'touch' || e.buttons || !(e.target.closest && e.target.closest('.inkbar, .selbar, .linkbar'))) return;
+      var b = e.target.closest('button, [data-tip]'); if (!b) return;
+      setTimeout(function () { if (b.matches(':hover') && !document.querySelector('.inktip:not(.hidden)')) show(b); }, 160);
+    }, { passive: true });
+    document.addEventListener('pointerout', function (e) { if (e.pointerType !== 'touch' && on && on.closest && on.closest('.inkbar, .selbar, .linkbar') && e.target.closest && e.target.closest('.inkbar, .selbar, .linkbar')) hide(); }, { passive: true });
+    document.addEventListener('pointerdown', hide, true);
+  })();
+
   // ---------- Formatting bar ----------
   function showFmt(on) {
     $('fmtBar').classList.toggle('hidden', !on);
@@ -2691,6 +2738,8 @@
     var vv = window.visualViewport;
     var off = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
     $('fmtBar').style.bottom = off + 'px';
+    var fb = $('fmtBar'), x = 0; if (!fb.classList.contains('hidden')) { var cs = getComputedStyle(fb); x = Math.max(0, Math.round(fb.offsetHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 38)); }
+    document.documentElement.style.setProperty('--fmt-x', x + 'px'); // a wrapped (two-row) bar lifts the buttons above it by the extra height
   }
   // On a phone, the formatting bar belongs to the keyboard: when the keyboard is put away (the back button or the
   // keyboard's own button), the bar goes too instead of staying as a strip at the bottom of the screen.

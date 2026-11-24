@@ -172,9 +172,18 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   :root[data-tl=ws] .tool-row { display: none; }
   .tl-wscol { left: calc(8px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 3px; padding: 5px; background: var(--puck); border-radius: 26px; box-shadow: 0 10px 28px rgba(0,0,0,.28); max-height: calc(100vh - 150px); overflow-y: auto; scrollbar-width: none; }
   .tl-wscol .wsb { width: 42px; height: 50px; border-radius: 16px; background: var(--accent-soft, rgba(0,0,0,.08)); color: var(--accent); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; margin: 4px 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .wsb[data-ws=write], .tl-wspop [data-ws=write] { --wsc: #2b6cb0; } .wsb[data-ws=draw], .tl-wspop [data-ws=draw] { --wsc: #d9822b; } .wsb[data-ws=board], .tl-wspop [data-ws=board] { --wsc: #2f855a; } .wsb[data-ws=all], .tl-wspop [data-ws=all] { --wsc: #7e57c2; }
+  .tl-wscol .wsb[data-ws] { background: color-mix(in srgb, var(--wsc) 22%, #fff); color: var(--wsc); }
+  .tl-wscol .wsb[data-ws] small { color: var(--wsc); }
+  .tl-wspop button[data-ws] b { display: inline-grid; place-items: center; vertical-align: middle; color: var(--wsc); }
+  .tl-wspop button.hot[data-ws] b { color: inherit; }
   .tl-wscol .wsb small { font: 600 9px/1 var(--font); letter-spacing: .02em; }
   /* (3.41.1, #124) the slider, quick tools and menu button line up with the workspace rail's left edge and width */
   :root[data-tl=ws] #menuFab, :root[data-tl=ws] #penQuick, :root[data-tl=ws] #toolQuick { left: calc(8px + env(safe-area-inset-left)); width: 48px; box-sizing: border-box; }
+  /* (3.41.3, #128) the quick choices (Tap, Slice, Nudge...) were forced to 48px wide, so their pills and the hint text spilled out of the panel: it now grows to fit them */
+  :root[data-tl=ws] #toolQuick { width: auto; min-width: 48px; max-width: 96px; align-items: stretch; }
+  :root[data-tl=ws] #toolQuick button { min-width: 0; padding: 8px 8px; white-space: nowrap; }
+  :root[data-tl=ws] #toolQuick .qhint { max-width: none; padding: 4px 4px 6px; font-size: 10.5px; line-height: 1.3; }
   :root[data-tl=ws] #menuFab { border-radius: 26px; }
   #tools .qn-tdrag { position: relative; z-index: 60; box-shadow: 0 8px 20px rgba(0,0,0,.4); transition: none !important; touch-action: none; }
   #tools .qn-tdrop { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 14px; }
@@ -523,12 +532,12 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .qn-modebtn.hidden { display: none; }
   .qn-area { position: absolute; z-index: 9; border: 2px dashed var(--accent); background: rgba(0,121,107,.08); border-radius: 6px; pointer-events: none; }
   #viewCtl { position: fixed; right: 16px; z-index: 25; bottom: calc(22px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; }
-  #viewCtl.lift { bottom: calc(70px + env(safe-area-inset-bottom)); }
+  #viewCtl.lift { bottom: calc(70px + env(safe-area-inset-bottom) + var(--fmt-x, 0px)); }
   #viewCtl button { min-height: 40px; height: 40px; padding: 0 14px; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); border-color: transparent; color: var(--ink); font-size: 14px; }
   #viewCtl #compass { width: 40px; padding: 0; display: grid; place-items: center; }
   #viewCtl #compass svg { transition: transform .1s; }
   #viewMenu { position: fixed; right: 16px; z-index: 36; bottom: calc(72px + env(safe-area-inset-bottom)); min-width: 230px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; }
-  #viewMenu.lift { bottom: calc(120px + env(safe-area-inset-bottom)); }
+  #viewMenu.lift { bottom: calc(120px + env(safe-area-inset-bottom) + var(--fmt-x, 0px)); }
   #viewMenu button { display: flex; width: 100%; justify-content: space-between; border: 0; background: transparent; padding: 12px; text-align: left; font-size: 15px; color: var(--ink); border-radius: 10px; }
   #viewMenu button:hover { background: var(--field); }
   #viewMenu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
@@ -649,7 +658,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .swatch.custom { position: relative; overflow: hidden; display: inline-block; cursor: pointer; }
   .swatch.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
   /* Layers: a floating column of layer cards with little pictures, like Concepts */
-  #layersPanel { position: fixed; right: 10px; top: calc(112px + env(safe-area-inset-top)); z-index: 32; width: min(268px, calc(100vw - 20px)); max-height: 66vh; overflow: auto;
+  #layersPanel { position: fixed; right: 10px; top: calc(112px + env(safe-area-inset-top)); z-index: 32; width: min(196px, calc(100vw - 20px)); max-height: 66vh; overflow: auto;
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border: 1px solid var(--rule); border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 10px; }
   #layersPanel .lhead { display: flex; align-items: center; gap: 6px; padding: 0 2px 10px; }
@@ -662,7 +671,13 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .lcard { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 14px; border: 2px solid transparent; background: var(--field); margin-bottom: 6px; cursor: pointer; }
   .lcard.on { border-color: var(--accent); background: var(--accent-soft); }
   .lcard.hid .lthumb, .lcard.hid .lmeta { opacity: .45; }
-  .lthumb { width: 64px; height: 44px; flex: none; border-radius: 9px; background: var(--paper); border: 1px solid var(--rule); overflow: hidden; display: grid; place-items: center; }
+  .lthumb { position: relative; flex: 1; min-width: 0; height: 52px; border-radius: 9px; background: var(--paper); border: 1px solid var(--rule); overflow: hidden; display: grid; place-items: center; }
+  .lthumb .bgsw { position: absolute; inset: 0; min-height: 0; border: 0; border-radius: 0; }
+  .lthumb .lname { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px 3px; font: 500 12px/1.2 var(--font); color: var(--ink); background: color-mix(in srgb, var(--surface) 82%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lvl { display: flex; flex-direction: column; flex: none; }
+  #layersPanel .lvl .lic { width: 30px; height: 26px; border-radius: 8px; }
+  #layersPanel .lvl .lic svg { width: 17px; height: 17px; }
+  .ltools .linfo { font-size: 11.5px; color: var(--muted); padding: 0 2px; }
   .lthumb svg { display: block; }
   .lmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .lmeta b { font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -732,7 +747,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .ed .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--muted); opacity: .8; float: left; height: 0; pointer-events: none; }
 
   /* Formatting bar: shows while typing, just above the keyboard */
-  #fmtBar { position: fixed; left: 0; right: 0; z-index: 30; bottom: 0; display: flex; gap: 2px; align-items: center; overflow-x: auto; scrollbar-width: none;
+  #fmtBar { position: fixed; left: 0; right: 0; z-index: 30; bottom: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; align-items: center; /* (3.41.3, #134) wraps to a second row so every formatting tool shows, none hidden off the edge */
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--rule); }
   #fmtBar button { flex: none; min-width: 38px; height: 38px; min-height: 0; padding: 0 8px; border-color: transparent; background: transparent; font-size: 15px; }
   #fmtBar button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
@@ -744,7 +759,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
 
   /* The note menu: a round button in the bottom-left corner */
   #menuFab { left: 16px; width: 48px; height: 48px; border-radius: 16px; }
-  #menuFab.lift { bottom: calc(66px + env(safe-area-inset-bottom)); }
+  #menuFab.lift { bottom: calc(66px + env(safe-area-inset-bottom) + var(--fmt-x, 0px)); }
   /* Feedback conversations */
   .fbc { border: 1px solid var(--rule); border-radius: 14px; padding: 10px 12px; margin: 0 0 10px; }
   .fbc.new { border-color: var(--accent); }
@@ -760,7 +775,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
     background: var(--surface); border: 1px solid var(--rule); border-radius: 20px; box-shadow: var(--shadow); }
   /* (3.34) On a computer the slider sits over the page text: faint until the pointer is on it. */
   @media (hover: hover) and (pointer: fine) { #penQuick { opacity: .35; transition: opacity .2s; } #penQuick:hover, #penQuick:focus-within { opacity: 1; } }
-  #penQuick.lift, #toolQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  #penQuick.lift, #toolQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom) + var(--fmt-x, 0px)); }
   #penQuick .pq-dot.aa { width: 30px; height: 30px; border-radius: 50%; font-size: 15px; color: var(--ink); cursor: pointer; border: 1px solid var(--rule); }
   #toolQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 5px; display: flex; flex-direction: column; gap: 4px;
     background: var(--surface); border: 1px solid var(--rule); border-radius: 22px; box-shadow: var(--shadow); }
@@ -771,7 +786,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   #penQuick input { writing-mode: vertical-lr; direction: rtl; width: 24px; height: 120px; margin: 0; accent-color: var(--accent); }
   #noteMenu { position: fixed; left: 16px; z-index: 36; bottom: calc(76px + env(safe-area-inset-bottom)); min-width: 240px; max-width: calc(100vw - 32px);
     background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; }
-  #noteMenu.lift { bottom: calc(124px + env(safe-area-inset-bottom)); }
+  #noteMenu.lift { bottom: calc(124px + env(safe-area-inset-bottom) + var(--fmt-x, 0px)); }
   #noteMenu > button { display: flex; width: 100%; align-items: center; gap: 12px; border: 0; background: transparent; padding: 12px; text-align: left; font-size: 15px; }
   #noteMenu > button:hover { background: var(--paper); }
   #noteMenu .space { display: flex; align-items: center; gap: 4px; padding: 6px 12px; font-size: 14px; color: var(--muted); }

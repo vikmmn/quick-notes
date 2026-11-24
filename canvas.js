@@ -1304,7 +1304,7 @@
       var pw = sv.pw || Math.max(200, Math.min(W - dr - 64, 360)), ph = sv.ph || Math.round(H * (d === 'all' ? 0.5 : 0.62));
       // (3.40, #115) The navigator opens showing the whole page (width and height); two fingers zoom in from there.
       var fit = d === 'all' ? Math.min((pw - 2) / rw, (ph - 50) / rh) : (pw - 2) / rw;
-      var s = Math.max(0.03, Math.min(2, Math.max(d === 'all' ? 0.03 : 0.12, Math.min(1, fit)) * sv.z));
+      var s = Math.max(0.004, Math.min(2, Math.max(d === 'all' ? 0.004 : 0.12, Math.min(1, fit)) * sv.z)); // (3.41.3, #130) a very large page still fits in the map (before: stopped at 3%, so the map came out cropped and scrolled)
       var txt = boxes.map(function (bx) {
         var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
         var L = layerOfBox(bx); if (L && L.vis === false) return '';
