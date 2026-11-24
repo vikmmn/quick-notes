@@ -124,6 +124,10 @@
         else { renderConflict(); renderMeta(); }
       }
     },
+    // (3.36) Combining a note changed on two devices: not while it is being typed in; then show the combined note.
+    busy: function (id) { return !!(S.cur && S.cur.id === id && editingNow()); },
+    flush: function (id) { if (S.cur && S.cur.id === id && S.canvas && S.canvas.flush) S.canvas.flush(); },
+    merged: function (id) { if (S.view !== 'list' && S.cur && notes[id] === S.cur && !editingNow()) reopen(); },
     progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; },
     folders: function () { if (S.view === 'list') renderList(); if (!$('drawer').classList.contains('hidden')) renderTree(); renderMeta(); }
   });
@@ -139,7 +143,6 @@
     var w = st.waiting.length, now = Date.now();
     var oldest = st.waiting.reduce(function (m, n) { var t = Date.parse(n.updated) || now; return Math.min(m, t); }, now);
     var age = now - oldest, many = function (k, one, more) { return k === 1 ? one : k + ' ' + more; };
-    if (st.conflicts.length) return { s: 'attention', text: many(st.conflicts.length, 'A note was', 'notes were') + ' changed on two devices. Choose which version to keep.', act: 'review', btn: 'Review' };
     if (st.phase === 'signin') return Drive.signedInBefore() || w
       ? { s: 'attention', text: (w ? many(w, 'One change is', 'changes are') + ' only on this phone. ' : '') + 'Sign in to Google so notes reach Drive.', act: 'signin', btn: 'Sign in' }
       : { s: 'attention', text: 'Sign in to Google to keep your notes in Drive.', act: 'signin', btn: 'Sign in' };
@@ -183,11 +186,11 @@
   }
   $('syncBanner').querySelector('button').onclick = function () { healthAction(this.dataset.act); };
   function renderSyncSheet() {
-    var st = sync.status(), h = health(st), items = st.conflicts.concat(st.waiting);
+    var st = sync.status(), h = health(st), items = st.waiting;
     S.sheet = 'sync';
     openSheet('<h2>' + (h.s === 'ok' ? 'All saved in Drive' : h.s === 'offline' ? 'Offline' : h.s === 'busy' ? 'Saving to Drive' : 'Needs a look') + '</h2><p>' + esc(h.text) + '</p>' +
       (items.length ? '<ul>' + items.slice(0, 30).map(function (n) {
-        return '<li data-open="' + esc(n.id) + '" style="cursor:pointer">' + esc(n.title || N.fileName(n).replace(/^\S+ \S+ |\.md$/g, '')) + (n.conflict ? ' — changed on two devices' : n.deleted ? ' — to delete' : '') + '</li>';
+        return '<li data-open="' + esc(n.id) + '" style="cursor:pointer">' + esc(n.title || N.fileName(n).replace(/^\S+ \S+ |\.md$/g, '')) + (n.conflict ? ' — combining changes from two devices' : n.deleted ? ' — to delete' : '') + '</li>';
       }).join('') + (items.length > 30 ? '<li>…and ' + (items.length - 30) + ' more</li>' : '') + '</ul>' : '') +
       '<p style="font-size:13px">Notes are saved on this phone the moment you type, then copied to Drive. While the phone sleeps, Android keeps sending them in the background.</p>' +
       '<div class="row">' + (h.act === 'signin' ? '<button class="primary" data-act="signin" type="button">Sign in with Google</button>' : '') +
@@ -1243,6 +1246,7 @@
   }
   function renderConflict() {
     var n = S.cur, c = n && n.conflict;
+    $('conflict').classList.add('hidden'); return; // (3.36) changes from two devices are combined by themselves; nothing to choose
     $('conflict').classList.toggle('hidden', !c);
     if (!c) return;
     $('conflictText').textContent = c.trashed ? 'It was deleted on another device. Your version is still here.'
@@ -3190,6 +3194,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Two devices, nothing lost', d: 'A note changed on two devices (even both offline) is now combined by itself, with no question. Changes in different places are all kept. If the same paragraph was rewritten on both, both versions stay, each under a small label like "from phone, 24 Nov 06:40": delete the one you don\'t want. A note deleted on one device but changed on another comes back with the change.',
+      a: art('<rect x="20" y="30" width="70" height="90" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="170" y="22" width="60" height="100" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="32" y="48" width="44" height="6" rx="3" fill="' + A + '"/><rect x="182" y="64" width="36" height="6" rx="3" fill="' + INKC + '" opacity=".6"/><path d="M92 74 C110 74 112 100 124 100 M168 74 C150 74 148 100 136 100" stroke="' + A + '" stroke-width="2.4" fill="none"/><circle cx="130" cy="104" r="12" fill="' + A + '"/><path d="M124 104 l4 4 8 -8" stroke="#fff" stroke-width="2.4" fill="none"/>') },
     { t: 'Paper and connectors', d: 'Text card › Paper adds sticky notes (six colours), index cards, sheets and cardboard to the page, or turns the text box in use into one. Write on them, move them, stretch them from the corner. The new Connect tool joins things: drag from one to another, or out to empty space for a new note already joined. Tap a line to change its arrows or delete it.',
       a: art('<rect x="24" y="26" width="70" height="62" rx="3" fill="#ffe680"/><rect x="150" y="60" width="76" height="52" rx="3" fill="#fffefa" stroke="' + RULE + '"/><rect x="150" y="60" width="76" height="3" fill="#dc5046" opacity=".5"/><path d="M94 57 C122 57 122 86 148 86" stroke="' + INKC + '" stroke-width="2.4" fill="none"/><path d="M141 81 l8 5 -8 5" fill="none" stroke="' + INKC + '" stroke-width="2.4"/><rect x="36" y="40" width="40" height="6" rx="3" fill="rgba(0,0,0,.2)"/><rect x="36" y="54" width="30" height="6" rx="3" fill="rgba(0,0,0,.2)"/>') },
     { t: 'Small touches', d: 'Drag a tab (hold it first on a phone) to change its place. Text card › Spacing now has Letters (tight to wider) for a text box. Settings › Fonts › Default text sets the font and size of all text. On a computer the pen-size slider stays faint until you point at it.',
