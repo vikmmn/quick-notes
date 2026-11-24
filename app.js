@@ -1053,6 +1053,11 @@
     topInset: function () { var b = document.querySelector('#topChrome .bar'), t = $('tabBar'); var inRow = t && getComputedStyle(t).position === 'absolute'; return (b ? b.offsetHeight : 0) + (inRow ? 0 : (t && t.offsetHeight ? t.offsetHeight : 38)) + 6; }, // (3.39) tabs in the top row add nothing
     dodge: uiDodge,
     autoTool: function (t) { setTool(t); },
+    curveInfo: function (st) { // (3.42) the curve being edited: its kind shows in the card and the quick panel
+      S.curveSt = st; if (st.editing && st.kind) INKOPT.curve.k = st.kind;
+      if (PREF.tool !== 'curve') return;
+      if ($('tools').classList.contains('opts')) setTool('curve'); else updatePenQuick();
+    },
     navPref: function (on) { if (!!PREF.nav !== !!on) { PREF.nav = !!on; savePref(); if ($('navState')) $('navState').textContent = on ? 'On' : 'Off'; } }, // (3.39) the navigator button
     imageUrl: function (src) { return isLocalRef(src) ? attachmentUrl(refName(src)) : Promise.resolve(src); },
     textLook: function (t) { Object.assign(INKOPT.text, t); savePref(); if (PREF.tool === 'text') setTool('text'); } // tapped text: the card shows its look
@@ -1503,7 +1508,7 @@
 
   var SWATCH = ['ink', '#5f6368', '#c0392b', '#d9822b', '#f2c94c', '#2f855a', '#00796b', '#2b6cb0', '#7e57c2', '#e91e63', '#ffffff'];
   var INKOPT = { guide: { snap: true }, pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'lasso', c: '#f2c94c', o: 1 },
-    lasso: { m: 'most', how: 'loop', sc: 'all' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
+    lasso: { m: 'most', how: 'loop', sc: 'all' }, curve: { k: 'bspline', how: 'points' }, text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
   (function migrate() { // settings saved by earlier versions
     if (PREF.ink) { Object.keys(INKOPT).forEach(function (k) { Object.assign(INKOPT[k], PREF.ink[k] || {}); }); }
     else if (PREF.pen) { INKOPT.pen.c = PREF.pen.c || 'ink'; INKOPT.pen.s = PREF.pen.s || 3; }
@@ -1515,6 +1520,8 @@
       if (PREF.tool === 'type') PREF.tool = 'hand';
       if (PREF.toolOrder && PREF.toolOrder.indexOf('hand') < 0) { var ti = PREF.toolOrder.indexOf('type'); PREF.toolOrder.splice(ti < 0 ? 0 : ti, 0, 'hand'); }
     }
+    // 3.42: the Curve tool goes next to the Pen in an order the user has set.
+    if (PREF.toolOrder && PREF.toolOrder.indexOf('curve') < 0) { var pi0 = PREF.toolOrder.indexOf('pen'); PREF.toolOrder.splice(pi0 < 0 ? PREF.toolOrder.length : pi0 + 1, 0, 'curve'); }
     PREF.ink = INKOPT;
   })();
   // (3.38) Sliders: the new value reaches the pen once per frame and is stored when the slider is let go.
@@ -1609,6 +1616,25 @@
         '<div class="osec">Tilt <small>(if your pen reports it)</small></div>' +
         G(slider('Thickness', 'pen', 'tw', 0, 100, o.pen.tw || 0, 100) + slider('Opacity', 'pen', 'to', 0, 100, o.pen.to || 0, 100)) +
         G('<button type="button" class="ochip" data-act="pencheck">Check my pen</button>');
+    } else if (t === 'curve') {
+      // (3.42) Mathematical curves: their points shape them, so a nudge moves a point (a line: its end) and never squiggles them.
+      var cs = (S.curveSt && S.curveSt.editing) ? S.curveSt : null, ck = o.curve.k || 'bspline', chw = o.curve.how || 'points';
+      var CA = function (a, label, tip, dis) { return '<button type="button" class="ochip" data-cact="' + a + '" title="' + tip + '"' + (dis ? ' aria-disabled="true" style="opacity:.45"' : '') + '>' + label + '</button>'; };
+      html = '<div class="olabel">' + (cs ? 'Kind of this curve' : 'Kind') + '</div>' +
+        G(window.QNCurves.KINDS.map(function (k) { return chip(k[1], 'data-set="curve.k" data-v="' + k[0] + '" title="' + esc(k[2]) + (cs ? ' (turns this curve into one, same shape)' : '') + '"', ck === k[0]); }).join('')) +
+        G(HINT('New curves') + chip('Place points', 'data-set="curve.how" data-v="points" title="Tap to put each point; drag while placing to move it (Bézier: the drag pulls out its handles). Tap the last point again to finish, or the first to close a loop."', chw === 'points') +
+          chip('Trace over', 'data-set="curve.how" data-v="trace" title="Draw over your sketch: a curve is fitted to it"', chw === 'trace')) +
+        (cs ? '<div class="olabel">This curve' + (cs.building ? ' (placing points)' : '') + '</div>' +
+          G(CA('done', cs.building ? 'Finish' : 'Done', 'Stop editing this curve') +
+            CA('del', 'Delete point', 'Takes the picked point away', cs.pi < 0) +
+            CA('break', 'Break', 'Splits the curve in two at the picked point (a loop opens there)', cs.pi < 0) +
+            CA('join', 'Join' + (cs.ends ? ' (' + cs.ends + '/2)' : ''), 'Tap an end point of one curve, then an end point of another (or this one\'s other end), then Join', !cs.canJoin) +
+            CA('close', 'Close loop', 'Joins this curve\'s two ends', cs.closed) +
+            CA('topen', 'To pen line', 'Free again: Nudge and Smooth bend it')) +
+          (cs.w != null ? G('<label class="oslider">Pull of this point<input type="range" data-cw min="-100" max="100" value="' + Math.round(Math.log(cs.w) / Math.LN10 * 50) + '"></label>' + HINT('×' + (Math.round(cs.w * 100) / 100))) : '') : '') +
+        G(HINT(cs ? 'Drag a point to move it; tap the curve to add one. Tap an end, then another curve\'s end, then Join (or drag an end onto it). Tap empty space to let go.' :
+          chw === 'trace' ? 'Draw over a sketch: it becomes a curve you can edit. Tap a curve to edit it.' : 'Tap to place points; tap the last one again to finish. Tap a curve to edit it.')) +
+        G(HINT('Look: the Pen\'s brush, colour and size. Nudge moves a curve\'s nearest point; Erase › Slice leaves curves.'));
     } else if (t === 'erase') {
       html = G(chip('Whole stroke', 'data-k="erase" data-m="stroke"', o.erase.m === 'stroke') + chip('Slice', 'data-k="erase" data-m="slice"', o.erase.m === 'slice') +
         slider('Size', 'erase', 's', 3, 60, o.erase.s));
@@ -1663,7 +1689,7 @@
         G(chip('Clear all', 'data-gclear'));
     }
     else if (t === 'select') html = G(HINT('Drag text boxes by their dots to move them; drag the bar on the right to change the width.'));
-    var NAMES = { hand: 'Hand', type: 'Text', text: 'Text art', pen: 'Pen', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', guide: 'Guides', select: 'Move' };
+    var NAMES = { hand: 'Hand', type: 'Text', text: 'Text art', pen: 'Pen', curve: 'Curve', erase: 'Erase', lasso: 'Select', nudge: 'Nudge / Smooth', fill: 'Fill', guide: 'Guides', select: 'Move' };
     if (html) html = '<div class="ohead"><b>' + NAMES[t] + '</b><button type="button" data-act="side" title="Move the tools to the other side" aria-label="Move the tools to the other side">⇄</button>' +
       '<button type="button" data-act="closeopts" aria-label="Close">×</button></div>' + html;
     $('penOpts').innerHTML = html;
@@ -1681,9 +1707,11 @@
     erase: ['erase', 'm', [['stroke', 'Whole'], ['slice', 'Slice']]],
     lasso: ['lasso', 'how', [['loop', 'Lasso'], ['tap', 'Tap']]],
     nudge: ['nudge', 'm', [['nudge', 'Nudge'], ['smooth', 'Smooth']]],
+    curve: ['curve', 'k', [['line', 'Line', 'Line'], ['catmull', 'C-R', 'Catmull-Rom'], ['bezier', 'Bézier', 'Bézier'], ['bspline', 'B-sp', 'B-spline'], ['nurbs', 'NURBS', 'NURBS'], ['tspline', 'T-sp', 'T-spline']]],
     fill: ['fill', 'm', [['lasso', 'Shape'], ['tap', 'Tap area']]]
   };
   var QUICK2 = { // a second choice under the first: for the Lasso, what it picks (3.24.1; New / Add / Remove moved into its card)
+    curve: ['curve', 'how', [['points', 'Points', 'Tap to place points'], ['trace', 'Trace', 'Draw over a sketch: a curve is fitted to it']]],
     lasso: ['lasso', 'm', [['part', 'Partly', 'Anything the loop touches'], ['most', 'Mostly', 'At least half inside the loop'], ['full', 'Fully', 'Only what is completely inside']]]
   };
   function updatePenQuick() {
@@ -1694,10 +1722,12 @@
     tq.classList.toggle('hidden', !Q);
     if (Q) {
       var cur = INKOPT[Q[0]][Q[1]];
-      tq.innerHTML = Q[2].map(function (v) { return '<button type="button" data-q="' + v[0] + '" aria-pressed="' + (cur === v[0]) + '">' + v[1] + '</button>'; }).join('');
+      tq.innerHTML = Q[2].map(function (v) { return '<button type="button" data-q="' + v[0] + '"' + (v[2] ? ' aria-label="' + v[2] + '" title="' + v[2] + '"' : '') + ' aria-pressed="' + (cur === v[0]) + '">' + v[1] + '</button>'; }).join('');
+      tq.classList.toggle('grid2', t === 'curve'); // (3.42) six kinds in two columns, so the panel stays short under the rail
       var Q2 = QUICK2[t];
       if (t === 'lasso' && INKOPT.lasso.how === 'tap') { Q2 = null; tq.innerHTML += '<hr><span class="qhint">Tap picks one.<br>Hold adds it or takes it out.<br>Tap empty space: clear.</span>'; }
       if (Q2) { var c2 = INKOPT[Q2[0]][Q2[1]] || Q2[2][0][0]; tq.innerHTML += '<hr>' + Q2[2].map(function (v) { return '<button type="button" data-q2="' + v[0] + '" aria-label="' + v[2] + '" aria-pressed="' + (c2 === v[0]) + '">' + v[1] + '</button>'; }).join(''); }
+      if (t === 'curve' && S.curveSt && S.curveSt.editing) tq.innerHTML += '<hr><button type="button" data-qc="done">' + (S.curveSt.building ? 'Finish' : 'Done') + '</button>';
     }
     if (!sized) return;
     var inp = q.querySelector('input'), dot = q.querySelector('.pq-dot');
@@ -1765,8 +1795,10 @@
   $('toolQuick').addEventListener('click', function (e) {
     var b2 = e.target.closest('[data-q2]'), Q2 = QUICK2[PREF.tool];
     if (b2 && Q2) { INKOPT[Q2[0]][Q2[1]] = b2.dataset.q2; applyInk(); savePref(); updatePenQuick(); return; }
+    var bc = e.target.closest('[data-qc]'); if (bc && S.canvas) { S.canvas.ink().curveAct(bc.dataset.qc); return; }
     var b = e.target.closest('[data-q]'), Q = QUICK[PREF.tool]; if (!b || !Q) return;
     INKOPT[Q[0]][Q[1]] = b.dataset.q; applyInk(); savePref();
+    if (PREF.tool === 'curve' && Q[1] === 'k' && S.canvas) S.canvas.ink().curveAct('kind', b.dataset.q);
     if (!$('penOpts').classList.contains('hidden')) setTool(PREF.tool); else updatePenQuick();
   });
   $('penQuick').addEventListener('pointerdown', function (e) { e.stopPropagation(); if (e.target.closest('.pq-dot')) e.preventDefault(); });
@@ -1905,7 +1937,7 @@
   // ---- Workspaces (3.40, #117): Write, Draw, Links, Board on the same page. Hand, Select and Layers are in every
   // workspace (and Colours in every tool's card); each workspace adds its own tools. "All tools" shows everything,
   // so no tool is ever out of reach. Only which tools show changes: the page, and what is on it, stays the same.
-  var WS = { write: ['type', 'text'], draw: ['pen', 'erase', 'nudge', 'fill', 'guide'], board: ['type', 'link', 'pen', 'erase', 'image'], all: null }; // (3.41.1, #121/#123/#126/#127) tidied; Links folded into Board
+  var WS = { write: ['type', 'text'], draw: ['pen', 'curve', 'erase', 'nudge', 'fill', 'guide'], board: ['type', 'link', 'pen', 'erase', 'image'], all: null }; // (3.41.1, #121/#123/#126/#127) tidied; Links folded into Board
   var WS_ORDER = ['write', 'draw', 'board', 'all'], WS_ABOVE = { write: 3 }; // how many tools sit above the workspace button (the rest, and Colours, below); others: half
   var WS_SHARED = ['hand', 'lasso', 'layers'], WS_NAMES = { all: 'All tools', write: 'Write', draw: 'Draw', links: 'Links', board: 'Board' }, WS_SHORT = { all: 'All', write: 'W', draw: 'D', links: 'L', board: 'B' };
   // (3.41.3, #129) Each workspace has its own little picture and colour on its button (and in its list)
@@ -2361,7 +2393,8 @@
     if (b.dataset.editdef) { var dd = MYSTYLES.filter(function (d) { return d.id === b.dataset.editdef; })[0]; if (dd) editStyle(dd.k, dd); return; }
     if (b.dataset.brush) { switchPen(function () { INKOPT.pen.b = b.dataset.brush; }); return setTool('pen'); }
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
-    if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
+    if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; if (kv[0] === 'curve' && kv[1] === 'k' && S.canvas) { applyInk(); S.canvas.ink().curveAct('kind', b.dataset.v); } return setTool(PREF.tool); }
+    if (b.dataset.cact) { if (S.canvas) S.canvas.ink().curveAct(b.dataset.cact); return; }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
     if (b.dataset.pnew) { S.canvas.addPaper(b.dataset.pnew, b.dataset.pnew === 'sticky' ? (PREF.stickyC || STICKY_C[0]) : null); return setTool('type'); }
     if (b.dataset.pset != null) { if (!S.canvas.paper(b.dataset.pset, b.dataset.pset === 'sticky' ? (PREF.stickyC || STICKY_C[0]) : null)) toast('Pick or type in a text box first.'); return setTool('type'); }
@@ -2386,8 +2419,9 @@
     var t = e.target;
     if (t.dataset.cc) { INKOPT[t.dataset.cc].c = t.value; applyInk(); savePref(); return; }
     if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; inkSoon(true); }
+    if (t.dataset.cw != null && S.canvas) S.canvas.ink().curveWeight(Math.pow(10, +t.value / 50));
   });
-  $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
+  $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); if (e.target.dataset.cw != null && S.canvas) S.canvas.ink().curveWeight(Math.pow(10, +e.target.value / 50), true); });
 
   // ---------- Zoom, navigator and turning ----------
   function applyViewPrefs() {
@@ -3631,6 +3665,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Curves', d: 'A new Curve tool, next to the Pen (in Draw and All tools too): Line, Catmull-Rom, Bézier, B-spline, NURBS and T-spline. Tap to place points (tap the last one again to finish, the first one to close a loop), or choose Trace and draw over your sketch: a curve is fitted to it. Drag a point to move it, tap the curve to add one; NURBS and T-spline points have a pull. Any curve can become any other kind, keeping its shape. Pick ends to Join two curves, Break one at a point, Close a loop. Curves never squiggle: Nudge moves their nearest point (a straight line just turns about its other end), and Erase › Slice leaves curves. Select a pen line and tap To curve, or a curve and To pen line, to switch between the two. Straight lines made by holding the pen are curves too.',
+      a: art('<path d="M30 110C60 20 150 130 210 30" fill="none" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round"/><path d="M30 110L78 34M210 30l-52 80" stroke="' + A + '" stroke-width="2" stroke-dasharray="4 4"/><circle cx="30" cy="110" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/><circle cx="210" cy="30" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/><rect x="72" y="28" width="12" height="12" fill="' + A + '"/><rect x="152" y="104" width="12" height="12" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/>') },
     { t: 'Workspaces', d: 'Settings › Tool layout › Workspaces. On the left edge: the workspace button (Write, Draw, Board, All) with its tools above and below it, always there. Tap the button for the next workspace, or hold it and slide your finger or pen onto one. Hand, Select and Colours are in every workspace; Layers sits alone on the right edge. Tap a tool again for its sub-tools in a small panel: scroll it up and down to reach all of them. The page is the same in every workspace. The other layouts are back as they were (no workspace button in them).',
       a: art('<rect x="14" y="14" width="212" height="112" rx="12" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="22" y="26" width="26" height="88" rx="13" fill="' + INKC + '" opacity=".85"/><rect x="25" y="60" width="20" height="20" rx="6" fill="' + A + '"/><rect x="56" y="40" width="70" height="62" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><path d="M64 54h50M64 66h40M64 78h46M64 90h30" stroke="' + RULE + '" stroke-width="4" stroke-linecap="round"/><rect x="200" y="58" width="18" height="24" rx="9" fill="' + INKC + '" opacity=".85"/>') },
     { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Pen first layout: one button opens all the tools in two rings, the everyday ones inside and every other tool outside (Nudge/Smooth, Text art and Connect are back); the middle opens the settings of the tool in use. No more holding a finger on the page, and the bar shows no copies of the ring\'s tools, only Colours and Layers beside it. Settings › Tool layout › Rings has three kinds to try: A full rings, B arcs from the button, C every tool inside with the tool\'s options outside. New: workspaces. The first button on the rail (or in Pen first) picks Write, Draw, Links, Board or All tools; Hand, Select and Layers are in every workspace, and the page stays the same in all of them.',

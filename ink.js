@@ -11,6 +11,8 @@
 //            (a non-destructive boolean: the parts stay whole and can be released; each part remembers its layer in L)
 //   image  { id, t: 'i', src (a link, or Attachments/<name> in Drive), x, y (top-left corner), w, h, r: angle, o, g } p: [[x, y, pressure], …] }
 //   fill   { id, t: 'f', c, o, g, d: [[[x, y], …], …], pt: a fill pattern's id (optional) }   (one or more closed outlines)
+//   A stroke may have cv: a mathematical curve (curves.js; 3.42): its points then come from the curve's control points,
+//   so a nudge moves a control point (a straight line: its end) and never bends it; slicing leaves curves.
 //   A stroke may have cs: the id of a home-made pen tip or line style. Those (and fill patterns) are "defs":
 //     { id, k: 'tip' | 'line' | 'pat', name, items: [strokes, drawn in the def's own little space], rot (tip turns with the stroke), sp (tip spacing), sz (pattern tile size) }
 //     tip: a round box, −50…50 across; line: one repeat, 0…400 along and −50…50 across; pattern: one tile, 0…100 both ways
@@ -22,6 +24,8 @@
   'use strict';
   var NS = 'http://www.w3.org/2000/svg';
   var LIB = function () { return window.QNLib; };
+  var CV = function () { return window.QNCurves; };
+  function cvApply(it) { if (it.cv && CV()) CV().apply(it); return it; }
 
   // ---------- Brushes ----------
   var BRUSH = {
@@ -96,6 +100,9 @@
           if (it.f) x.f = 1;
           if (it.st != null) x.st = Math.round(it.st * 100) / 100;
           if (it.th != null) x.th = Math.round(it.th * 100) / 100;
+          if (it.cv) { var cv0 = it.cv, cx = { k: cv0.k, c: cv0.c.map(function (q) { return [r1(q[0]), r1(q[1])]; }) };
+            if (cv0.w) cx.w = cv0.w.map(function (v) { return Math.round(v * 1000) / 1000; }); if (cv0.kn) cx.kn = cv0.kn.map(function (v) { return Math.round(v * 1e5) / 1e5; });
+            if (cv0.cl) cx.cl = 1; if (cv0.pr != null) cx.pr = cv0.pr; if (cv0.q3 != null) cx.q3 = cv0.q3; x.cv = cx; }
           // Each point: x, y, width (pressure, after the pen's pressure and tilt settings), and, when the pen's pressure or
           // tilt changes how strong the ink is, a fourth number: the ink's strength there (0–1).
           x.p = it.p.map(function (q) { var o = [r1(q[0]), r1(q[1]), Math.round((q[2] == null ? 0.5 : q[2]) * 100) / 100]; if (q[3] != null) o.push(Math.round(q[3] * 100) / 100); return o; });
@@ -513,7 +520,12 @@
     if (cur.length) pieces.push(cur);
     if (!cut) return null;
     return pieces.filter(function (pp) { return pp.length > 1; }).map(function (pp) {
-      var c = JSON.parse(JSON.stringify(it)); c.id = uid('s'); c.p = pp; return c;
+      var c = JSON.parse(JSON.stringify(it)); c.id = uid('s'); c.p = pp;
+      if (it.cv && CV()) { // (3.42) a curve sliced leaves curves of the same kind, each with its own points
+        var nc = CV().fit(pp, it.cv.k, Math.max(0.6, widthOf(it) * 0.15), false); ['pr', 'q3'].forEach(function (f) { if (it.cv[f] != null) nc[f] = it.cv[f]; });
+        c.cv = nc; cvApply(c);
+      }
+      return c;
     });
   }
 
@@ -555,7 +567,7 @@
   }
   // (For text, its corners: looking at them is fine, but moving text is done with x and y.)
   function eachPoint(it, fn) { if (it.t === 'b') it.k.forEach(function (p) { eachPoint(p, fn); }); else if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (boxy(it)) textCorners(it).forEach(fn); else it.p.forEach(fn); }
-  function shiftItem(it, dx, dy) { if (it.t === 'b') { it.k.forEach(function (p) { shiftItem(p, dx, dy); invalidate(p); }); return; } if (boxy(it)) { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
+  function shiftItem(it, dx, dy) { if (it.t === 'b') { it.k.forEach(function (p) { shiftItem(p, dx, dy); invalidate(p); }); return; } if (boxy(it)) { it.x += dx; it.y += dy; } else { eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); if (it.cv) { it.cv.c = it.cv.c.map(function (q) { return [q[0] + dx, q[1] + dy]; }); delete it.cva; } } }
   function nudge(it, x, y, dx, dy, R, k) {
     if (it.t !== 'f') it.p = densify(it.p, x, y, R, Math.max(2, R / 10));
     var moved = false;
@@ -567,6 +579,7 @@
     return moved;
   }
   function smooth(it, x, y, R, k) {
+    if (it.cv) return false; // (3.42) a curve's shape is its points: Smooth leaves it alone
     var moved = false;
     var run = function (ring, closed) {
       var n = ring.length, copy = ring.map(function (q) { return [q[0], q[1]]; });
@@ -890,7 +903,7 @@
     // Handles, tool circles and tap distances stay the same size on screen at any zoom.
     function Z() { return o.zoom ? o.zoom() : 1; }
     var tool = 'pen', opt = { pen: { b: 'pen', c: 'ink', s: 3, o: 1 }, erase: { m: 'stroke', s: 14 }, nudge: { m: 'nudge', r: 48, k: 0.8 }, fill: { m: 'tap', c: '#f2c94c', o: 1 },
-      lasso: { m: 'most', how: 'loop', sc: 'all' }, guide: { snap: true },
+      lasso: { m: 'most', how: 'loop', sc: 'all' }, guide: { snap: true }, curve: { k: 'bspline', how: 'points' },
       text: { font: '"Google Sans", Roboto, system-ui, sans-serif', fs: 32, c: 'ink', o: 1 } };
     var activeId = layers[layers.length - 1].id;
     var drag = null, sel = null, raf = 0;
@@ -1369,12 +1382,216 @@
           h += '<rect x="' + (q[0] - a / 2) + '" y="' + (q[1] - bb / 2) + '" width="' + a + '" height="' + bb + '" rx="' + 3 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 1.6 * k + '"/>';
         });
       }
+      if (tool === 'curve') h += curveUi();
       if (G) h += G.svg(Z(), M);
       ui.innerHTML = h;
       placeBar();
     }
     self.size = function (W, H) { sizeWH = [W, H]; ui.setAttribute('width', W); ui.setAttribute('height', H); slices.forEach(function (e) { e.setAttribute('width', W); e.setAttribute('height', H); }); };
     self.topAnchor = topAnchor;
+
+    // ---- Curves (3.42): the Curve tool places, traces and edits mathematical curves (curves.js) ----
+    // cedit: the curve being edited { id, pi: the picked control point (-1: none), building: still placing points,
+    // ends: up to two picked end points [{ id, e: 0 first | 1 last }] for Join }.
+    var cedit = null;
+    function byId(id) { for (var i = 0; i < layers.length; i++) { var its = layers[i].items; for (var j = 0; j < its.length; j++) if (its[j].id === id) return { it: its[j], l: layers[i] }; } return null; }
+    function curves() { var out = []; layers.forEach(function (l) { if (editable(l)) l.items.forEach(function (it) { if (it.cv && !lockedS(it)) out.push(it); }); }); return out; }
+    function cvTol() { return Math.max(0.5, 1.1 / Z()); }
+    function lastAnchor(cv) { return cv.c.length - 1; }
+    function endOf(cv, i) { return i === 0 ? 0 : i === cv.c.length - 1 ? 1 : -1; }
+    function newCurve(cv) {
+      var pen = opt.pen, it = { id: uid('s'), t: 's', b: pen.b, c: pen.c, s: pen.s, o: pen.o == null ? 1 : pen.o, f: 1, th: 0, st: 0, cv: cv, p: [] };
+      if (pen.cs && DEFS[pen.cs]) it.cs = pen.cs;
+      return cvApply(it);
+    }
+    function cvRedraw(it, keepAlt) { if (!keepAlt) delete it.cva; cvApply(it); invalidate(it); patch([it]); }
+    function curveName() { var k = (opt.curve.k || 'bspline'); return (CV().KINDS.filter(function (x) { return x[0] === k; })[0] || [0, 'curve'])[1]; }
+    function curveInfo() {
+      var e = cedit && byId(cedit.id), cv = e && e.it.cv;
+      var st = !cv ? { editing: false } : { editing: true, building: !!cedit.building, kind: cv.k, pi: cedit.pi, n: cv.c.length, closed: !!cv.cl,
+        end: cedit.pi >= 0 ? endOf(cv, cedit.pi) : -1, anchor: cedit.pi >= 0 && CV().isAnchor(cv, cedit.pi),
+        w: cedit.pi >= 0 && cv.w ? cv.w[cedit.pi] : null, ends: (cedit.ends || []).length,
+        canJoin: (cedit.ends || []).length === 2 };
+      if (o.curveInfo) o.curveInfo(st);
+      return st;
+    }
+    function curveEnd() { // stop editing; a curve still being placed with one point is dropped
+      var e = cedit && byId(cedit.id); cedit = null;
+      if (e && e.it.cv && e.it.cv.c.length < 2) { e.l.items.splice(e.l.items.indexOf(e.it), 1); render(); commit(); }
+      curveInfo(); drawUi();
+    }
+    function pickEnd(it, i) { // remember picked end points (two, for Join)
+      var e = endOf(it.cv, i); if (e < 0 || it.cv.cl) return;
+      var L = cedit.ends || (cedit.ends = []);
+      if (L.some(function (x) { return x.id === it.id && x.e === e; })) return;
+      L.push({ id: it.id, e: e }); if (L.length > 2) L.shift();
+    }
+    function pointHit(p, R) { // a control point of any curve, the one being edited first
+      var list = curves(), best = null;
+      if (cedit) list.sort(function (a, b) { return (b.id === cedit.id) - (a.id === cedit.id); });
+      list.forEach(function (it) { var i = CV().nearest(it.cv, p[0], p[1], R); if (i >= 0 && (!best || (cedit && it.id === cedit.id && best.it.id !== cedit.id))) best = { it: it, i: i }; });
+      return best;
+    }
+    function curveDown(p) {
+      if (!CV()) return false;
+      var R = 18 / Z(), e = cedit && byId(cedit.id);
+      if (cedit && !e) cedit = null;
+      if (e && cedit.building) {
+        var cv = e.it.cv, i = CV().nearest(cv, p[0], p[1], R), la = lastAnchor(cv);
+        if (i === la && cv.c.length > 1) { drag = { curve: 'finish' }; return true; } // the last point again: done
+        if (i === 0 && cv.c.length > (cv.k === 'bezier' ? 6 : 2)) { drag = { curve: 'close' }; return true; } // the first one: a loop
+        if (i < 0) {
+          var t = own(e.it), ni = CV().addPt(t.cv, [p[0], p[1]]); cedit.pi = ni; cvRedraw(t);
+          drag = { curve: 'pt', id: t.id, i: ni, start: p, last: p, far: false, adding: true }; curveInfo(); drawUi(); return true;
+        }
+      }
+      var ph = pointHit(p, R);
+      if (ph) {
+        if (!cedit || cedit.id !== ph.it.id) cedit = { id: ph.it.id, pi: ph.i, ends: cedit ? cedit.ends : [] };
+        drag = { curve: 'pt', id: ph.it.id, i: ph.i, start: p, last: p, far: false };
+        return true;
+      }
+      if (e && !cedit.building && hits(e.it, p[0], p[1], 10 / Z())) { drag = { curve: 'ins', id: e.it.id, start: p }; return true; }
+      var under = null;
+      curves().forEach(function (it) { if (hits(it, p[0], p[1], 10 / Z())) under = it; });
+      if (under) { cedit = { id: under.id, pi: -1, ends: cedit ? cedit.ends : [] }; drag = { curve: 'none' }; curveInfo(); drawUi(); return true; }
+      if (cedit) { curveEnd(); drag = { curve: 'none' }; return true; } // a tap on empty space lets go
+      var L = active();
+      if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
+      if (opt.curve.how === 'trace') { drag = { curve: 'trace', pts: [p], layer: L }; return true; }
+      var k = opt.curve.k || 'bspline', nc = { k: k, c: [[p[0], p[1]]] };
+      if (k === 'nurbs' || k === 'tspline') nc.w = [1];
+      var it = newCurve(nc); L.items.push(it); addEl(L, it);
+      cedit = { id: it.id, pi: 0, building: true, ends: [] };
+      drag = { curve: 'pt', id: it.id, i: 0, start: p, last: p, far: false, adding: true };
+      curveInfo(); drawUi(); return true;
+    }
+    function curveMove(p) {
+      var d = drag;
+      if (d.curve === 'trace') { d.pts.push(p); uiSoon(); return; }
+      if (d.curve !== 'pt') return;
+      if (!d.far && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 5 / Z()) d.far = true;
+      if (!d.far) return;
+      var e = byId(d.id); if (!e) return;
+      var t = own(e.it), cv = t.cv;
+      if (d.adding && cv.k === 'bezier' && d.i % 3 === 0) { // placing a Bézier anchor: the drag pulls out its handles
+        var A = cv.c[d.i];
+        cv._out = [p[0], p[1]];
+        if (d.i > 0) cv.c[d.i - 1] = [2 * A[0] - p[0], 2 * A[1] - p[1]];
+      } else CV().movePt(cv, d.i, p[0] - d.last[0], p[1] - d.last[1]);
+      d.last = p; cvRedraw(t);
+    }
+    function replaceItems(oldIt, list) { // swap one curve for others in its place
+      var l = layerOf(oldIt); if (!l) return;
+      var at = l.items.indexOf(oldIt); l.items.splice.apply(l.items, [at, 1].concat(list));
+    }
+    function curveUp(d, p) {
+      var e = d.id ? byId(d.id) : cedit && byId(cedit.id);
+      if (d.curve === 'finish' || d.curve === 'close') {
+        if (e && d.curve === 'close') { var cl = CV().close(e.it.cv); if (cl) { var t0 = own(e.it); t0.cv = cl; cvRedraw(t0); } }
+        if (cedit) { cedit.building = false; cedit.pi = -1; cedit.ends = []; }
+        if (e && e.it.cv.c.length < 2) curveEnd(); else { flushPatch(); commit(); }
+        curveInfo(); drawUi(); return;
+      }
+      if (d.curve === 'trace') {
+        var pts = d.pts, len = 0;
+        for (var i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        if (len < 12 / Z()) { drawUi(); return; }
+        var bx = boundsOfPts(pts), closed = Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < Math.max(14 / Z(), 0.08 * Math.hypot(bx.w, bx.h));
+        var it = newCurve(CV().fit(pts, opt.curve.k || 'bspline', Math.max(cvTol(), widthOf({ b: opt.pen.b, s: opt.pen.s }) * 0.12), closed));
+        d.layer.items.push(it); addEl(d.layer, it); cedit = { id: it.id, pi: -1, ends: [] };
+        commit(); curveInfo(); drawUi(); return;
+      }
+      if (d.curve === 'ins') {
+        if (!e || Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 6 / Z()) return;
+        var t1 = own(e.it), ni = CV().insertAt(t1.cv, p[0], p[1]);
+        if (ni >= 0) { cedit.pi = ni; cvRedraw(t1); flushPatch(); commit(); }
+        curveInfo(); drawUi(); return;
+      }
+      if (d.curve === 'pt' && e) {
+        cedit.pi = d.i;
+        if (!d.far) { pickEnd(e.it, d.i); if (d.adding) { flushPatch(); commit(); } curveInfo(); drawUi(); return; }
+        // An end dropped on another curve's end: the two join there.
+        var cv = e.it.cv, en = endOf(cv, d.i);
+        if (en >= 0 && !cv.cl && !cedit.building) {
+          var R = 14 / Z(), q = cv.c[d.i], other = null;
+          curves().forEach(function (it2) { if (it2.id === e.it.id || it2.cv.cl) return; var c2 = it2.cv.c; [0, c2.length - 1].forEach(function (j) { if (!other && Math.hypot(c2[j][0] - q[0], c2[j][1] - q[1]) < R) other = { it: it2, e: j ? 1 : 0 }; }); });
+          if (other) { joinCurves(e.it, en, other.it, other.e); return; }
+        }
+        flushPatch(); commit(); curveInfo(); drawUi();
+      }
+    }
+    function joinCurves(a, ea, b, eb) {
+      var j = CV().join(a.cv, b.cv, ea, eb), t = own(a); t.cv = j; cvApply(t); invalidate(t);
+      var lb = layerOf(b); if (lb) lb.items.splice(lb.items.indexOf(b), 1);
+      cedit = { id: t.id, pi: -1, ends: [] }; render(); commit(); curveInfo(); drawUi();
+      o.notice('Joined into one curve.');
+    }
+    // The buttons in the Curve tool's card and quick panel.
+    self.curveAct = function (a, v) {
+      var e = cedit && byId(cedit.id);
+      if (a === 'done') { if (cedit && cedit.building && e && e.it.cv.c.length >= 2) { cedit.building = false; cedit.pi = -1; commit(); curveInfo(); drawUi(); return; } curveEnd(); return; }
+      if (!e) return curveInfo();
+      var it = e.it, cv = it.cv, t;
+      if (a === 'kind') { // the same curve as another kind
+        if (!v || v === cv.k) return curveInfo();
+        // The curve remembers its earlier forms until it is edited, so flipping back gives exactly what it was.
+        t = own(it); var keep = cv.cl, alt = t.cva || {}; alt[cv.k] = CV().clone(cv);
+        t.cv = alt[v] ? CV().clone(alt[v]) : CV().convert(cv, v, Math.max(0.4, cvTol() * 0.6)); t.cva = alt;
+        if (keep && v === 'tspline' && !alt.tspline) o.notice('A T-spline stays open: its two ends meet.');
+        cedit.pi = -1; cedit.ends = []; cvRedraw(t, true); flushPatch(); commit(); curveInfo(); drawUi(); return;
+      }
+      if (a === 'del') { if (cedit.pi < 0) return o.notice('Tap a point first.'); t = own(it); if (!CV().removePt(t.cv, cedit.pi)) return o.notice(cv.k === 'bezier' ? 'Pick an anchor (a round point); a curve keeps at least two.' : 'A curve keeps at least two points.'); cedit.pi = -1; cvRedraw(t); flushPatch(); commit(); }
+      else if (a === 'close') { var cl = CV().close(cv); if (!cl) return o.notice('It needs at least three points to close.'); t = own(it); t.cv = cl; cedit.building = false; cvRedraw(t); flushPatch(); commit(); }
+      else if (a === 'break') {
+        if (cedit.pi < 0) return o.notice('Tap the point to break at first.');
+        var parts = CV().breakAt(cv, cedit.pi); if (!parts) return o.notice('Pick a point between the ends to break there.');
+        var made = parts.map(function (pc, i) { var c = JSON.parse(JSON.stringify(it)); c.id = i ? uid('s') : it.id; c.cv = pc; return cvApply(c); });
+        replaceItems(it, made); cedit = { id: made[made.length - 1].id, pi: -1, ends: [] }; render(); commit(); o.notice(made.length > 1 ? 'Broken into two curves.' : 'The loop is open there now.');
+      }
+      else if (a === 'join') {
+        var E = cedit.ends || [];
+        if (E.length < 2) return o.notice('Tap an end point of one curve, then an end point of another (or the other end of this one), then Join.');
+        var A = byId(E[0].id), B = byId(E[1].id); if (!A || !B) { cedit.ends = []; return curveInfo(); }
+        if (A.it === B.it) { var c2 = CV().close(A.it.cv); if (!c2) return o.notice('It needs at least three points to close.'); t = own(A.it); t.cv = c2; cedit = { id: t.id, pi: -1, ends: [] }; cvRedraw(t); flushPatch(); commit(); o.notice('The two ends are joined: a loop.'); }
+        else return joinCurves(A.it, E[0].e, B.it, E[1].e);
+      }
+      else if (a === 'topen') { t = own(it); delete t.cv; invalidate(t); cedit = null; render(); commit(); o.notice('It is a pen line now: Nudge and Smooth bend it freely.'); }
+      curveInfo(); drawUi();
+    };
+    self.curveWeight = function (v, done) { // how hard the picked point pulls (NURBS, T-spline)
+      var e = cedit && byId(cedit.id); if (!e || cedit.pi < 0 || !e.it.cv.w) return;
+      var t = own(e.it); t.cv.w[cedit.pi] = Math.max(0.05, Math.min(20, v)); cvRedraw(t);
+      if (done) { flushPatch(); commit(); }
+    };
+    self.curveState = curveInfo;
+    self.editCurve = function (id) { var e = byId(id); if (!e || !e.it.cv) return; cedit = { id: id, pi: -1, ends: [] }; curveInfo(); drawUi(); };
+    function curveUi() {
+      var h = '', k = 1 / Z(), P = function (q) { return (q[0] + M).toFixed(1) + ' ' + (q[1] + M).toFixed(1); };
+      if (drag && drag.curve === 'trace' && drag.pts.length > 1) h += '<path d="M' + drag.pts.map(P).join('L') + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.6 * k + '" stroke-dasharray="' + 5 * k + ' ' + 4 * k + '"/>';
+      var e = cedit && byId(cedit.id);
+      // Every other curve shows its two ends faintly, so they can be picked for Join.
+      curves().forEach(function (it) {
+        if (e && it === e.it) return;
+        it.cv.c.forEach(function (q, i) { if (!it.cv.cl && (i === 0 || i === it.cv.c.length - 1)) h += '<circle cx="' + (q[0] + M) + '" cy="' + (q[1] + M) + '" r="' + 3.2 * k + '" fill="var(--surface)" stroke="var(--muted)" stroke-width="' + k + '"/>'; });
+      });
+      (cedit && cedit.ends || []).forEach(function (x) { var b = byId(x.id); if (!b || !b.it.cv) return; var c0 = b.it.cv.c, q = x.e ? c0[c0.length - 1] : c0[0]; if (q) h += '<circle cx="' + (q[0] + M) + '" cy="' + (q[1] + M) + '" r="' + 11 * k + '" fill="none" stroke="#e67e22" stroke-width="' + 2.2 * k + '"/>'; });
+      if (!e || !e.it.cv) return h;
+      var cv = e.it.cv, c = cv.c, dash = ' stroke-dasharray="' + 4 * k + ' ' + 3 * k + '"';
+      if (cv.k === 'bezier') {
+        for (var i = 0; i < c.length; i++) if (i % 3 === 1 && c[i - 1]) h += '<path d="M' + P(c[i - 1]) + 'L' + P(c[i]) + '" stroke="var(--accent)" stroke-width="' + k + '" fill="none"/>'; else if (i % 3 === 2 && c[i + 1]) h += '<path d="M' + P(c[i]) + 'L' + P(c[i + 1]) + '" stroke="var(--accent)" stroke-width="' + k + '" fill="none"/>';
+      } else if (cv.k !== 'line' && cv.k !== 'catmull' && c.length > 1) h += '<path d="M' + c.map(P).join('L') + (cv.cl ? 'Z' : '') + '" fill="none" stroke="var(--accent)" stroke-opacity=".6" stroke-width="' + k + '"' + dash + '/>';
+      c.forEach(function (q, i) {
+        var on = i === cedit.pi, x = q[0] + M, y = q[1] + M, fill = on ? 'var(--accent)' : 'var(--surface)';
+        if (!CV().isAnchor(cv, i)) h += '<rect x="' + (x - 4.5 * k) + '" y="' + (y - 4.5 * k) + '" width="' + 9 * k + '" height="' + 9 * k + '" fill="' + fill + '" stroke="var(--accent)" stroke-width="' + 1.6 * k + '"/>';
+        else {
+          var end = !cv.cl && (i === 0 || i === c.length - 1);
+          h += '<circle cx="' + x + '" cy="' + y + '" r="' + (end ? 7.5 : 6) * k + '" fill="' + fill + '" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>';
+          if (cv.w && cv.w[i] != null && Math.abs(cv.w[i] - 1) > 0.01) h += '<text x="' + (x + 9 * k) + '" y="' + (y - 9 * k) + '" font-size="' + 11 * k + '" fill="var(--accent)">×' + (Math.round(cv.w[i] * 10) / 10) + '</text>';
+        }
+      });
+      return h;
+    }
 
     // ---- Selection (Lasso tool) ----
     // Text boxes can be in the selection too (o.boxes is the page's way to find, move and change them).
@@ -1492,6 +1709,9 @@
           (inkSel ? B('color', sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour, opacity, line width', '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>') : '') +
           (count > 1 ? B('align', 'Align', '<path d="M4 3v18M8 7h12M8 15h7"/>') : '') +
           (sel.items.length === 1 && !sel.boxes.length && sel.items[0].t === 'i' && (!sel.items[0].mk || sel.items[0].mk === 'pdf') ? B('crop', 'Crop', '<path d="M6 2v16h16M2 6h16v16"/>') : '') +
+          (CV() && sel.items.some(function (it) { return it.t === 's' && !it.cv; }) ? B('tocurve', 'To curve (a ' + curveName() + ' fitted to the line: its points shape it, nudge moves them)', '<path d="M3 18C7 4 15 20 21 6"/><circle cx="3" cy="18" r="1.6" fill="currentColor"/><circle cx="12" cy="11" r="1.6" fill="currentColor"/><circle cx="21" cy="6" r="1.6" fill="currentColor"/>') : '') +
+          (sel.items.some(function (it) { return it.cv; }) ? B('topen', 'To pen line (free again: Nudge and Smooth bend it)', '<path d="M3 17c3-5 5 3 8-2s5-7 10-3"/><path d="M15 4l5 5"/>') : '') +
+          (sel.items.length === 1 && sel.items[0].cv && o.toTool ? B('editcurve', 'Edit its points (Curve tool)', '<path d="M4 18C8 6 16 18 20 6"/><rect x="2.5" y="16.5" width="3" height="3" fill="currentColor"/><rect x="18.5" y="4.5" width="3" height="3" fill="currentColor"/>') : '') +
           (inkSel || sel.boxes.length ? B('arrange', 'Arrange (to the front, to the back)', '<rect x="9" y="9" width="11" height="11" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') : '') +
           (sel.items.length > 1 || isShape ? B('bool', isShape ? 'Shape: join, cut out, overlap, exclude' : 'Combine shapes: join, cut out, overlap, exclude', '<path d="M3 6h11v11H3z"/><path d="M9 9h12v12H9z"/>') : '') +
           (sel.boxes.length && BX.hasImages(sel.boxes) ? B('imgout', 'Take images out (each becomes its own object)', '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M3 15l4-4 4 4M15 3h6v6M21 3l-7 7"/>') : '') +
@@ -1646,6 +1866,25 @@
         if (sel.boxes.length) BX.straighten(sel.boxes);
         refreshBox(); render(); commit(); renderBar(); return;
       }
+      if (act === 'tocurve' || act === 'topen') { // (3.42) pen logic ↔ curve logic; the look (brush, colour, width) stays
+        var kind = opt.curve.k || 'bspline';
+        sel.items.slice().forEach(function (it) {
+          if (it.t !== 's') return;
+          if (act === 'topen') { if (!it.cv) return; var tp = own(it); delete tp.cv; invalidate(tp); return; }
+          if (it.cv) return;
+          var tc = own(it), pr = 0, q3 = null, nq = 0;
+          tc.p.forEach(function (q) { pr += q[2] == null ? 0.5 : q[2]; if (q[3] != null) { q3 = (q3 || 0) + q[3]; nq++; } });
+          var bx = boundsOfPts(tc.p), a0 = tc.p[0], aN = tc.p[tc.p.length - 1];
+          var closed = tc.p.length > 8 && Math.hypot(a0[0] - aN[0], a0[1] - aN[1]) < Math.max(4, 0.06 * Math.hypot(bx.w, bx.h));
+          tc.cv = CV().fit(tc.p, kind, Math.max(0.6, widthOf(tc) * 0.12), closed);
+          tc.cv.pr = Math.round(pr / tc.p.length * 100) / 100; if (nq) tc.cv.q3 = Math.round(q3 / nq * 100) / 100;
+          tc.st = 0; cvApply(tc); invalidate(tc);
+        });
+        refreshBox(); done(); renderBar();
+        o.notice(act === 'topen' ? 'Pen line: Nudge and Smooth bend it freely now.' : 'Curve: nudge moves its points (or a line\'s end); use the Curve tool to edit, join or break it.');
+        return;
+      }
+      if (act === 'editcurve') { var cid = sel.items[0].id; o.toTool('curve'); self.editCurve(cid); return; }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
       if (act === 'copylink') { o.copyLink(sel.box); return; }
       if (act === 'cropreset') { setCrop(own(sel.items[0]), [0, 0, 0, 0]); commit(); return renderBar('crop'); }
@@ -2031,6 +2270,7 @@
           if (d.kind === 'rotate') it.r = (src.r || 0) + ang;
           if (d.kind === 'scale') { if (it.t === 'x') it.fs = Math.max(4, src.fs * s); else { it.w = Math.max(4, src.w * s); it.h = Math.max(4, src.h * s); } }
         }
+        else if (src.cv) { it.cv = JSON.parse(JSON.stringify(src.cv)); it.cv.c = src.cv.c.map(function (q) { var m = map(q); return [m[0], m[1]]; }); delete it.cva; cvApply(it); if (d.kind === 'scale') it.s = src.s * s; }
         else { it.p = src.p.map(function (q) { var m = map(q); var o2 = [m[0], m[1], q[2]]; if (q[3] != null) o2.push(q[3]); return o2; }); if (d.kind === 'scale') it.s = src.s * s; }
         invalidate(it);
       };
@@ -2079,6 +2319,7 @@
         drag = { lasso: [p], t: Date.now(), prev: sel ? { items: sel.items.slice(), boxes: sel.boxes.slice() } : null };
         if ((opt.lasso.op || 'new') === 'new') setSel(null); return true;
       }
+      if (tool === 'curve') return curveDown(p);
       if (tool === 'pen') {
         var L = active();
         if (!editable(L)) { o.notice(L.vis ? 'This layer is locked.' : 'This layer is hidden.'); return false; }
@@ -2108,6 +2349,7 @@
         return;
       }
       if (drag.held) return;
+      if (drag.curve) { curveMove(p); return; }
       if (drag.guide) { G.drag(drag.guide, p); drawUi(); return; }
       if (drag.crop) { moveCrop(p); return; }
       if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } if (drag.far) applyTransform(p); return; }
@@ -2182,6 +2424,13 @@
             if (boxy(it) || it.t === 'b') return; // nudging bends lines; text, images and shapes are moved with Select
             var b = itemBox(it);
             if (p[0] < b.x - R || p[0] > b.x + b.w + R || p[1] < b.y - R || p[1] > b.y + b.h + R) return;
+            if (it.cv) { // (3.42) a curve doesn't bend: the control point (or line end) nearest takes the whole move
+              if (opt.nudge.m === 'smooth') return;
+              var gr = drag.grab || (drag.grab = {}), gi = gr[it.id];
+              if (gi == null) { gi = gr[it.id] = CV().nearest(it.cv, drag.last[0], drag.last[1], R); }
+              if (gi < 0) return;
+              var tc = own(it); CV().movePt(tc.cv, gi, dx, dy); delete tc.cva; cvApply(tc); invalidate(tc); drag.any = true; patch([tc]); return;
+            }
             var t = own(it);
             if (opt.nudge.m === 'smooth' ? smooth(t, p[0], p[1], R, k) : nudge(t, drag.last[0], drag.last[1], dx, dy, R, k)) { drag.any = true; patch([t]); }
           });
@@ -2222,6 +2471,7 @@
     self.up = function (p) {
       var d = drag; drag = null;
       if (!d) return;
+      if (d.curve) { curveUp(d, p); return; }
       if (d.guide) { G.end(); drawUi(); return; }
       if (d.lock) { G.highlight(null); drawUi(); }
       if (d.hold) clearTimeout(d.hold.t);
@@ -2235,6 +2485,10 @@
       if (d.stroke) {
         cancelAnimationFrame(liveRaf); liveRaf = 0;
         if (d.stroke.p.length === 1) { var p0 = d.stroke.p[0]; d.stroke.p.push([p0[0] + 0.4, p0[1] + 0.4].concat(p0.slice(2))); }
+        if (d.snap && d.snap.name === 'line' && CV()) { // (3.42) a straight line made by holding stays straight: a nudge turns it about its other end
+          var sp0 = d.stroke.p, lc = { k: 'line', c: [[sp0[0][0], sp0[0][1]], [sp0[sp0.length - 1][0], sp0[sp0.length - 1][1]]], pr: d.snap.pr };
+          if (d.snap.q3 != null) lc.q3 = d.snap.q3; d.stroke.cv = lc; cvApply(d.stroke);
+        }
         d.layer.items.push(d.stroke); invalidate(d.stroke);
         addEl(d.layer, d.stroke); dropLiveSvg(d);
         // Take the live stroke away once the saved one is on screen (two frames), unless a new stroke has begun.
@@ -2276,6 +2530,7 @@
       }
     };
     self.cancel = function () {
+      if (drag && drag.curve) { var dc = drag; drag = null; flushPatch(); if (dc.curve === 'pt' && dc.far) commit(); drawUi(); return; }
       if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); dropLiveSvg(drag); }
       if (drag && (drag.kind || drag.crop || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
       if (G) { G.end(); G.highlight(null); }
@@ -2343,7 +2598,7 @@
       for (var k in cells) { var c = cells[k]; out.push({ x: c.x, y: c.y, w: c.r - c.x, h: c.b - c.y }); }
       return out;
     };
-    self.setTool = function (t) { if (t !== 'text') finishText(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
+    self.setTool = function (t) { if (t !== 'text') finishText(); if (t !== 'curve' && cedit) curveEnd(); tool = t; if (t !== 'lasso') setSel(null); cursor = null; drawUi(); };
     self.tool = function () { return tool; };
     // Guides (3.24): put one on the page (or take it away), ask which are there, clear them all.
     self.guideToggle = function (k) { var c = (o.center ? o.center() : [200, 200, 0]).slice(); c[3] = 1 / Z(); var on = G.toggle(k, c, c[2] || 0); drawUi(); return on; };

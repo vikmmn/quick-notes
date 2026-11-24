@@ -60,7 +60,7 @@
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
   // Drawing lives in ink.js (layers, brushes, erasers, lasso, nudge, fills).
-  var INK = { pen: 1, erase: 1, lasso: 1, nudge: 1, fill: 1, guide: 1 };
+  var INK = { pen: 1, curve: 1, erase: 1, lasso: 1, nudge: 1, fill: 1, guide: 1 };
   // (3.35) Paper on the page: its starting size (px). A sheet and cardboard go behind drawings, to draw and stick on.
   var PAPER = { sticky: { w: 200, h: 200 }, card: { w: 300, h: 180 }, sheet: { w: 520, h: 700 }, kraft: { w: 380, h: 280 } };
 
@@ -207,6 +207,8 @@
       changed: function () { changed('ink'); },
       notice: function (t) { if (hooks.notice) hooks.notice(t); },
       textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
+      curveInfo: function (st) { if (hooks.curveInfo) hooks.curveInfo(st); }, // (3.42) the Curve tool's card follows the curve being edited
+      toTool: function (t) { if (hooks.autoTool) hooks.autoTool(t); else self.setTool(t); },
       toNewNote: hooks.toNewNote ? function (d, move) { return hooks.toNewNote(d, move); } : null,
       copyLink: hooks.copyLink ? function (b) { return hooks.copyLink(b); } : null,
       newPattern: hooks.newPattern ? function () { hooks.newPattern(); } : null,
