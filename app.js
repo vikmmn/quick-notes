@@ -1020,6 +1020,7 @@
     penKnown: function () { return !!PREF.penSeen; },
     finger: function () { return PREF.finger || 'auto'; },
     head: function () { return $('noteHead'); },
+    linkStyle: function () { return { e: PREF.linkE == null ? '>' : PREF.linkE, k: PREF.linkK || 'curve' }; },
     // (3.33, #90) The top buttons and tabs float over the page; the page keeps its title clear of them.
     topInset: function () { var b = document.querySelector('#topChrome .bar'), t = $('tabBar'); return (b ? b.offsetHeight : 0) + (t && t.offsetHeight ? t.offsetHeight : 38) + 6; },
     dodge: uiDodge,
@@ -1443,6 +1444,19 @@
   function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
   // (3.28, #80) The Text tool's card: a short set of text tools in three parts, Letters, Paragraph and Spacing (like
   // Affinity's Character and Paragraph panels, kept small). It works on the box being typed in, or the one typed in last.
+  // (3.35) Paper: sticky notes, index cards, sheets and cardboard on the page; the Text card adds them and turns the
+  // text box in use into one (or back into plain text).
+  var PAPERS = [['sticky', 'Sticky'], ['card', 'Card'], ['sheet', 'Sheet'], ['kraft', 'Cardboard']];
+  var STICKY_C = ['#ffe680', '#ffc2d1', '#bfe3ff', '#c8efb0', '#ffd3a0', '#ddd0ff'];
+  function paperCard() {
+    var G = function (x) { return '<div class="grp">' + x + '</div>'; };
+    var cur = S.canvas && S.canvas.paperOf ? S.canvas.paperOf() : null;
+    var h = '<div class="olabel">Paper</div>' + G('<span class="olab2">Add</span>' + PAPERS.map(function (p) { return '<button type="button" class="ochip" data-pnew="' + p[0] + '">' + p[1] + '</button>'; }).join(''));
+    if (cur) h += G('<span class="olab2">This one</span><button type="button" class="ochip" data-pset="" aria-pressed="' + !cur.st + '">Plain</button>' + PAPERS.map(function (p) { return '<button type="button" class="ochip" data-pset="' + p[0] + '" aria-pressed="' + (cur.st === p[0]) + '">' + p[1] + '</button>'; }).join(''));
+    var col = cur && cur.st === 'sticky' ? (cur.sc || STICKY_C[0]) : (PREF.stickyC || STICKY_C[0]);
+    h += G('<span class="olab2">Sticky</span>' + STICKY_C.map(function (c) { return '<button type="button" class="ochip sw-paper" data-pcol="' + c + '" aria-pressed="' + (col === c) + '" aria-label="Sticky colour" style="background:' + c + ';width:30px;min-width:30px;padding:0"></button>'; }).join(''));
+    return h;
+  }
   function textCard() {
     var G = function (x) { return '<div class="grp">' + x + '</div>'; };
     var tt = S.canvas && S.canvas.textTarget && S.canvas.textTarget();
@@ -1543,8 +1557,14 @@
       html = G(TF.map(function (f) { return chip('<span style="font-family:' + esc(f[0]) + '">' + f[1] + '</span>', 'data-tfont="' + esc(f[0]) + '"', o.text.font === f[0]); }).join('')) +
         G(swatches(o.text.c, 'text')) + G(slider('Size', 'text', 'fs', 10, 200, o.text.fs) + slider('Opacity', 'text', 'o', 5, 100, o.text.o, 100)) +
         G(HINT('Tap the page to write; tap text to change it. It is part of the drawing: Lasso it to move, turn or recolour it.'));
-    } else if (t === 'type') html = textCard() +
-        G(HINT('Double tap text to type in it; double tap empty space to start new text. One finger moves the page. Writing with the pen switches to Pen by itself.'));
+    } else if (t === 'type') html = paperCard() + textCard() +
+        G(HINT('One tap picks a text box or paper (drag it to move it); double tap to type in it; double tap empty space for new text. One finger moves the page.'));
+    else if (t === 'link') {
+      var le = PREF.linkE == null ? '>' : PREF.linkE, lk = PREF.linkK || 'curve';
+      html = G(HINT('Drag from one note or paper to another to join them. Drag out to empty space: a new one there, already joined. Tap a line to change or delete it.')) +
+        '<div class="olabel">New lines</div>' + G(chip('→', 'data-lnke=">" title="Arrow at the end"', le === '>') + chip('↔', 'data-lnke="<>" title="Arrows at both ends"', le === '<>') + chip('—', 'data-lnke="" title="No arrows"', le === '')) +
+        G(chip('Curved', 'data-lnkk="curve"', lk === 'curve') + chip('Straight', 'data-lnkk="line"', lk === 'line'));
+    }
     else if (t === 'hand') html = G(HINT('One finger moves the page; a tap does nothing. Double tap a thing to pick it (Select). Triple tap to type: in the text you tap, or new text on empty space.')) +
         G(HINT('Two fingers move, zoom and turn the page with every tool. Writing with the pen switches to Pen by itself.'));
     else if (t === 'guide') {
@@ -2033,6 +2053,11 @@
     if (b.dataset.m) { INKOPT[b.dataset.k].m = b.dataset.m; return setTool(PREF.tool); }
     if (b.dataset.set) { var kv = b.dataset.set.split('.'); INKOPT[kv[0]][kv[1]] = b.dataset.v; return setTool(PREF.tool); }
     if (b.dataset.sw) { INKOPT[b.dataset.sw].c = b.dataset.c; applyInk(); savePref(); return setTool(PREF.tool); }
+    if (b.dataset.pnew) { S.canvas.addPaper(b.dataset.pnew, b.dataset.pnew === 'sticky' ? (PREF.stickyC || STICKY_C[0]) : null); return setTool('type'); }
+    if (b.dataset.pset != null) { if (!S.canvas.paper(b.dataset.pset, b.dataset.pset === 'sticky' ? (PREF.stickyC || STICKY_C[0]) : null)) toast('Pick or type in a text box first.'); return setTool('type'); }
+    if (b.dataset.pcol) { PREF.stickyC = b.dataset.pcol; savePref(); var pc = S.canvas.paperOf && S.canvas.paperOf(); if (pc && pc.st === 'sticky') S.canvas.paper('sticky', b.dataset.pcol); return setTool('type'); }
+    if (b.dataset.lnke != null) { PREF.linkE = b.dataset.lnke; savePref(); return setTool('link'); }
+    if (b.dataset.lnkk) { PREF.linkK = b.dataset.lnkk; savePref(); return setTool('link'); }
     if (b.dataset.tf || b.dataset.tls || b.dataset.tps || b.dataset.ttk) {
       var tt = S.canvas && S.canvas.textTarget && S.canvas.textTarget(); if (!tt) return;
       if (b.dataset.tls) { S.canvas.boxSpacing('ls', +b.dataset.tls === 1.55 ? null : b.dataset.tls); return setTool('type'); }
@@ -2941,7 +2966,7 @@
       function (act) {
         if (act === 'back') return historySheet(n);
         if (act !== 'restore') return;
-        ['title', 'boxes', 'ink', 'labels', 'pinned', 'extra'].forEach(function (k) { n[k] = old[k]; });
+        ['title', 'boxes', 'ink', 'links', 'labels', 'pinned', 'extra'].forEach(function (k) { n[k] = old[k]; });
         closeSheet();
         touchNote(n);
         if (S.cur === n) reopen();
@@ -3165,6 +3190,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Paper and connectors', d: 'Text card › Paper adds sticky notes (six colours), index cards, sheets and cardboard to the page, or turns the text box in use into one. Write on them, move them, stretch them from the corner. The new Connect tool joins things: drag from one to another, or out to empty space for a new note already joined. Tap a line to change its arrows or delete it.',
+      a: art('<rect x="24" y="26" width="70" height="62" rx="3" fill="#ffe680"/><rect x="150" y="60" width="76" height="52" rx="3" fill="#fffefa" stroke="' + RULE + '"/><rect x="150" y="60" width="76" height="3" fill="#dc5046" opacity=".5"/><path d="M94 57 C122 57 122 86 148 86" stroke="' + INKC + '" stroke-width="2.4" fill="none"/><path d="M141 81 l8 5 -8 5" fill="none" stroke="' + INKC + '" stroke-width="2.4"/><rect x="36" y="40" width="40" height="6" rx="3" fill="rgba(0,0,0,.2)"/><rect x="36" y="54" width="30" height="6" rx="3" fill="rgba(0,0,0,.2)"/>') },
     { t: 'Small touches', d: 'Drag a tab (hold it first on a phone) to change its place. Text card › Spacing now has Letters (tight to wider) for a text box. Settings › Fonts › Default text sets the font and size of all text. On a computer the pen-size slider stays faint until you point at it.',
       a: art('<rect x="20" y="40" width="64" height="30" rx="9" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="92" y="34" width="64" height="30" rx="9" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="164" y="40" width="56" height="30" rx="9" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M110 98 h60 M170 98 l-8 -6 M170 98 l-8 6" stroke="' + A + '" stroke-width="3" fill="none" stroke-linecap="round"/><text x="28" y="124" font-size="16" fill="' + INKC + '" letter-spacing="3">A B C</text>') },
     { t: 'More room, easier moves', d: 'The page now runs under the top buttons and tabs, and a button fades away while you draw or move something under it. With Text, one tap picks a text box: drag it to move it, tap outside to let go, double tap to type. In the side map, drag the frame (or tap a part) to choose what the screen will show, then double tap to go there.',
