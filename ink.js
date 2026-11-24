@@ -516,6 +516,43 @@
       var c = JSON.parse(JSON.stringify(it)); c.id = uid('s'); c.p = pp; return c;
     });
   }
+
+  // (3.41.3, #131) The slicer for colour fills: cuts the part under the eraser out of every ring of the fill and keeps the
+  // rest, instead of taking the whole fill away. The eraser is a small convex polygon, so "ring minus eraser" is the
+  // pieces of the ring lying outside each of its sides in turn (each also inside the sides before it).
+  function sliceFill(it, x, y, r) {
+    var N = 16, C = [], i, j;
+    for (i = 0; i < N; i++) C.push([x + r * Math.cos(i * 2 * Math.PI / N), y + r * Math.sin(i * 2 * Math.PI / N)]);
+    var val = function (q, k, inside) { var a = C[k], b = C[(k + 1) % N], v = (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]); return inside ? v : -v; };
+    var clip = function (poly, k, inside) {
+      var out = [];
+      for (var m = 0; m < poly.length; m++) {
+        var cu = poly[m], pr = poly[(m + poly.length - 1) % poly.length], vc = val(cu, k, inside), vp = val(pr, k, inside);
+        if (vc >= 0) { if (vp < 0) { var t = vp / (vp - vc); out.push([pr[0] + (cu[0] - pr[0]) * t, pr[1] + (cu[1] - pr[1]) * t]); } out.push(cu); }
+        else if (vp >= 0) { var t2 = vp / (vp - vc); out.push([pr[0] + (cu[0] - pr[0]) * t2, pr[1] + (cu[1] - pr[1]) * t2]); }
+      }
+      return out;
+    };
+    var area = function (poly) { var a = 0; for (var m = 0; m < poly.length; m++) { var u = poly[m], w = poly[(m + 1) % poly.length]; a += u[0] * w[1] - w[0] * u[1]; } return Math.abs(a) / 2; };
+    var rings = [], changed = false;
+    it.d.forEach(function (ring) {
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      ring.forEach(function (q) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); });
+      if (x1 < x - r || x0 > x + r || y1 < y - r || y0 > y + r) { rings.push(ring); return; } // the eraser isn't near this ring
+      var pts = ring.map(function (q) { return [q[0], q[1]]; }), pieces = [], pa = 0;
+      for (i = 0; i < N; i++) {
+        var poly = pts;
+        for (j = 0; j < i && poly.length; j++) poly = clip(poly, j, true);
+        if (poly.length) poly = clip(poly, i, false);
+        if (poly.length >= 3) { var ar = area(poly); pa += ar; if (ar > 0.5) pieces.push(poly); }
+      }
+      if (area(pts) - pa < 1e-3) rings.push(ring); // the eraser never overlapped it: the ring stays as it was (not cut into pieces)
+      else { changed = true; pieces.forEach(function (pc) { rings.push(pc); }); }
+    });
+    if (!changed) return null;
+    var c = JSON.parse(JSON.stringify(it)); c.id = uid('f'); c.d = rings.map(function (rg) { return rg.map(function (q) { return [Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10]; }); });
+    return rings.length ? c : [];
+  }
   // (For text, its corners: looking at them is fine, but moving text is done with x and y.)
   function eachPoint(it, fn) { if (it.t === 'b') it.k.forEach(function (p) { eachPoint(p, fn); }); else if (it.t === 'f') it.d.forEach(function (ring) { ring.forEach(fn); }); else if (boxy(it)) textCorners(it).forEach(fn); else it.p.forEach(fn); }
   function shiftItem(it, dx, dy) { if (it.t === 'b') { it.k.forEach(function (p) { shiftItem(p, dx, dy); invalidate(p); }); return; } if (boxy(it)) { it.x += dx; it.y += dy; } else eachPoint(it, function (q) { q[0] += dx; q[1] += dy; }); }
@@ -655,7 +692,7 @@
     return out;
   }
   function recognize(raw) {
-    var pts = raw.map(function (q) { return [q[0], q[1]]; });
+    var pts = raw.map(function (q) { return [q[0], q[1]]; }).filter(function (q, i, a) { return !i || Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1]) > 0.5; }); // (3.41.3, #132) the pause at the end of a hold repeats the last point many times: those weigh the fit and the corners towards one spot
     if (pts.length < 4) return null;
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, L = 0;
     pts.forEach(function (q, i) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); if (i) L += Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1]); });
@@ -1482,9 +1519,9 @@
         var x0 = Math.min.apply(null, pts.map(function (q) { return q[0]; })), y1 = Math.max.apply(null, pts.map(function (q) { return q[1]; }));
         var host = o.uiHost, W = host.clientWidth, H = host.clientHeight, hr0 = host.getBoundingClientRect();
         // (3.40, #120) The bar keeps to the side of the tool rail (or wheel): it gets narrower and wraps into rows
-        // instead of running under the rail or off the screen.
+        // instead of running under the rail or off the screen. (3.41.3, #135) The Workspaces rails count too.
         var lane = [6, W - 6];
-        [].slice.call(document.querySelectorAll('#tools:not(.hidden) .tool-row, .tl-wheel:not(.mini)')).forEach(function (e) {
+        [].slice.call(document.querySelectorAll('#tools:not(.hidden) .tool-row, .tl-wheel:not(.mini), .tl-wscol, .tl-wslayers')).forEach(function (e) {
           var r = e.getBoundingClientRect(); if (!r.width || !r.height || getComputedStyle(e).display === 'none') return;
           var l = r.left - hr0.left, rr = r.right - hr0.left;
           if (l + rr > W) lane[1] = Math.min(lane[1], l - 8); else lane[0] = Math.max(lane[0], rr + 8);
@@ -2254,9 +2291,16 @@
         if (!editable(l)) return;
         for (var i = l.items.length - 1; i >= 0; i--) {
           var it = l.items[i];
-          if (it.t === 'i' || it.t === 'b' || lockedE(it) || !hits(it, p[0], p[1], r)) continue; // locked things, images and shapes are removed with Select › Delete, never rubbed out by accident
+          var sliceF = opt.erase.m === 'slice' && it.t === 'f';
+          if (it.t === 'i' || it.t === 'b' || lockedE(it) || (!sliceF && !hits(it, p[0], p[1], r))) continue; // locked things, images and shapes are removed with Select › Delete, never rubbed out by accident
           var e = elOf(it);
-          if (opt.erase.m === 'slice' && it.t !== 'f' && it.t !== 'x') {
+          if (sliceF) { // a colour fill: only the part under the eraser goes
+            var fres = sliceFill(it, p[0], p[1], r);
+            if (!fres) continue;
+            var fparts = fres.length === undefined ? [fres] : fres;
+            Array.prototype.splice.apply(l.items, [i, 1].concat(fparts));
+            if (e) e.insertAdjacentHTML('afterend', fparts.map(function (q) { return itemSvg(q); }).join(''));
+          } else if (opt.erase.m === 'slice' && it.t !== 'f' && it.t !== 'x') {
             var parts = slice(it, p[0], p[1], r);
             if (!parts) continue;
             Array.prototype.splice.apply(l.items, [i, 1].concat(parts));
@@ -2535,6 +2579,6 @@
     return { layers: lmap, groups: gmap };
   }
   function boundsOf(layers) { var all = []; layers.forEach(function (l) { all = all.concat(l.items); }); return unionBox(all); }
-  window.QNInk = { pictureAuto: pictureAuto, Engine: Engine, addDefs: addDefs, defs: DEFS, itemSvg: function (it) { return itemSvg(it); }, patternDef: patternDef, widthOf: widthOf, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  window.QNInk = { recognize: recognize, pictureAuto: pictureAuto, Engine: Engine, addDefs: addDefs, defs: DEFS, itemSvg: function (it) { return itemSvg(it); }, patternDef: patternDef, widthOf: widthOf, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();
