@@ -196,6 +196,13 @@
       minutesLeft: minutesLeft,
       signedInBefore: function () { try { return localStorage.getItem('signed-in-before') === '1'; } catch (e) { return false; } },
       list: function (folderId) { return query("'" + qs(folderId) + "' in parents and trashed = false"); },
+      // (3.39) Drive's list of changes since a point: one small request tells what changed on other devices,
+      // instead of listing every note (thousands) to find out.
+      startToken: async function () { return (await (await api(API + '/changes/startPageToken')).json()).startPageToken; },
+      changes: async function (token) {
+        return (await api(API + '/changes?pageToken=' + encodeURIComponent(token) + '&pageSize=1000&includeRemoved=true&spaces=drive&fields=' +
+          encodeURIComponent('nextPageToken,newStartPageToken,changes(fileId,removed,file(' + FIELDS + '))'))).json();
+      },
       get: async function (id) { return (await api(API + '/files/' + id + '?fields=' + FIELDS)).json(); },
       readText: async function (id) { return (await api(API + '/files/' + id + '?alt=media')).text(); },
       // Saves into the same file. Refuses (conflict) if it changed elsewhere since it was last seen.
@@ -333,14 +340,15 @@
 
   // ---------------- Pretend Drive for demo mode ----------------
   function DemoDrive() {
-    var n = 0, files = {}, offline = false, signed = false;
+    var n = 0, files = {}, offline = false, signed = false, seq = 0;
     function add(name, parent, mime, text, daysAgo) {
       var id = 'demo' + (++n);
       var t = new Date(Date.now() - (daysAgo || 0) * 86400000).toISOString();
       files[id] = { id: id, name: name, mimeType: mime, parents: [parent], text: text || '', rev: 1,
-        modifiedTime: t, createdTime: t, trashed: false };
+        modifiedTime: t, createdTime: t, trashed: false, seq: ++seq };
       return id;
     }
+    function touch(f) { if (f) f.seq = ++seq; }
     var readables = CFG.READABLES_FOLDER_ID;
     add('Books', readables, FOLDER);
     function folderPath(path) {
@@ -384,7 +392,7 @@
         if (expected && (f.trashed || md5ish(f) !== expected)) return wait({ conflict: true, file: meta(f) });
         return wait().then(function () {
           (f.revs = f.revs || []).push({ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length), text: f.text });
-          f.text = text; f.rev++; f.modifiedTime = new Date().toISOString();
+          f.text = text; f.rev++; f.modifiedTime = new Date().toISOString(); touch(f);
           return { file: meta(f) };
         });
       },
@@ -394,8 +402,8 @@
       createFolder: function (name, parentId) {
         return wait().then(function () { return meta(files[add(name, parentId, FOLDER)]); });
       },
-      trash: function (id) { return wait().then(function () { if (files[id]) files[id].trashed = true; }); },
-      rename: function (id, name) { return wait().then(function () { files[id].name = name; }); },
+      trash: function (id) { return wait().then(function () { if (files[id]) { files[id].trashed = true; touch(files[id]); } }); },
+      rename: function (id, name) { return wait().then(function () { files[id].name = name; touch(files[id]); }); },
       upload: function (name, parentId, blob, mime) { return wait().then(function () { var id = add(name, parentId, mime || 'application/octet-stream', ''); files[id].blob = blob; return meta(files[id]); }); },
       findTakeout: function () { return wait([]); },
       findZips: function () { return wait([]); },
@@ -413,7 +421,9 @@
       revisions: function (id) { var f = files[id]; return wait((f.revs || []).map(function (r) { return { id: r.id, modifiedTime: r.modifiedTime, size: r.size }; }).concat([{ id: 'r' + f.rev, modifiedTime: f.modifiedTime, size: String(f.text.length) }])); },
       readRevision: function (id, revId) { var f = files[id], r = (f.revs || []).filter(function (x) { return x.id === revId; })[0]; return wait(r ? r.text : f.text); },
       _files: files,
-      move: function (id, newParent) { return wait().then(function () { files[id].parents = [newParent]; files[id].rev++; }); },
+      move: function (id, newParent) { return wait().then(function () { files[id].parents = [newParent]; files[id].rev++; touch(files[id]); }); },
+      startToken: function () { return wait(String(seq)); },
+      changes: function (token) { var t = Number(token) || 0; return wait({ newStartPageToken: String(seq), changes: Object.keys(files).map(function (k) { return files[k]; }).filter(function (f) { return f.seq > t; }).map(function (f) { return { fileId: f.id, removed: false, file: meta(f) }; }) }); },
       findExact: function (name, parentId, mime) {
         var f = live().filter(function (x) { return x.name === name && x.parents[0] === parentId && (!mime || x.mimeType === mime); })[0];
         return wait(f ? meta(f) : null);
@@ -425,7 +435,7 @@
         var f = files[fileId];
         if (!f) return false;
         f.text = f.text.replace(/\n*$/, '\n\nEdited on the laptop at ' + new Date().toLocaleTimeString() + '.\n');
-        f.rev++; f.modifiedTime = new Date().toISOString();
+        f.rev++; f.modifiedTime = new Date().toISOString(); touch(f);
         return true;
       }
     };

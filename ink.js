@@ -89,7 +89,7 @@
         if (it.lk) x.lk = it.lk; // locked: 'e' can't be erased, 's' can't be selected
         if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; if (it.pr) x.pr = Math.round(it.pr); }
         else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
-        else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; if (it.mk) { x.mk = it.mk; if (it.ttl) x.ttl = it.ttl; if (it.pg) x.pg = it.pg; if (it.of) x.of = it.of; } }
+        else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; if (it.cp) x.cp = it.cp.map(function (v) { return Math.round(v * 1e4) / 1e4; }); if (it.mk) { x.mk = it.mk; if (it.ttl) x.ttl = it.ttl; if (it.pg) x.pg = it.pg; if (it.of) x.of = it.of; } }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
         else {
           x.b = it.b; x.s = r1(it.s);
@@ -216,6 +216,10 @@
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), deg = (it.r || 0) * 180 / Math.PI, u = imageUrl(it.src);
     var tr = 'translate(' + it.x.toFixed(1) + ' ' + it.y.toFixed(1) + ')' + (deg ? ' rotate(' + deg.toFixed(2) + ')' : '');
     if (!u) return '<rect data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" rx="6" fill="var(--field, #8882)" stroke="var(--rule, #8886)" stroke-dasharray="6 5"/>';
+    if (it.cp) { // (3.39, #108) cropped: the whole picture inside a window the size of the part kept
+      var c = it.cp, kw = 1 - c[0] - c[2], kh = 1 - c[1] - c[3], W0 = it.w / kw, H0 = it.h / kh;
+      return '<g data-i="' + it.id + '" transform="' + tr + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '><svg width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" viewBox="' + (c[0] * W0).toFixed(1) + ' ' + (c[1] * H0).toFixed(1) + ' ' + it.w.toFixed(1) + ' ' + it.h.toFixed(1) + '" preserveAspectRatio="none" overflow="hidden"><image width="' + W0.toFixed(1) + '" height="' + H0.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"/></svg></g>';
+    }
     return '<image data-i="' + it.id + '" transform="' + tr + '" width="' + it.w.toFixed(1) + '" height="' + it.h.toFixed(1) + '" preserveAspectRatio="none" href="' + xmlEsc(u) + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '/>';
   }
   // ---- Media on the page (3.20): a video, a sound, a link card or a live web page, placed like an image ----
@@ -1377,6 +1381,10 @@
             (o.newPattern ? '<button type="button" data-act="newpat" title="Make a new pattern">+ New</button>' : '') +
             (pfills.length ? '<button type="button" data-spt="~orig" title="Use the pattern\'s own colours">Own colours</button>' : '') : '') +
           '<button type="button" data-act="back">Done</button>';
+      } else if (mode === 'crop') { // (3.39, #108) how much to cut off each side
+        var cp = sel.items[0].cp || [0, 0, 0, 0], CL = ['Left', 'Top', 'Right', 'Bottom'];
+        h = T('Crop') + CL.map(function (nm, i) { return '<label class="op">' + nm + ' <input type="range" min="0" max="90" value="' + Math.round(cp[i] * 100) + '" data-crop="' + i + '"></label>'; }).join('') +
+          '<button type="button" data-act="cropreset">Whole picture</button><button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
         h = T('Collective') + '<label class="op">Opacity <input type="range" min="5" max="100" value="' + Math.round(co * 100) + '" data-cop></label><button type="button" data-act="back">Done</button>';
@@ -1426,6 +1434,7 @@
             : count > 1 ? B('group', 'Make collective (move, turn and fade these together, whatever layer each is on)', '<rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 3"/><circle cx="8.5" cy="8.5" r="3"/><rect x="13" y="13" width="6" height="6" rx="1"/>') : '') +
           (inkSel ? B('color', sel.items.every(function (it) { return it.t === 'i'; }) ? 'Opacity' : 'Colour, opacity, line width', '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>') : '') +
           (count > 1 ? B('align', 'Align', '<path d="M4 3v18M8 7h12M8 15h7"/>') : '') +
+          (sel.items.length === 1 && !sel.boxes.length && sel.items[0].t === 'i' && (!sel.items[0].mk || sel.items[0].mk === 'pdf') ? B('crop', 'Crop', '<path d="M6 2v16h16M2 6h16v16"/>') : '') +
           (inkSel || sel.boxes.length ? B('arrange', 'Arrange (to the front, to the back)', '<rect x="9" y="9" width="11" height="11" rx="1" fill="currentColor"/><path d="M5 15V5h10"/>') : '') +
           (sel.items.length > 1 || isShape ? B('bool', isShape ? 'Shape: join, cut out, overlap, exclude' : 'Combine shapes: join, cut out, overlap, exclude', '<path d="M3 6h11v11H3z"/><path d="M9 9h12v12H9z"/>') : '') +
           (sel.boxes.length && BX.hasImages(sel.boxes) ? B('imgout', 'Take images out (each becomes its own object)', '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M3 15l4-4 4 4M15 3h6v6M21 3l-7 7"/>') : '') +
@@ -1497,6 +1506,20 @@
       if (e.target.dataset.op == null || !sel) return;
       var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { var t = own(it); t.o = v; invalidate(t); }); patchSoon(sel.items);
     });
+    // (3.39) Cropping keeps the part that stays exactly where it was on the page.
+    function setCrop(t, n) {
+      var c = t.cp || [0, 0, 0, 0], W0 = t.w / (1 - c[0] - c[2]), H0 = t.h / (1 - c[1] - c[3]), cs = Math.cos(t.r || 0), sn = Math.sin(t.r || 0);
+      var ox = t.x - (c[0] * W0 * cs - c[1] * H0 * sn), oy = t.y - (c[0] * W0 * sn + c[1] * H0 * cs); // the whole picture's corner
+      t.x = ox + (n[0] * W0 * cs - n[1] * H0 * sn); t.y = oy + (n[0] * W0 * sn + n[1] * H0 * cs);
+      t.w = W0 * (1 - n[0] - n[2]); t.h = H0 * (1 - n[1] - n[3]);
+      if (n.some(function (v) { return v > 0; })) t.cp = n; else delete t.cp;
+      invalidate(t); render(); refreshBox(); drawUi();
+    }
+    bar.addEventListener('input', function (e) {
+      if (e.target.dataset.crop == null || !sel || !sel.items[0]) return;
+      var t = own(sel.items[0]), n = (t.cp || [0, 0, 0, 0]).slice(), i = +e.target.dataset.crop;
+      n[i] = Math.min(+e.target.value / 100, 0.9 - n[(i + 2) % 4]); setCrop(t, n);
+    });
     bar.addEventListener('input', function (e) {
       if (e.target.dataset.cop == null || !sel) return;
       var v = +e.target.value / 100;
@@ -1514,7 +1537,7 @@
       });
       patchSoon(sel.items); refreshBox();
     });
-    bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.lw != null || ds.ps != null || ds.pd != null || ds.pr != null) commit(); if (ds.cop != null) commit(); });
+    bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.crop != null || ds.lw != null || ds.ps != null || ds.pd != null || ds.pr != null) commit(); if (ds.cop != null) commit(); });
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
@@ -1558,7 +1581,8 @@
       }
       if (act === 'zoom') { o.zoomTo(sel.box); return; }
       if (act === 'copylink') { o.copyLink(sel.box); return; }
-      if (act === 'color' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'align' || act === 'bool' || act === 'newnote' || act === 'lock') return renderBar(act);
+      if (act === 'cropreset') { setCrop(own(sel.items[0]), [0, 0, 0, 0]); commit(); return renderBar('crop'); }
+      if (act === 'color' || act === 'crop' || act === 'layer' || act === 'cop' || act === 'arrange' || act === 'align' || act === 'bool' || act === 'newnote' || act === 'lock') return renderBar(act);
       if (act === 'nn-copy' || act === 'nn-move') {
         // What is picked, with the layers it is on (their look kept), its text boxes, and where it all sits.
         var out = [], bb = selBox(sel.items, sel.boxes);
@@ -2302,6 +2326,7 @@
     };
     self.clearSelection = function () { setSel(null); };
     self.pickAt = function (p) { return !!pickAt(p); }; // 3.27: the Hand's double tap
+    self.pictureAt = function (p) { var it = pickAt(p); return !!it && it.t === 'i'; }; // (3.39) a picture, video, PDF page or link under the finger
     self.selectAt = function (p) { tapPick(p); };
     self.selBox = function () { return sel && sel.box ? { x: sel.box.x, y: sel.box.y, w: sel.box.w, h: sel.box.h } : null; };
     self.selection = function () { return sel ? { items: sel.items.length, boxes: sel.boxes.length } : null; };
