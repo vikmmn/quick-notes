@@ -465,6 +465,9 @@
           continue;
         }
         if (texts[f.id] === undefined) continue; // could not be read this time; next sync tries again
+        // (3.40, #114) This device's own save coming back through Drive's change list: nothing new, so the open
+        // page is not made again (that also emptied its undo).
+        if (local && !local.dirty && local.base != null && texts[f.id] === local.base) { local.md5 = f.md5Checksum; await store.put(local); continue; }
         var fresh = parse(texts[f.id], f);
         var target = local || (byId[fresh.id] && !byId[fresh.id].fileId ? byId[fresh.id] : null);
         // (3.37) The same note whose old file is gone from Drive (made again elsewhere): this is its file now, not a

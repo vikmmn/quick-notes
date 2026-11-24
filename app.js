@@ -382,7 +382,7 @@
     function mid(t) { return [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2]; }
     function dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
     document.addEventListener('touchstart', function (e) {
-      var tx = e.touches.length === 2 && e.target.closest && e.target.closest('.card .prev');
+      var tx = e.touches.length === 2 && e.target.closest && e.target.closest('.card .prev, .to-card .prev');
       if (tx) {
         if (!tx.dataset.fs0) tx.dataset.fs0 = parseFloat(getComputedStyle(tx).fontSize) || 15;
         tz = { el: tx, fs: parseFloat(getComputedStyle(tx).fontSize) || 15, d: dist(e.touches) };
@@ -413,13 +413,34 @@
     });
     // The page picture just pinched: don't open the note when the fingers lift; a double tap puts it back.
     document.addEventListener('click', function (e) {
-      if (Date.now() - swallowTap < 450 && e.target.closest && e.target.closest('.mini-page, .card .prev')) { e.stopPropagation(); e.preventDefault(); }
+      if (Date.now() - swallowTap < 450 && e.target.closest && e.target.closest('.mini-page, .card .prev, .to-card .prev')) { e.stopPropagation(); e.preventDefault(); }
     }, true);
     document.addEventListener('dblclick', function (e) {
       var svg = e.target.closest && e.target.closest('.mini-page'); if (svg && svg.dataset.vb0) { svg.setAttribute('viewBox', svg.dataset.vb0); var di = cardId(svg); if (di) pzSet(di, Object.assign({}, pzGet(di), { vb: null })); e.stopPropagation(); }
-      var tp = e.target.closest && e.target.closest('.card .prev'); if (tp && tp.dataset.fs) { tp.style.fontSize = ''; delete tp.dataset.fs; var dj = cardId(tp); if (dj) pzSet(dj, Object.assign({}, pzGet(dj), { fs: null })); e.stopPropagation(); }
+      var tp = e.target.closest && e.target.closest('.card .prev, .to-card .prev'); if (tp && tp.dataset.fs) { tp.style.fontSize = ''; delete tp.dataset.fs; var dj = cardId(tp); if (dj) pzSet(dj, Object.assign({}, pzGet(dj), { fs: null })); e.stopPropagation(); }
     }, true);
   })();
+  // (3.40, #118) A note on a coloured or textured page shows that page behind its card (the grid is left out, so
+  // the picture stays readable). One CSS rule per kind of page, made the first time it is needed.
+  var BGK = {}, bgSheet = null;
+  function cardBg(n) {
+    if (!n || !n.page || !window.QNBg) return '';
+    try {
+      var o = window.QNBg.parse(n.page); o.gv = false;
+      var C = window.QNBg.css(window.QNBg.stringify(o), false); if (!C.color) return '';
+      var sig = C.color + '|' + C.image.length + '|' + C.image.slice(-40) + '|' + C.size, hsh = 0;
+      for (var i = 0; i < sig.length; i++) hsh = (hsh * 31 + sig.charCodeAt(i)) | 0;
+      var key = 'b' + (hsh >>> 0).toString(36);
+      if (!BGK[key]) {
+        BGK[key] = 1;
+        if (!bgSheet) { bgSheet = document.createElement('style'); document.head.appendChild(bgSheet); }
+        var mut = C.ink === '#1b1b1f' ? 'rgba(27,27,31,.62)' : 'rgba(241,236,227,.7)';
+        bgSheet.textContent += '[data-bgk="' + key + '"]{background-color:' + C.color + '!important;background-image:' + (C.image || 'none') + '!important;background-size:' + (C.size || 'auto') + '!important' +
+          ';--ink:' + C.ink + ';--muted:' + mut + ';color:' + C.ink + '}\n';
+      }
+      return ' data-bgk="' + key + '"';
+    } catch (e) { return ''; }
+  }
   function card(n, extra, where) {
     var inner = '';
     if (n.pinned) inner += '<span class="pin">' + icon('pin-fill') + '</span>';
@@ -435,7 +456,7 @@
     var foot = (n.labels || []).map(function (l) { return '<span class="chip">' + esc(l) + '</span>'; });
     if (n.conflict) foot.push('<span class="flag">Changed elsewhere</span>');
     if (foot.length) inner += '<div class="foot">' + foot.join('') + '</div>';
-    return '<article class="card' + (S.pick && S.pick.ids[n.id] ? ' picked' : '') + '" tabindex="0" data-id="' + esc(n.id) + '">' + (inner || '<p class="where">Empty note</p>') + '</article>';
+    return '<article class="card' + (S.pick && S.pick.ids[n.id] ? ' picked' : '') + '" tabindex="0" data-id="' + esc(n.id) + '"' + (extra ? '' : cardBg(n)) + '>' + (inner || '<p class="where">Empty note</p>') + '</article>';
   }
   function renderList() {
     var words = S.q.trim();
@@ -1081,7 +1102,7 @@
     $('undoBtn').disabled = true; $('redoBtn').disabled = true;
     if (isNew) setTimeout(function () { S.canvas.focusStart(); }, 50);
   }
-  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop; S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); applyViewPrefs(); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
+  function reopen() { var n = S.cur, top = $('canvasWrap').scrollTop, oh = S.canvas.history && S.canvas.history(); S.canvas.destroy(); S.canvas = new window.QNCanvas.NoteCanvas($('canvasHost'), $('canvasWrap'), n, canvasHooks); if (S.canvas.adoptHistory) S.canvas.adoptHistory(oh); applyViewPrefs(); applyInk(); S.canvas.setTool(PREF.tool); renderLayers(); $('noteTitle').value = n.title || ''; setPin(n.pinned); renderLabelsRow(); renderConflict(); renderMeta(); $('canvasWrap').scrollTop = top; }
   var openNote0 = openNote, showList0 = null;
   openNote = function () { var r = openNote0.apply(this, arguments); renderImportBar(); return r; };
   // ---------- Tabs (3.29, #53): several notes open at once ----------
@@ -1197,7 +1218,7 @@
     var ids = TABS.ids.filter(function (id) { return noteById(id); });
     ov.innerHTML = '<div class="to-row">' + ids.map(function (id, i) {
       var n = noteById(id), mini = N.hasInk(n) ? pagePreview(n) : (n.body ? preview(n) : '<p class="where">Empty note</p>');
-      return '<div class="to-card' + (id === TABS.cur ? ' on' : '') + '" data-topen="' + esc(id) + '" style="--i:' + i + '"><div class="to-head"><b>' + esc(tabName(n)) + '</b><i data-toclose="' + esc(id) + '" role="button" aria-label="Close this tab">×</i></div><div class="to-pic">' + mini + '</div></div>';
+      return '<div class="to-card' + (id === TABS.cur ? ' on' : '') + '" data-topen="' + esc(id) + '"' + cardBg(n) + ' style="--i:' + i + '"><div class="to-head"><b>' + esc(tabName(n)) + '</b><i data-toclose="' + esc(id) + '" role="button" aria-label="Close this tab">×</i></div><div class="to-pic">' + mini + '</div></div>';
     }).join('') + '</div>';
     ov.classList.remove('hidden');
     if (!stay) { ov.classList.remove('open'); void ov.offsetWidth; } ov.classList.add('open');
@@ -2087,6 +2108,8 @@
     if ((PREF.tl || 'rail') !== 'pen1' || S.view !== 'note' || !e.target.closest || !e.target.closest('#canvasWrap')) return;
     if (TL.radial && !e.target.closest('.tl-radial')) { closeRadial(); return; }
     if (e.pointerType !== 'touch' || PREF.tool === 'lasso' || PREF.tool === 'type' || e.target.closest('.box, .ProseMirror')) return;
+    // (3.40, #111) Only on the page itself: a finger resting on a slider, button or bar is not a hold.
+    if (!e.target.closest('#canvasHost') || e.target.closest('button, input, label, select, textarea, a, .inkbar, .linkbar, .qn-side, .qn-nav, .qn-dirs, .tool-opts, #penOpts')) return;
     if (TL.hold) { clearTimeout(TL.hold.t); TL.hold = null; return; } // a second finger: a gesture, not a hold
     var h = TL.hold = { x: e.clientX, y: e.clientY, id: e.pointerId, target: e.target };
     h.t = setTimeout(function () {
@@ -3365,6 +3388,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Holding a finger on a slider no longer opens the round tool menu.',
+      a: art('<rect x="40" y="20" width="160" height="100" rx="6" fill="' + SOFT + '" opacity=".6"/><rect x="80" y="40" width="90" height="62" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><path d="M80 54V40h14M156 40h14v14M170 88v14h-14M94 102H80V88" fill="none" stroke="' + A + '" stroke-width="5" stroke-linecap="round"/><circle cx="125" cy="71" r="18" fill="none" stroke="' + INKC + '" stroke-width="3"/>') },
     { t: 'Navigator, faster sync, pictures', d: 'One button at the bottom right opens the navigator, always. Linear and Free are chosen inside it: in Linear mode it is a map of the whole page (one finger moves around it, two fingers zoom, drag the frame, double tap to go); on the free canvas it is the small map. Notes and changes from your other devices now show within about 20 seconds (and at once when you open a note or come back to the app). Pictures go on the page at once and are copied to Drive in the background; pick one (with Select, or one tap with Text) to move, resize, turn, or Crop it. Also: Add is back among all the tools in Pen first, its last button opens Layers (hold it for all the tools), tabs sit in the top row on wide screens, a second tap on Create no longer makes two folders, and the feedback bar never squashes its colours.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="120" y="40" width="88" height="62" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="126" y="46" width="34" height="14" rx="4" fill="' + A + '" opacity=".35"/><rect x="162" y="46" width="34" height="14" rx="4" fill="none" stroke="' + RULE + '"/><rect x="140" y="68" width="40" height="26" rx="4" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="5 4"/><rect x="150" y="106" width="58" height="14" rx="7" fill="' + SURF + '" stroke="' + A + '"/><path d="M34 40h60M34 54h44M34 68h52" stroke="' + RULE + '" stroke-width="4" stroke-linecap="round"/>') },
     { t: 'Smoother on busy pages', d: 'Fills, undo, delete and erase now change only what changed instead of redrawing the whole page (about a second each on a busy page on a slower tablet). Sliders work once per frame. Saving waits until you pause and never runs mid-line. On tablets that draw with their graphics chip, a busy page moves as one picture while you pan or zoom (Settings › Smoothness). Fixed: patterned fills could vanish after leaving a note and opening it again. New: Settings › Smoothness › Show the smoothness meter; its figures go with your feedback.',

@@ -444,7 +444,11 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   #tabsOver .to-head { display: flex; align-items: center; gap: 8px; padding: 8px 6px 8px 12px; font-size: 14px; }
   #tabsOver .to-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #tabsOver .to-head i { font-style: normal; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; font-size: 18px; color: var(--muted); }
-  #tabsOver .to-pic { height: min(42vh, 260px); overflow: hidden; padding: 0 10px 10px; pointer-events: none; }
+  #tabsOver, #tabsOver * { touch-action: pan-x; } /* a pinch here never zooms the whole app; the card's own picture zooms (3.39.1) */
+  #tabsOver .to-pic { height: min(42vh, 260px); overflow: hidden; padding: 0 10px 10px; }
+  #tabsOver .to-pic .prev { font-size: 15px; }
+  #tabsOver .to-pic .prev p, #tabsOver .to-pic .prev ul, #tabsOver .to-pic .prev ol, #tabsOver .to-pic .prev h1, #tabsOver .to-pic .prev h2, #tabsOver .to-pic .prev h3 { margin: 0 0 6px; }
+  #tabsOver .to-pic .prev ul, #tabsOver .to-pic .prev ol { padding-left: 20px; }
   #tabsOver .to-pic svg { width: 100%; height: 100%; }
   #canvasWrap { flex: 1; min-height: 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
   #noteHead { padding: 8px 16px 4px; flex: none; }
