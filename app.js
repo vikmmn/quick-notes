@@ -3413,17 +3413,53 @@
   }
   function toolLabel(b) { return (b.getAttribute('aria-label') || b.title || b.dataset.tool).split(':')[0]; }
   function toolOrderHtml() {
-    return '<div class="set"><b>Tools</b><p>Put the tools on the side rail in the order you like.</p>' + toolBtns().map(function (b, i, a) {
-      return '<div class="row" style="align-items:center;gap:8px;margin:2px 0"><span style="flex:1">' + esc(toolLabel(b)) + '</span>' +
-        '<button type="button" data-act="tup" data-v="' + b.dataset.tool + '"' + (i ? '' : ' disabled') + ' aria-label="Move up">▲</button>' +
-        '<button type="button" data-act="tdown" data-v="' + b.dataset.tool + '"' + (i < a.length - 1 ? '' : ' disabled') + ' aria-label="Move down">▼</button></div>';
-    }).join('') + '<button type="button" data-act="treset">Original order</button></div>';
+    return '<div class="set"><b>Tools</b><p>Hold a tool and drag it onto another to change the order. It works in every layout.</p><button type="button" data-act="treset">Original order</button></div>';
   }
   function moveTool(name, d) {
     var names = toolBtns().map(function (b) { return b.dataset.tool; }), i = names.indexOf(name), j = i + d;
     if (i < 0 || j < 0 || j >= names.length) return;
     names.splice(j, 0, names.splice(i, 1)[0]); PREF.toolOrder = names; savePref(); applyToolOrder();
   }
+  // (3.41.2, #125) Hold a tool and drag it to a new place, in every layout: the rail, the Workspaces column, the wheel,
+  // the pucks. One order for all (PREF.toolOrder); the hidden rail row keeps it, every layout is built from it.
+  (function () {
+    var SEL = '#tools button[data-tool]:not([data-tool=""])', D = null, swallow = false;
+    function others(el) { return [].slice.call(document.querySelectorAll(SEL)).filter(function (b) { return b !== el && b.offsetParent && b.getBoundingClientRect().width > 0 && !b.classList.contains('ws-off'); }); }
+    function clearMarks() { [].forEach.call(document.querySelectorAll('.qn-tdrop'), function (b) { b.classList.remove('qn-tdrop'); }); }
+    function stop() { if (!D) return; clearTimeout(D.t); document.removeEventListener('touchmove', noScroll, { passive: false }); D.el.classList.remove('qn-tdrag'); D.el.style.transform = ''; clearMarks(); D = null; }
+    function noScroll(e) { if (D && D.on && e.cancelable) e.preventDefault(); }
+    function lift() {
+      if (!D) return; D.on = true; D.el.classList.add('qn-tdrag'); try { D.el.setPointerCapture(D.id); } catch (er) {}
+      document.addEventListener('touchmove', noScroll, { passive: false }); if (navigator.vibrate) { try { navigator.vibrate(12); } catch (er2) {} }
+    }
+    function nearest(x, y) {
+      var best = null, bd = 1e9; others(D.el).forEach(function (b) { var r = b.getBoundingClientRect(), d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)); if (d < bd) { bd = d; best = b; } });
+      return bd < 70 ? best : null;
+    }
+    document.addEventListener('pointerdown', function (e) {
+      var b = e.target.closest && e.target.closest(SEL); if (!b || e.button) return; stop();
+      D = { el: b, id: e.pointerId, x: e.clientX, y: e.clientY, on: false, mouse: e.pointerType === 'mouse', to: null, t: 0 };
+      if (!D.mouse) D.t = setTimeout(lift, 380);
+    }, true);
+    document.addEventListener('pointermove', function (e) {
+      if (!D || e.pointerId !== D.id) return;
+      var dx = e.clientX - D.x, dy = e.clientY - D.y;
+      if (!D.on) { if (Math.hypot(dx, dy) > 10) { if (D.mouse && Math.hypot(dx, dy) > 12) lift(); else { stop(); } } return; }
+      D.el.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.12)';
+      var t = nearest(e.clientX, e.clientY); clearMarks(); D.to = t; if (t) t.classList.add('qn-tdrop');
+    }, true);
+    document.addEventListener('pointerup', function (e) {
+      if (!D || e.pointerId !== D.id) return;
+      if (!D.on) { stop(); return; }
+      var from = D.el.dataset.tool, to = D.to && D.to.dataset.tool; swallow = true; setTimeout(function () { swallow = false; }, 450); stop();
+      if (!to || to === from) return;
+      var names = toolBtns().map(function (b) { return b.dataset.tool; }), i = names.indexOf(from), j = names.indexOf(to); if (i < 0 || j < 0) return;
+      names.splice(i, 1); names.splice(i < j ? j : j, 0, from); PREF.toolOrder = names; savePref(); applyToolOrder(); applyLayout(); setTool(PREF.tool);
+    }, true);
+    document.addEventListener('pointercancel', function () { if (D && !D.on) stop(); else if (D) stop(); }, true);
+    document.addEventListener('click', function (e) { if (swallow) { swallow = false; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+    document.addEventListener('contextmenu', function (e) { if (e.target.closest && e.target.closest(SEL)) e.preventDefault(); }, true);
+  })();
   // ---------- Look (3.30): skin, shade and motion ----------
   var LOOKS = [['paper', 'Paper', 'Warm paper, as before'], ['studio', 'Studio', 'Clean and crisp, a dark tool puck, one bright accent']]; // (3.31) the user kept these two
   if (PREF.skin === 'sketch' || PREF.skin === 'play') { PREF.skin = 'paper'; savePref(); }
