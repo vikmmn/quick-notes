@@ -163,6 +163,7 @@
   }
   // Notes saved by version 1 kept only `body`: give them a canvas.
   function upgrade(n) {
+    if (typeof n.inkS === 'string') { try { n.ink = JSON.parse(n.inkS); } catch (e) { n.ink = []; } delete n.inkS; }
     if (!n.boxes) { var c = parseCanvas(n.body || ''); n.boxes = c.boxes; n.ink = c.ink; n.links = c.links; }
     if (!Array.isArray(n.links)) n.links = [];
     n.ink = n.ink && n.ink.length ? window.QNInk.normalize(n.ink) : [];
@@ -227,6 +228,7 @@
         } catch (e) { resolve(null); }
       });
     }
+    var inkText = new WeakMap();
     function tx(mode) { return db.transaction('notes', mode).objectStore('notes'); }
     var api = {
       persistent: false,
@@ -239,7 +241,13 @@
         return list.map(upgrade);
       },
       put: function (n) {
-        var copy = JSON.parse(JSON.stringify(n));
+        // (3.38) The drawing is stored as one piece of text: copying it as thousands of small objects (twice) was a
+        // long pause after every stroke on a busy page.
+        var copy = Object.assign({}, n), ic = inkText.get(n);
+        // the same drawing as last time (only sync details changed): its text is reused
+        if (!ic || ic.v !== n.v || ic.ink !== n.ink) { ic = { v: n.v, ink: n.ink, s: JSON.stringify(n.ink || []) }; inkText.set(n, ic); }
+        copy.inkS = ic.s; delete copy.ink;
+        copy = JSON.parse(JSON.stringify(copy));
         delete copy.isDraft;
         if (!db) { mem[n.id] = copy; return Promise.resolve(); }
         return req(tx('readwrite').put(copy)).catch(function () {});
@@ -354,6 +362,8 @@
           continue;
         }
         var target = targetOf(n);
+        // (3.38) Never in the middle of a pen line: writing a big drawing out takes a moment.
+        for (var w = 0; w < 40 && hooks.drawing && hooks.drawing(); w++) await new Promise(function (r) { setTimeout(r, 250); });
         var text = serialize(n);
         if (!n.fileId && n.creating) {
           // (3.36) An earlier create may have reached Drive with its answer lost: use that file, don't make a second.

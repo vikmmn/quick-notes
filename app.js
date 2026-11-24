@@ -126,6 +126,7 @@
     },
     // (3.36) Combining a note changed on two devices: not while it is being typed in; then show the combined note.
     busy: function (id) { return !!(S.cur && S.cur.id === id && editingNow()); },
+    drawing: function () { return !!(S.canvas && S.canvas.busy && S.canvas.busy()); },
     flush: function (id) { if (S.cur && S.cur.id === id && S.canvas && S.canvas.flush) S.canvas.flush(); },
     merged: function (id) { if (S.view !== 'list' && S.cur && notes[id] === S.cur && !editingNow()) reopen(); },
     progress: function (n, total) { if (S.view === 'list') $('emptyMsg').textContent = 'Getting notes from Drive… ' + n + ' of ' + total; },
@@ -229,16 +230,18 @@
     n.body = N.bodyOf(n);
     if (n === S.cur) {
       clearTimeout(S.saveTimer);
-      S.saveTimer = setTimeout(saveNow, 600);
+      S.saveTimer = setTimeout(function () { saveNow(true); }, 600);
     } else store.put(n);
     sync.schedule(n.fileId ? 2500 : 8000); // a new note waits a little, so its file name gets more than the first letters
     renderStatus();
   }
-  function saveNow() {
+  function saveNow(idle) {
     clearTimeout(S.saveTimer);
     // Saving a big drawing takes a moment; never in the middle of a stroke.
-    if (S.canvas && S.canvas.busy && S.canvas.busy()) { S.saveTimer = setTimeout(saveNow, 400); return; }
-    if (S.cur && !S.cur.isDraft && notes[S.cur.id]) store.put(S.cur);
+    if (S.canvas && S.canvas.busy && S.canvas.busy()) { S.saveTimer = setTimeout(function () { saveNow(idle); }, 400); return; }
+    if (!S.cur || S.cur.isDraft || !notes[S.cur.id]) return;
+    var n = S.cur; // (3.38) in a quiet moment when the browser offers one (within 2 s)
+    if (idle && window.requestIdleCallback) requestIdleCallback(function () { store.put(n); }, { timeout: 2000 }); else store.put(n);
   }
 
   // ---------- Home: the notes grid ----------
@@ -1035,9 +1038,10 @@
   // (3.33, #90) While a pen line or a moved thing passes under a button, a tab, the tool rail or another floating
   // control, that control fades out; it comes back a moment after the pen or finger lifts.
   var DODGE = '#topChrome .bar > :not(.spacer), #tabBar, #tools .tool-row, #tools .tool-opts, #menuFab, #viewCtl, #toolQuick, #penQuick, .qn-nav, .qn-modebtn, .qn-dir, .tl-wheel, .tl-puck, .tl-corner, .tl-pal, #fbSlotNote';
-  var dodged = [], dodgeT = 0, dodgeLast = 0;
+  var dodged = [], dodgeT = 0, dodgeLast = 0, dodgeRects = null;
   function uiDodge(x, y) {
     if (x == null) {
+      dodgeRects = null;
       clearTimeout(dodgeT);
       if (dodged.length) dodgeT = setTimeout(function () { dodged.forEach(function (e) { e.classList.remove('qn-dodge'); e.classList.add('qn-undodge'); }); dodged = []; }, 500);
       return;
@@ -1045,11 +1049,14 @@
     var now = performance.now(); if (now - dodgeLast < 40) return; dodgeLast = now;
     clearTimeout(dodgeT);
     var pad = 18;
-    document.querySelectorAll(DODGE).forEach(function (e) {
-      if (dodged.indexOf(e) >= 0) return;
-      var r = e.getBoundingClientRect(); if (!r.width) return;
+    // (3.38) The controls' places are read once per gesture: searching the whole page on every pen move was the
+    // biggest single cost while drawing on a busy page.
+    if (!dodgeRects) { dodgeRects = []; document.querySelectorAll(DODGE).forEach(function (e) { var r = e.getBoundingClientRect(); if (r.width) dodgeRects.push([e, r]); }); }
+    for (var i = 0; i < dodgeRects.length; i++) {
+      var e = dodgeRects[i][0], r = dodgeRects[i][1];
+      if (dodged.indexOf(e) >= 0) continue;
       if (x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad) { e.classList.remove('qn-undodge'); e.classList.add('qn-dodge'); dodged.push(e); }
-    });
+    }
   }
   function openNote(n, isNew) {
     if (typeof hideOverview === 'function') hideOverview();
@@ -1486,6 +1493,13 @@
     }
     PREF.ink = INKOPT;
   })();
+  // (3.38) Sliders: the new value reaches the pen once per frame and is stored when the slider is let go.
+  var inkRaf = 0, inkQuick = false, prefT = 0;
+  function inkSoon(quick) {
+    inkQuick = inkQuick || !!quick;
+    if (!inkRaf) inkRaf = requestAnimationFrame(function () { inkRaf = 0; applyInk(); if (inkQuick) updatePenQuick(); inkQuick = false; });
+    clearTimeout(prefT); prefT = setTimeout(savePref, 400);
+  }
   function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
   // (3.28, #80) The Text tool's card: a short set of text tools in three parts, Letters, Paragraph and Spacing (like
   // Affinity's Character and Paragraph panels, kept small). It works on the box being typed in, or the one typed in last.
@@ -1679,11 +1693,11 @@
   }
   $('penQuick').addEventListener('input', function (e) {
     if ($('penQuick').dataset.mode === 'text') {
-      INKOPT.text.fs = +e.target.value; applyInk(); savePref();
+      INKOPT.text.fs = +e.target.value; inkSoon();
       var ts = $('penOpts').querySelector('[data-k=text][data-f=fs]'); if (ts) ts.value = INKOPT.text.fs;
       return;
     }
-    INKOPT.pen.s = +e.target.value; applyInk(); savePref(); updatePenQuick();
+    INKOPT.pen.s = +e.target.value; inkSoon(true);
     var s = $('penOpts').querySelector('[data-k=pen][data-f=s]'); if (s) s.value = Math.round(INKOPT.pen.s);
   });
   // Tap the pen's dot for its colours (3.18): a small card beside it.
@@ -1743,6 +1757,71 @@
     if (S.canvas) requestAnimationFrame(S.canvas.relayout);
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
+  // ---------- Smoothness meter (3.38) ----------
+  // Counts screen frames: frames a second, the longest gap between frames, and how many frames were late (over 50 ms)
+  // in the last 5 seconds, plus what was happening (tool, note size). Always measured lightly; shown when turned on.
+  var Meter = (function () {
+    var gaps = [], last = 0, el = null, on = false, worst = { ms: 0, at: '' }, longT = 0;
+    // Smoothness first: while the pen or a finger is working, if many frames come late again and again, the app's own
+    // movement (Settings › Look › Motion) is turned off for now, so the pen keeps the time it needs.
+    var downs = 0, upAt = 0, slowRuns = 0, eased = false, checkAt = 0;
+    document.addEventListener('pointerdown', function () { downs++; }, true);
+    ['pointerup', 'pointercancel'].forEach(function (t) { document.addEventListener(t, function () { downs = Math.max(0, downs - 1); upAt = performance.now(); }, true); });
+    function busyNow(t) { return downs > 0 || t - upAt < 600; }
+    function ease(t) {
+      if (eased || PREF.smoothFirst === false || t - checkAt < 1000) return;
+      checkAt = t;
+      var x = stats(); if (!x || !busyNow(t)) { slowRuns = 0; return; }
+      var recent = gaps.filter(function (g) { return g[0] > t - 1000; }), late = recent.filter(function (g) { return g[1] > 34; }).length;
+      slowRuns = recent.length > 5 && late / recent.length > 0.3 ? slowRuns + 1 : 0;
+      if (slowRuns >= 3 && (PREF.motion || 'gentle') !== 'off') {
+        eased = true; document.documentElement.dataset.motion = 'off';
+        toast('Things were slow, so the app\'s own movement is off for now to keep drawing smooth. Settings › Smoothness.', null, null, 4500);
+      }
+    }
+    function what() {
+      var t = (PREF && PREF.tool) || '', n = S.cur, items = 0;
+      try { if (S.canvas && S.canvas.ink) S.canvas.ink().layers().forEach(function (l) { items += l.n; }); } catch (e) {}
+      return t + (n ? ', ' + items + ' things on the page' : ', list');
+    }
+    function tick(t) {
+      if (last) { var g = t - last; gaps.push([t, g]); if (g > worst.ms && !document.hidden) worst = { ms: Math.round(g), at: what() }; }
+      last = t; while (gaps.length && gaps[0][0] < t - 5000) gaps.shift();
+      if (on && el && (!tick.n || t - tick.n > 500)) { tick.n = t; el.innerHTML = line(); }
+      ease(t);
+      requestAnimationFrame(tick);
+    }
+    function stats() {
+      if (gaps.length < 2) return null;
+      var span = gaps[gaps.length - 1][0] - gaps[0][0] + gaps[0][1], mx = 0, late = 0;
+      gaps.forEach(function (g) { mx = Math.max(mx, g[1]); if (g[1] > 50) late++; });
+      return { fps: Math.round(gaps.length * 1000 / Math.max(1, span)), max: Math.round(mx), late: late };
+    }
+    function line() { var x = stats(); if (!x) return '…'; var c = x.fps >= 50 && x.max < 50 ? 'ok' : x.fps >= 30 ? 'meh' : 'bad'; return '<i class="' + c + '"></i>' + x.fps + ' fps · longest ' + x.max + ' ms' + (x.late ? ' · ' + x.late + ' late' : ''); }
+    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { longT++; }); }).observe({ entryTypes: ['longtask'] }); } catch (e) {}
+    document.addEventListener('visibilitychange', function () { last = 0; });
+    requestAnimationFrame(tick);
+    return {
+      show: function (v) {
+        on = !!v;
+        if (on && !el) { el = document.createElement('div'); el.id = 'qnMeter'; el.setAttribute('aria-live', 'off'); document.body.appendChild(el); }
+        if (el) el.classList.toggle('hidden', !on);
+      },
+      summary: function () {
+        var x = stats();
+        return (x ? x.fps + ' fps now, longest ' + x.max + ' ms, ' + x.late + ' late in 5 s' : 'not measured') +
+          (worst.ms ? '; worst since opening ' + worst.ms + ' ms (' + worst.at + ')' : '') + (longT ? '; ' + longT + ' long tasks' : '') +
+          '; ' + (navigator.hardwareConcurrency || '?') + ' cores, ' + (navigator.deviceMemory || '?') + ' GB' +
+          '; page picture ' + (window.QNInk && window.QNInk.pictureAuto() ? 'on' : 'off') + (eased ? '; motion eased' : '');
+      }
+    };
+  })();
+  if (PREF.meter) Meter.show(true);
+  function applyPicture() {
+    window.QNInkPicture = PREF.pic || 'auto';
+    if (S.canvas && S.canvas.ink && S.canvas.ink().picture) S.canvas.ink().picture(window.QNInk.pictureAuto());
+  }
+  window.QNInkPicture = PREF.pic || 'auto';
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
   applyToolOrder();
   setTimeout(function () { showTools(PREF.showTools); }, 0);
@@ -2121,7 +2200,7 @@
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
     if (t.dataset.cc) { INKOPT[t.dataset.cc].c = t.value; applyInk(); savePref(); return; }
-    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; applyInk(); savePref(); updatePenQuick(); }
+    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; inkSoon(true); }
   });
   $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
 
@@ -3185,6 +3264,12 @@
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       lookHtml() + toolOrderHtml() + fontsHtml() +
+      '<div class="set"><b>Smoothness</b><p>A small meter at the top of the screen: how many pictures a second the screen gets (60 is smooth) and the longest wait in the last few seconds. Its numbers also go with feedback, so slowness can be fixed from real figures.</p>' +
+        '<button type="button" data-act="meter">' + (PREF.meter ? 'Hide the smoothness meter' : 'Show the smoothness meter') + '</button>' +
+        '<p style="margin-top:12px !important">Move a busy page as a picture (smoother panning and zooming; lines can look a little soft while moving):</p><div class="pick" style="margin:0">' +
+        [['auto', 'Automatic (when this device draws with its graphics chip)'], ['on', 'Always'], ['off', 'Never']].map(function (o) { var on = (PREF.pic || 'auto') === o[0]; return '<button type="button" data-act="pic" data-v="' + o[0] + '" aria-pressed="' + on + '">' + (on ? '◉ ' : '○ ') + o[1] + '</button>'; }).join('') + '</div>' +
+        '<p style="margin-top:12px !important">When drawing gets slow, turn the app\'s own movement off by itself:</p><div class="pick" style="margin:0">' +
+        [[true, 'Yes, smoothness first'], [false, 'No, keep the movement']].map(function (o) { var on = (PREF.smoothFirst !== false) === o[0]; return '<button type="button" data-act="smoothfirst" data-v="' + o[0] + '" aria-pressed="' + on + '">' + (on ? '◉ ' : '○ ') + o[1] + '</button>'; }).join('') + '</div></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button> <button type="button" data-act="vault">From Obsidian</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
@@ -3197,6 +3282,9 @@
     function (act, b) {
       if (act === 'tup' || act === 'tdown') { moveTool(b.dataset.v, act === 'tup' ? -1 : 1); var sc = $('sheet'); var y = sc ? sc.scrollTop : 0; settingsSheet(); sc = $('sheet'); if (sc) sc.scrollTop = y; return; }
       if (act === 'addfont') { fontInput.click(); return; }
+      if (act === 'smoothfirst') { PREF.smoothFirst = b.dataset.v === 'true'; savePref(); var sc1 = $('sheet'), y1 = sc1 ? sc1.scrollTop : 0; settingsSheet(); sc1 = $('sheet'); if (sc1) sc1.scrollTop = y1; return; }
+      if (act === 'pic') { PREF.pic = b.dataset.v; savePref(); applyPicture(); var sc0 = $('sheet'), y0 = sc0 ? sc0.scrollTop : 0; settingsSheet(); sc0 = $('sheet'); if (sc0) sc0.scrollTop = y0; return; }
+      if (act === 'meter') { PREF.meter = !PREF.meter; savePref(); Meter.show(PREF.meter); b.textContent = PREF.meter ? 'Hide the smoothness meter' : 'Show the smoothness meter'; return; }
       if (act === 'deffont' || act === 'defsize') {
         if (act === 'deffont') PREF.defFont = b.dataset.v || ''; else PREF.defSize = +b.dataset.v;
         savePref(); applyTextDefault(); var sc2 = $('sheet'), y2 = sc2 ? sc2.scrollTop : 0; settingsSheet(); sc2 = $('sheet'); if (sc2) sc2.scrollTop = y2; return;
@@ -3236,6 +3324,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Smoother on busy pages', d: 'Fills, undo, delete and erase now change only what changed instead of redrawing the whole page (about a second each on a busy page on a slower tablet). Sliders work once per frame. Saving waits until you pause and never runs mid-line. On tablets that draw with their graphics chip, a busy page moves as one picture while you pan or zoom (Settings › Smoothness). Fixed: patterned fills could vanish after leaving a note and opening it again. New: Settings › Smoothness › Show the smoothness meter; its figures go with your feedback.',
+      a: art('<rect x="70" y="50" width="120" height="34" rx="17" fill="#222" opacity=".8"/><circle cx="90" cy="67" r="6" fill="#4caf50"/><rect x="104" y="62" width="70" height="10" rx="5" fill="#fff" opacity=".85"/><rect x="60" y="110" width="140" height="6" rx="3" fill="' + RULE + '"/><circle cx="150" cy="113" r="10" fill="' + A + '"/>') },
     { t: 'Smoother fills, tabs at a glance', d: 'Patterned fills are drawn as one picture now, so drawing, erasing and picking on pages with patterns is much lighter. Drawing a fill shape: a pause half way no longer turns it into a clean shape; only holding where you started does. Pick a filled shape: its patterns show as pictures, Turn rotates the pattern, + New makes one. Pen › your own tip: Spacing, and Spacing follows pressure. Open tabs spreads your tabs out as pages to pick from. The side map has arrows to see more around it and zooms with two fingers or − and +. Tab names stay readable over drawings.',
       a: art('<rect x="30" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="100" y="26" width="60" height="88" rx="8" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="170" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M112 60 q18 -18 36 0 t0 30 q-18 18 -36 0z" fill="' + A + '" opacity=".35"/>') },
     { t: 'Two devices, nothing lost', d: 'A note changed on two devices (even both offline) is now combined by itself, with no question. Changes in different places are all kept. If the same paragraph was rewritten on both, both versions stay, each under a small label like "from phone, 24 Nov 06:40": delete the one you don\'t want. A note deleted on one device but changed on another comes back with the change.',
@@ -3414,6 +3504,7 @@
         'Note': S.cur ? S.cur.id + ', ' + (S.cur.boxes || []).length + ' text boxes, ' + (N.hasInk(S.cur) ? 'has drawing' : 'no drawing') : '',
         'Sync': health(st).text,
         'Sign-in': Drive.demo ? 'demo' : Drive.lasting && Drive.lasting() ? 'lasting' : Drive.signedIn() ? 'one hour' : 'signed out',
+        'Smoothness': Meter.summary(),
         'Notes on phone': live().length + (st.waiting.length ? ', ' + st.waiting.length + ' waiting' : '')
       };
     };

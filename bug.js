@@ -144,9 +144,12 @@
     else { document.body.appendChild(btn); btn.classList.remove('docked'); }
   }
   // A sheet, a menu or What's new over the bar: the button comes out of the bar to stay on top and usable (3.21).
+  // (3.38) Live lists of the few covers, instead of searching the whole page every few moments.
+  var OVERS = ['sheet-back', 'wn', 'drawer-back'].map(function (c) { return document.getElementsByClassName(c); });
+  function firstShown(lists) { for (var i = 0; i < lists.length; i++) for (var j = 0; j < lists[i].length; j++) if (!lists[i][j].classList.contains('hidden')) return lists[i][j]; return null; }
   setInterval(function () {
     if (!btn || view || !dockEl || btn.style.display === 'none') return;
-    var over = document.querySelector('.sheet-back:not(.hidden), .wn:not(.hidden), .drawer-back:not(.hidden)');
+    var over = firstShown(OVERS);
     if (over && btn.parentNode !== document.body) {
       var r = btn.getBoundingClientRect(); if (!r.width) return;
       document.body.appendChild(btn); btn.classList.remove('docked'); btn.classList.add('floating');

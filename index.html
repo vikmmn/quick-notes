@@ -430,6 +430,9 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   #listView .tabs-pill.hidden { display: none; }
   #tabsOver { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter: blur(2px); display: flex; align-items: flex-end; }
   #tabsOver.hidden { display: none; }
+  #qnMeter { position: fixed; left: 50%; top: calc(4px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 9000; pointer-events: none; font: 600 11px/1 system-ui, sans-serif; color: #fff; background: rgba(20,20,20,.72); padding: 5px 9px; border-radius: 99px; white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+  #qnMeter.hidden { display: none; }
+  #qnMeter i { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; } #qnMeter i.meh { background: #f2b233; } #qnMeter i.bad { background: #e5533d; }
   #tabsOver .to-row { display: flex; gap: 14px; overflow-x: auto; padding: 18px 18px calc(70px + env(safe-area-inset-bottom)); width: 100%; box-sizing: border-box; scroll-snap-type: x mandatory; }
   #tabsOver .to-card { flex: none; width: min(46vw, 300px); background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; scroll-snap-align: center; cursor: pointer;
     transform: translateY(40px) scale(.6); opacity: 0; transition: transform .28s cubic-bezier(.2,.8,.2,1), opacity .2s; transition-delay: calc(var(--i) * 35ms); }
@@ -499,7 +502,8 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; touch-action: none; }
   #noteHead.in-page { position: absolute; left: 0; box-sizing: border-box; z-index: 1; }
   .ink-live { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
-  .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 1; } /* slices of the drawing, between text boxes by what is in front (3.18.2) */
+  .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 1; }
+  .ink-pic { position: absolute; pointer-events: none; z-index: 1; } /* (3.38) the drawing as one picture while the page moves */ /* slices of the drawing, between text boxes by what is in front (3.18.2) */
   .stage > .sel { z-index: 100002; }
   .inktip { position: absolute; z-index: 9; max-width: 260px; padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 500 12.5px/1.3 var(--font); pointer-events: none; box-shadow: var(--shadow); }
   .inkbar .ib { width: 38px; height: 38px; min-height: 0 !important; padding: 0 !important; display: inline-grid; place-items: center; border-radius: 10px; }
