@@ -117,7 +117,8 @@
 
   // ---------- Drawing ----------
   var cache = new WeakMap(), boxCache = new WeakMap();
-  function invalidate(it) { cache.delete(it); boxCache.delete(it); }
+  var staleItems = new WeakSet(); // changed in place since last drawn (3.38: a redraw makes these afresh)
+  function invalidate(it) { cache.delete(it); boxCache.delete(it); staleItems.add(it); }
   // The outline of a stroke (perfect-freehand), for the saved drawing and for the live stroke while drawing.
   function outline(it, pts, last) {
     var B = BRUSH[it.b] || BRUSH.pen;
@@ -168,6 +169,22 @@
     }
     cache.set(it, d);
     return d;
+  }
+  // (3.38) Whether this browser draws canvases on the graphics chip: the moving picture only helps there (drawn in
+  // software it costs more than it saves). Settings › Smoothness can turn it on or off by hand (QNInk.picture).
+  var PIC_HW = null;
+  function pictureAuto() {
+    if (window.QNInkPicture === 'on') return true;
+    if (window.QNInkPicture === 'off') return false;
+    if (PIC_HW == null) {
+      try {
+        var gl = document.createElement('canvas').getContext('webgl'), dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        var r = gl ? String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) : '';
+        PIC_HW = !!gl && !/swiftshader|llvmpipe|software|softpipe|basic render/i.test(r);
+        var lose = gl && gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext();
+      } catch (e) { PIC_HW = false; }
+    }
+    return PIC_HW;
   }
   function hasFade(it) { return it.t !== 'f' && it.p && it.p.some(function (q) { return q[3] != null && q[3] < 0.99; }); }
   // A stroke whose ink gets lighter and stronger along the way (pressure or tilt on opacity): the whole line, seen
@@ -331,7 +348,11 @@
     [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
     nine = nine.replace(/var\(--ink\)/g, ink);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 100 100">' + nine + '</svg>';
-    return (TILES[key] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+    var url = TILES[key] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    // A pattern's picture that arrives after the page was drawn is not shown by the browser until the page is drawn
+    // again (seen 24 Nov: patterned fills blank until a pan): draw again once it is ready.
+    var im = new Image(); im.onload = function () { if (IMG.ready) IMG.ready(); }; im.src = url;
+    return url;
   }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
@@ -391,8 +412,13 @@
     return '<defs>' + masks + '</defs>';
   }
   function markup(layers, prefix, dx, dy, plain) {
-    return defsSvg(layers, prefix) + '<g transform="translate(' + dx + ' ' + dy + ')">' +
+    var out = defsSvg(layers, prefix) + '<g transform="translate(' + dx + ' ' + dy + ')">' +
       layers.map(function (l, i) { return layerSvg(l, layers[i - 1], prefix, plain); }).join('') + '</g>';
+    // (3.38) Every pattern, tip, fade and shape inside gets this copy's own name. They had the same names as on the
+    // page itself, so a note's patterned fills could point at the copy in its (hidden) card in the list and show
+    // nothing: fills "gone" after leaving a note and opening it again (#95, 24 Nov).
+    if (prefix) out = out.replace(/\bid="(?!qn-g)([^"]+)"/g, 'id="' + prefix + '$1"').replace(/url\(#(?!qn-g)([^)]+)\)/g, 'url(#' + prefix + '$1)').replace(/href="#(?!qn-g)([^"]+)"/g, 'href="#' + prefix + '$1"');
+    return out;
   }
 
   // ---------- Geometry ----------
@@ -911,9 +937,60 @@
       }).join('') + '</g>';
     }
     var sizeWH = null;
+    // (3.38) A redraw changes only what changed: things are matched by id, kept when they are the same object, made
+    // afresh when changed or new, and taken out when gone. The whole page was built again before (about a second on a
+    // busy page on a slower tablet, for every fill, undo or delete). Anything unusual falls back to the full redraw.
+    var lastSig = null, nodeItem = new WeakMap();
+    function planSig(pl) {
+      return pl.slices.map(function (sl) { return sl.z + '[' + sl.parts.map(function (pt) { var l = pt.l; return l.id + '/' + l.op + '/' + (l.blend || '') + '/' + l.vis + '/' + !!l.clip; }).join(',') + ']'; }).join(';') + '#' + slices.length;
+    }
+    function sliceGroups(k) { var root = slices[k] && slices[k].lastElementChild; return root ? root.children : null; }
+    function renderDiff(pl, sig) {
+      if (sig !== lastSig || window.QNInkFullRedraw) return false;
+      var have = {}, k, j, i, n;
+      for (k = 0; k < pl.slices.length; k++) {
+        var gs = sliceGroups(k); if (!gs || gs.length !== pl.slices[k].parts.length) return false;
+        for (j = 0; j < gs.length; j++) for (n = gs[j].firstElementChild; n; n = n.nextElementSibling) { var id = n.getAttribute('data-i'); if (!id || have[id]) return false; have[id] = n; }
+      }
+      var want = [], used = {}, tmp = document.createElementNS(NS, 'svg');
+      for (k = 0; k < pl.slices.length; k++) {
+        var parts = pl.slices[k].parts, row = [];
+        for (j = 0; j < parts.length; j++) {
+          var list = [];
+          for (i = 0; i < parts[j].items.length; i++) {
+            var it = parts[j].items[i], node = have[it.id];
+            if (!node || used[it.id] || nodeItem.get(node) !== it || staleItems.has(it)) {
+              staleItems.delete(it);
+              tmp.innerHTML = itemSvg(it);
+              if (tmp.childNodes.length !== 1 || tmp.firstChild.nodeType !== 1) return false;
+              node = tmp.firstChild; tmp.removeChild(node); nodeItem.set(node, it);
+            }
+            used[it.id] = node; list.push(node);
+          }
+          row.push(list);
+        }
+        want.push(row);
+      }
+      Object.keys(have).forEach(function (id) { if (used[id] !== have[id]) have[id].remove(); });
+      for (k = 0; k < want.length; k++) {
+        var gk = sliceGroups(k);
+        for (j = 0; j < want[k].length; j++) {
+          var g = gk[j], cur = g.firstElementChild;
+          want[k][j].forEach(function (node) { if (cur === node) cur = cur.nextElementSibling; else g.insertBefore(node, cur); });
+          while (cur) { var nx = cur.nextElementSibling; cur.remove(); cur = nx; }
+        }
+      }
+      return true;
+    }
     function render() {
+      picEnd();
       cancelAnimationFrame(raf); raf = 0; pending = [];
       plan = makePlan();
+      var sig = planSig(plan);
+      if (renderDiff(plan, sig)) {
+        if (BX && BX.setZ) Object.keys(plan.boxZ).forEach(function (id) { BX.setZ(id, plan.boxZ[id]); });
+        drawLocks(); drawUi(); return;
+      }
       while (slices.length < plan.slices.length) {
         var e = document.createElementNS(NS, 'svg'); e.setAttribute('class', 'ink-layer');
         if (sizeWH) { e.setAttribute('width', sizeWH[0]); e.setAttribute('height', sizeWH[1]); }
@@ -923,7 +1000,10 @@
         var sl = plan.slices[k];
         if (!sl) { e.innerHTML = ''; e.style.display = 'none'; return; }
         e.style.display = ''; e.style.zIndex = sl.z; e.innerHTML = sliceMarkup(sl, k);
+        var gs = sliceGroups(k);
+        if (gs) sl.parts.forEach(function (pt, j) { var g = gs[j]; if (!g) return; var n = g.firstElementChild; pt.items.forEach(function (it) { staleItems.delete(it); if (n) { nodeItem.set(n, it); n = n.nextElementSibling; } }); });
       });
+      lastSig = planSig(plan);
       if (BX && BX.setZ) Object.keys(plan.boxZ).forEach(function (id) { BX.setZ(id, plan.boxZ[id]); });
       drawLocks(); drawUi();
     }
@@ -954,14 +1034,14 @@
     // recorded (commit) starts afresh.
     var owned = new WeakSet();
     function own(it) {
-      if (owned.has(it)) return it;
+      if (owned.has(it)) { staleItems.add(it); return it; } // about to change in place: drawn afresh next time
       var l = layerOf(it); if (!l) return it;
       var c = JSON.parse(JSON.stringify(it));
       l.items[l.items.indexOf(it)] = c; owned.add(c);
       if (sel) { var k = sel.items.indexOf(it); if (k > -1) sel.items[k] = c; }
       return c;
     }
-    function commit(kind) { resolveAnchors(); o.changed(kind || 'ink'); owned = new WeakSet(); }
+    function commit(kind) { picEnd(); resolveAnchors(); o.changed(kind || 'ink'); owned = new WeakSet(); }
     function done(kind) { render(); commit(kind); }
     function layerOf(it) { for (var i = 0; i < layers.length; i++) if (layers[i].items.indexOf(it) > -1) return layers[i]; return null; }
 
@@ -989,6 +1069,7 @@
     // A plain canvas: a "desynchronized" (low-latency) one shows as solid black over the page on some Android
     // tablets (3.4.0 on a Galaxy Tab S6 Lite). It is only shown while a stroke is being drawn.
     var lctx = live.getContext('2d'), liveRaf = 0;
+    function liveCtx() { return lctx; }
     live.style.display = 'none';
     function inkColor(c) {
       if (c && c !== 'ink') return c;
@@ -1035,17 +1116,19 @@
       def.items.forEach(function (p) { var dd = itemD(p); if (!dd) return; g.globalAlpha = p.o == null ? 1 : p.o; g.fill(new Path2D(dd), p.t === 'f' ? 'evenodd' : 'nonzero'); });
       return (stampCache[key] = { cv: cv, def: def });
     }
-    function stampTips(d, from) { // stamps along the line from distance `from`, as tipSvg places them
+    function stampTips(d, from, cx) { // stamps along the line from distance `from`, as tipSvg places them
+      var lctx = cx || liveCtx();
       var it = d.stroke, def = d.tip.def, w = widthOf(it), sp = Math.max(0.05, def.sp || 0.25) * w, A = along(it.p), pm = def.pm || 'size', LV = 10;
       lctx.setTransform(d.m[0], d.m[1], d.m[2], d.m[3], d.m[4], d.m[5]);
-      var s = from;
-      for (; s <= A.len + 0.01; s += sp) {
+      var s = from, step = sp;
+      for (; s <= A.len + 0.01; s += step) {
         var q = A.at(s), pr = it.f ? q[4] : 0.5, ang = def.rot ? Math.atan2(q[3], q[2]) : 0;
+        step = def.spp && it.f ? sp * (1.9 - 1.6 * Math.max(0, Math.min(1, pr))) : sp;
         var k = w * (pm !== 'reveal' && it.f ? 0.45 + 1.1 * pr : 1);
         lctx.save(); lctx.translate(q[0], q[1]); if (ang) lctx.rotate(ang); lctx.scale(k / 100, k / 100);
         if (pm !== 'size') { var lv = Math.max(1, Math.min(LV, Math.round((0.15 + 0.85 * (it.f ? pr : 1)) * LV))); lctx.beginPath(); lctx.arc(0, 0, 50 * lv / LV, 0, Math.PI * 2); lctx.clip(); }
         lctx.drawImage(d.tip.cv, -50, -50, 100, 100); lctx.restore();
-        if (A.len === 0) { s += sp; break; }
+        if (A.len === 0) { s += step; break; }
       }
       return s;
     }
@@ -1079,6 +1162,115 @@
       live.style.display = '';
     }
     function liveSoon() { if (!liveRaf) liveRaf = requestAnimationFrame(drawLive); }
+
+    // ---- (3.38) The page as a picture while it is moved, zoomed or turned ----
+    // Painting thousands of lines again for every frame of a pan was the main cost on slower tablets. When the view
+    // starts to change on a busy page, what is on screen (and a screen's worth around it) is drawn once into a canvas
+    // that sits where the drawing is and moves with the page; the drawing itself is hidden until the view has been
+    // still for a moment. Things a canvas can't show the same (text art, shapes, live windows, clipping layers) keep
+    // the page as it is. Zooming may look a little soft until the page is drawn sharp again.
+    var PIC = { el: null, ctx: null, R: null, k: 0, t: 0, at: 0, off: !pictureAuto() };
+    var PIC_MIN = 250; // things on the page before the picture is used
+    var picImgs = {}, picPats = {};
+    function picCount() { var n = 0; for (var i = 0; i < layers.length; i++) if (layers[i].vis) n += layers[i].items.length; return n; }
+    function picImage(url) { // a loaded picture for a canvas, or null (asked for, ready next time)
+      var im = picImgs[url];
+      if (!im) { im = picImgs[url] = new Image(); im.decoding = 'async'; im.src = url; }
+      return im.complete && im.naturalWidth ? im : null;
+    }
+    function picPattern(ctx, it) {
+      var d = DEFS[it.pt], url = d && tileUrl(d, it.pc); if (!url) return null;
+      var im = picImage(url); if (!im) return null;
+      var sz = (d.sz || 48) * (it.ps || 1), per = sz * Math.max(1, it.pd || 1), key = url + '|' + per.toFixed(1) + '|' + sz.toFixed(1);
+      var T = picPats[key];
+      if (!T) { // one repeat, the tile at its size with the gap around it, 128 px for `per` page units
+        var N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N;
+        cv.getContext('2d').drawImage(im, 0, 0, N * sz / per, N * sz / per);
+        T = picPats[key] = { cv: cv, per: per, N: N };
+      }
+      var pat = ctx.createPattern(T.cv, 'repeat');
+      if (pat.setTransform && window.DOMMatrix) pat.setTransform(new DOMMatrix().rotate(it.pr || 0).scale(T.per / T.N));
+      return pat;
+    }
+    function picPaths(it) { var d = itemD(it); if (!d) return null; var P = picPathC.get(it); if (!P) { P = new Path2D(d); picPathC.set(it, P); } return P; }
+    var picPathC = new WeakMap();
+    function picDraw(ctx, m, R) { // false: something here can't be shown as a picture
+      var x0 = R.x, y0 = R.y, x1 = R.x + R.w, y1 = R.y + R.h, inkC = inkColor('ink');
+      for (var li = 0; li < layers.length; li++) {
+        var l = layers[li]; if (!l.vis || !l.items.length) continue;
+        if (l.clip && li > 0) return false;
+        var lop = l.op == null ? 1 : l.op, lb = l.blend && l.blend !== 'normal' ? l.blend : '';
+        for (var i = 0; i < l.items.length; i++) {
+          var it = l.items[i], bx = itemBox(it);
+          if (!bx || bx.x > x1 || bx.y > y1 || bx.x + bx.w < x0 || bx.y + bx.h < y0) continue;
+          if (it.t === 'x' || it.t === 'b' || (it.t === 'i' && it.mk && it.mk !== 'pdf')) return false;
+          ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+          ctx.globalAlpha = (it.o == null ? 1 : it.o) * (it.co || 1) * lop;
+          var B = BRUSH[it.b] || {};
+          ctx.globalCompositeOperation = B.blend || lb || 'source-over';
+          if (it.t === 'i') {
+            var u = imageUrl(it.src), im = u && picImage(u); if (!im) continue;
+            ctx.translate(it.x, it.y); if (it.r) ctx.rotate(it.r); ctx.drawImage(im, 0, 0, it.w, it.h); continue;
+          }
+          var col = it.c && it.c !== 'ink' ? it.c : inkC, def = it.cs && DEFS[it.cs];
+          if (def && def.k !== 'line' && it.p && it.p.length) { stampTips({ stroke: it, tip: tipStamp(def, col), m: m }, 0, ctx); continue; }
+          var P = picPaths(it); if (!P) continue;
+          if (it.t === 'f' && it.pt && DEFS[it.pt]) { var pat = picPattern(ctx, it); ctx.fillStyle = pat || col; if (!pat) ctx.globalAlpha *= 0.3; }
+          else if (B.grain) ctx.fillStyle = picGrain(ctx, col);
+          else ctx.fillStyle = col;
+          if (hasFade(it)) ctx.globalAlpha *= 0.75;
+          ctx.fill(P, it.t === 'f' ? 'evenodd' : 'nonzero');
+        }
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      return true;
+    }
+    var picGrains = {};
+    function picGrain(ctx, col) {
+      if (picGrains[col]) return picGrains[col];
+      var t = grainTile(), N = t.canvas.width, cv = document.createElement('canvas'); cv.width = cv.height = N;
+      var g = cv.getContext('2d'); g.drawImage(t.canvas, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, N, N);
+      var pat = ctx.createPattern(cv, 'repeat');
+      if (pat.setTransform && window.DOMMatrix) pat.setTransform(new DOMMatrix().scale(GRAIN_U / N));
+      return (picGrains[col] = pat);
+    }
+    function picShow(on) { slices.forEach(function (e) { e.style.visibility = on ? 'hidden' : ''; }); }
+    function picMake() { // draws the picture for the view now; false if the page can't be a picture
+      var V = o.view && o.view(); if (!V) return false;
+      var R = { x: V.x - V.w * 0.4, y: V.y - V.h * 0.4, w: V.w * 1.8, h: V.h * 1.8 };
+      var dpr = Math.min(1.5, window.devicePixelRatio || 1), k = Z() * dpr;
+      var MAXP = 3e6, MAXS = 4096; // pixels: kept within what a tablet's graphics chip handles well
+      k = Math.min(k, MAXS / R.w, MAXS / R.h, Math.sqrt(MAXP / (R.w * R.h)));
+      var W = Math.max(1, Math.round(R.w * k)), H = Math.max(1, Math.round(R.h * k));
+      if (!PIC.el) { PIC.el = document.createElement('canvas'); PIC.el.className = 'ink-pic'; PIC.ctx = PIC.el.getContext('2d'); }
+      var cv = PIC.el, ctx = PIC.ctx;
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; } else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); }
+      if (!picDraw(ctx, [k, 0, 0, k, -R.x * k, -R.y * k], R)) return false;
+      cv.style.left = (R.x + M) + 'px'; cv.style.top = (R.y + M) + 'px'; cv.style.width = R.w + 'px'; cv.style.height = R.h + 'px';
+      if (cv.parentNode !== stage) stage.insertBefore(cv, slices[0]);
+      PIC.R = R; PIC.k = k / dpr; PIC.at = performance.now();
+      return true;
+    }
+    function picEnd() {
+      clearTimeout(PIC.t); PIC.t = 0;
+      if (!PIC.R) return;
+      PIC.R = null; picShow(false);
+      if (PIC.el && PIC.el.parentNode) PIC.el.remove();
+    }
+    function picView() {
+      if (PIC.off || drag || editing) { picEnd(); return; }
+      if (!PIC.R) {
+        if (picCount() < PIC_MIN) return;
+        if (!picMake()) { picEnd(); return; }
+        picShow(true);
+      } else {
+        var V = o.view && o.view(), R = PIC.R, z = Z();
+        var out = V && (V.x < R.x || V.y < R.y || V.x + V.w > R.x + R.w || V.y + V.h > R.y + R.h);
+        if ((out || z > PIC.k * 1.8 || z < PIC.k / 2.2) && performance.now() - PIC.at > 250) { if (!picMake()) { picEnd(); return; } }
+      }
+      clearTimeout(PIC.t); PIC.t = setTimeout(picEnd, 240);
+    }
+    self.picture = function (on) { PIC.off = !on; if (!on) picEnd(); };
 
     // ---- Overlay: lasso line, tool circle, selection frame and handles ----
     var cursor = null, uiRaf = 0;
@@ -1711,6 +1903,7 @@
 
     // ---- Pointer input (positions are note coordinates) ----
     self.down = function (p, ev) {
+      picEnd();
       if (tool === 'guide') { // a guide: move it, turn it with its knob, size it with its corner
         var gh = G && G.hit(p, 18 / Z()); if (!gh) return false;
         drag = { guide: gh }; drawUi(); return true;
@@ -1965,8 +2158,8 @@
 
     // ---- What the canvas and the app can ask ----
     self.render = render;
-    self.viewChanged = function () { drawUi(); if (lockHost.firstChild) drawLocks(); };
-    self.redraw = function () { layers.forEach(function (l) { l.items.forEach(invalidate); }); render(); }; // a tip, line style or pattern changed
+    self.viewChanged = function () { picView(); drawUi(); if (lockHost.firstChild) drawLocks(); };
+    self.redraw = function () { layers.forEach(function (l) { l.items.forEach(invalidate); }); lastSig = null; render(); }; // a tip, line style or pattern changed
     self.box = function () { var all = []; layers.forEach(function (l) { if (l.vis) all = all.concat(l.items); }); return unionBox(all); };
     // Where the drawings are, coarsely (3.25, for Linear mode's arrows): visible items gathered into grid cells, one box per cell.
     self.blocks = function (cell) {
@@ -2215,6 +2408,6 @@
     return { layers: lmap, groups: gmap };
   }
   function boundsOf(layers) { var all = []; layers.forEach(function (l) { all = all.concat(l.items); }); return unionBox(all); }
-  window.QNInk = { Engine: Engine, addDefs: addDefs, defs: DEFS, itemSvg: function (it) { return itemSvg(it); }, patternDef: patternDef, widthOf: widthOf, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
+  window.QNInk = { pictureAuto: pictureAuto, Engine: Engine, addDefs: addDefs, defs: DEFS, itemSvg: function (it) { return itemSvg(it); }, patternDef: patternDef, widthOf: widthOf, shiftAll: shiftAll, freshIds: freshIds, boundsOf: boundsOf, svgFor: function (layers, prefix, dx, dy, plain) { return markup(layers, prefix, dx, dy, plain); }, normalize: normalize, hasInk: hasInk, toJSON: toJSON, thumb: thumb, BRUSH: BRUSH, BLENDS: BLENDS, newLayer: newLayer,
     _test: { slice: slice, nudge: nudge, smooth: smooth, floodOutline: floodOutline, trace: trace, hits: hits, inPoly: inPoly } };
 })();
