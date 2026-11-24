@@ -61,6 +61,8 @@
 
   // Drawing lives in ink.js (layers, brushes, erasers, lasso, nudge, fills).
   var INK = { pen: 1, erase: 1, lasso: 1, nudge: 1, fill: 1, guide: 1 };
+  // (3.35) Paper on the page: its starting size (px). A sheet and cardboard go behind drawings, to draw and stick on.
+  var PAPER = { sticky: { w: 200, h: 200 }, card: { w: 300, h: 180 }, sheet: { w: 520, h: 700 }, kraft: { w: 380, h: 280 } };
 
   // ---------- The canvas ----------
   function NoteCanvas(host, wrap, note, hooks) {
@@ -96,6 +98,8 @@
     var zPos = {}, zIdx = {}, zTie = {}; // each text box's depth and place in the stack (worked out by ink.js)
     if (!Array.isArray(note.ink) || !note.ink.length) note.ink = [window.QNInk.newLayer()];
     var ink = note.ink;
+    if (!Array.isArray(note.links)) note.links = [];
+    var links = note.links; // (3.35) connectors: { id, a, b (box ids), e: end marks '>' | '<>' | '', k: 'curve' | 'line' }
     var editors = {};          // box id -> { el, ed }
     var tool = 'type', penSeen = !!(hooks.penKnown && hooks.penKnown());
     // A finger draws, scrolls, or (auto) draws until a pen has been used on this device.
@@ -220,9 +224,9 @@
     // A version for undo: the text boxes as text, the drawing as its layers and the (unchanging) items in them.
     // Items are shared between versions, never copied: ink.js swaps in a copy before changing one.
     function copyLayers(ls) { return ls.map(function (l) { var c = {}; for (var k in l) c[k] = l[k]; c.items = l.items.slice(); return c; }); }
-    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; if (b.z != null) o.z = b.z; if (b.ls) o.ls = b.ls; if (b.ps != null) o.ps = b.ps; if (b.tk != null) o.tk = b.tk; return o; })), ink: copyLayers(ink) }; }
+    function snapshot() { return { boxes: JSON.stringify(boxes.map(function (b) { var o = { id: b.id, x: b.x, y: b.y, w: b.w, md: b.md }; if (b.l) o.l = b.l; if (b.r) o.r = b.r; if (b.g) o.g = b.g; if (b.co) o.co = b.co; if (b.z != null) o.z = b.z; if (b.ls) o.ls = b.ls; if (b.ps != null) o.ps = b.ps; if (b.tk != null) o.tk = b.tk; if (b.st) { o.st = b.st; o.sc = b.sc; o.h = b.h; } return o; })), ink: copyLayers(ink), links: JSON.stringify(links) }; }
     function sameAs(a, b) {
-      if (!b || a.boxes !== b.boxes || a.ink.length !== b.ink.length) return false;
+      if (!b || a.boxes !== b.boxes || a.links !== b.links || a.ink.length !== b.ink.length) return false;
       for (var i = 0; i < a.ink.length; i++) {
         var x = a.ink[i], y = b.ink[i];
         if (x.id !== y.id || x.name !== y.name || x.gid !== y.gid || x.gname !== y.gname || x.vis !== y.vis || x.lock !== y.lock || x.op !== y.op || x.blend !== y.blend || x.clip !== y.clip || x.items.length !== y.items.length) return false;
@@ -297,7 +301,11 @@
         // A text box without its own width: a comfortable reading width, not the whole screen (3.18.1), so in
         // landscape the rest of the page stays free for a quick scribble with the pen.
         e.el.style.width = (b.w || Math.max(160, Math.min(TEXT_W, autoWidth() - b.x))) + 'px';
+        // (3.35) Paper: a sticky note, an index card, a sheet or cardboard, with its own size and colour.
+        if (b.st) { e.el.dataset.st = b.st; e.el.style.setProperty('--qn-mh', (b.h || PAPER[b.st].h) + 'px'); if (b.sc) e.el.style.setProperty('--qn-sc', b.sc); else e.el.style.removeProperty('--qn-sc'); }
+        else if (e.el.dataset.st) { delete e.el.dataset.st; e.el.style.removeProperty('--qn-mh'); e.el.style.removeProperty('--qn-sc'); }
       });
+      drawLinks();
       var c = contentRight();
       var W = Math.max(host.clientWidth, c.r + 2 * M + 160);
       var H = Math.max(host.clientHeight, c.b + 2 * M + 200);
@@ -308,8 +316,12 @@
     }
 
     // ---- Text boxes ----
+    function backPaper(e) { // (3.35) a sheet or cardboard lies under the other notes when they are at the same depth
+      var first = stage.querySelector('.box'); if (first && first !== e) stage.insertBefore(e, first);
+    }
     function mountBox(b) {
       var e = el('div', 'box', stage);
+      if (b.st === 'sheet' || b.st === 'kraft') backPaper(e);
       e.dataset.id = b.id;
       if (zIdx[b.id] != null) e.style.zIndex = zIdx[b.id];
       var grip = el('div', 'grip', e); grip.title = 'Drag to move'; grip.innerHTML = '<svg viewBox="0 0 10 16" width="10" height="16"><circle cx="2" cy="3" r="1.4"/><circle cx="8" cy="3" r="1.4"/><circle cx="2" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="2" cy="13" r="1.4"/><circle cx="8" cy="13" r="1.4"/></svg>';
@@ -341,7 +353,7 @@
             if (awayNow() || (away && away.id === b.id)) { away = away || { id: b.id, from: sl.from, to: sl.to }; return; }
             if (active && active.ed === ed && !e.contains(document.activeElement)) { hooks.blur(ed); }
             // A text box that was added and left empty goes away again.
-            if (!isFirst && boxes.indexOf(b) > -1 && !b.md.trim() && !e.contains(document.activeElement)) removeBox(b.id);
+            if (!isFirst && !b.st && boxes.indexOf(b) > -1 && !b.md.trim() && !e.contains(document.activeElement)) removeBox(b.id); // (paper stays, written on or not)
           }, 200);
         },
         onSelectionUpdate: function () { hooks.selection(ed); keepCaret(); },
@@ -493,13 +505,16 @@
       var e = editors[id];
       if (e) { e.ed.destroy(); e.el.remove(); delete editors[id]; }
       boxes.splice(i, 1);
+      for (var k = links.length - 1; k >= 0; k--) if (links[k].a === id || links[k].b === id) links.splice(k, 1); // its connectors go with it
       if (selected && selected.id === id) select(null);
       changed('layout');
     }
-    function addBox(x, y) {
+    function addBox(x, y, o) {
       var w = Math.max(160, Math.min(320, autoWidth() - x));
       var b = { id: 'b' + window.Notes.shortId(), x: Math.max(0, x), y: Math.max(0, y), w: w, md: '' };
-      if (eng && eng.topAnchor) b.z = eng.topAnchor(); // new text goes in front
+      if (o && o.st) { b.st = o.st; b.w = PAPER[o.st].w; b.h = PAPER[o.st].h; if (o.sc) b.sc = o.sc; }
+      if (o && o.st === 'sheet' || o && o.st === 'kraft') b.z = ''; // a sheet goes to the back of its layer: draw and stick things on it
+      else if (eng && eng.topAnchor) b.z = eng.topAnchor(); // new text goes in front
       var al = eng && eng.activeLayer ? eng.activeLayer() : null;
       if (al && al !== ink[0].id) b.l = al; // new text goes on the layer being worked on
       // On a turned page, new text starts straight to the screen; after that it belongs to the page and turns with it.
@@ -577,6 +592,98 @@
       selBar.querySelector('[data-act=delete]').classList.toggle('hidden', selected.kind === 'box' && boxes[0].id === selected.id && boxes.length === 1);
     }
     function select(sel) { selected = sel; drawSelection(); }
+
+    // ---- Connectors (3.35): lines between text boxes and paper that follow them when they move ----
+    // With the Connect tool, drag from one thing to another; drag out to empty space for a new note there, already
+    // joined (for brain maps). Tap a line (Connect, Text or Hand) for its bar: arrow ends, curved/straight, delete.
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    var lnk = document.createElementNS(SVGNS, 'svg'); lnk.setAttribute('class', 'qn-links'); stage.appendChild(lnk);
+    lnk.innerHTML = '<defs><marker id="qnArr-' + note.id + '" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke"/></marker></defs><g class="lk"></g><path class="ltemp hidden"/>';
+    var lkG = lnk.querySelector('.lk'), lkTemp = lnk.querySelector('.ltemp'), selLink = null, ARR = 'url(#qnArr-' + note.id + ')';
+    var linkBar = el('div', 'linkbar hidden', stage);
+    linkBar.innerHTML = '<button type="button" data-le=">" title="Arrow at the end">→</button><button type="button" data-le="<>" title="Arrows at both ends">↔</button><button type="button" data-le="" title="No arrows">—</button>' +
+      '<button type="button" data-lk title="Curved or straight">Curve</button><button type="button" data-ldel>Delete</button>';
+    linkBar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    linkBar.addEventListener('click', function (e) {
+      var bt = e.target.closest('button'), l = selLink && links.filter(function (x) { return x.id === selLink; })[0]; if (!bt || !l) return;
+      if (bt.hasAttribute('data-ldel')) { links.splice(links.indexOf(l), 1); selLink = null; }
+      else if (bt.hasAttribute('data-lk')) l.k = l.k === 'line' ? 'curve' : 'line';
+      else l.e = bt.dataset.le;
+      drawLinks(); changed('layout'); record();
+    });
+    function boxRect(id) {
+      var b = boxes.filter(function (x) { return x.id === id; })[0], e = editors[id]; if (!b || !e) return null;
+      var L = layerOfBox(b); if (L && L.vis === false) return null;
+      return { x: b.x + M, y: b.y + M, w: e.el.offsetWidth, h: e.el.offsetHeight };
+    }
+    function edgeTo(r, px, py, gap) { // where a line from the middle of r towards (px, py) leaves r, a little outside
+      var cx = r.x + r.w / 2, cy = r.y + r.h / 2, dx = px - cx, dy = py - cy;
+      if (!dx && !dy) return [cx, cy];
+      var t = Math.min(dx ? (r.w / 2 + gap) / Math.abs(dx) : Infinity, dy ? (r.h / 2 + gap) / Math.abs(dy) : Infinity);
+      return [cx + dx * t, cy + dy * t];
+    }
+    function linkPath(p1, p2, curve) {
+      if (!curve) return 'M' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + 'L' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1);
+      var dx = p2[0] - p1[0], dy = p2[1] - p1[1], hz = Math.abs(dx) >= Math.abs(dy), k = 0.45;
+      var c1 = hz ? [p1[0] + dx * k, p1[1]] : [p1[0], p1[1] + dy * k], c2 = hz ? [p2[0] - dx * k, p2[1]] : [p2[0], p2[1] - dy * k];
+      return 'M' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + 'C' + c1.map(function (v) { return v.toFixed(1); }).join(' ') + ' ' + c2.map(function (v) { return v.toFixed(1); }).join(' ') + ' ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1);
+    }
+    function drawLinks() {
+      if (!lkG) return; // (layout before this part of the canvas is set up)
+      var W = stage.offsetWidth, H = stage.offsetHeight; lnk.setAttribute('width', W); lnk.setAttribute('height', H);
+      var h = '', bar = null;
+      links.forEach(function (l) {
+        var a = boxRect(l.a), b = boxRect(l.b); if (!a || !b) return;
+        var p1 = edgeTo(a, b.x + b.w / 2, b.y + b.h / 2, 6), p2 = edgeTo(b, a.x + a.w / 2, a.y + a.h / 2, 6), d = linkPath(p1, p2, l.k !== 'line');
+        var on = l.id === selLink, e = l.e == null ? '>' : l.e;
+        h += '<path class="lline' + (on ? ' on' : '') + '" d="' + d + '"' + (e ? ' marker-end="' + ARR + '"' : '') + (e === '<>' ? ' marker-start="' + ARR + '"' : '') + '/>' +
+          '<path class="lhit" data-lid="' + l.id + '" d="' + d + '"/>';
+        if (on) bar = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, l];
+      });
+      lkG.innerHTML = h;
+      linkBar.classList.toggle('hidden', !bar);
+      if (bar) {
+        linkBar.style.left = (bar[0] - 90) + 'px'; linkBar.style.top = (bar[1] - 52) + 'px';
+        var e2 = bar[2].e == null ? '>' : bar[2].e;
+        [].forEach.call(linkBar.querySelectorAll('[data-le]'), function (bt) { bt.setAttribute('aria-pressed', bt.dataset.le === e2 ? 'true' : 'false'); });
+        linkBar.querySelector('[data-lk]').textContent = bar[2].k === 'line' ? 'Straight' : 'Curve';
+      }
+    }
+    function pickLink(id) { selLink = id; select(null); drawLinks(); }
+    on(host, 'pointerdown', function (ev) { if (selLink && !(ev.target.closest && (ev.target.closest('.linkbar') || ev.target.closest('.lhit')))) { selLink = null; drawLinks(); } }, true);
+    function linkStart(ev, onBox) {
+      ev.preventDefault();
+      if (document.activeElement && stage.contains(document.activeElement)) document.activeElement.blur();
+      drag = { type: 'link', from: onBox.dataset.id, id: ev.pointerId, sx: ev.clientX, sy: ev.clientY };
+      host.setPointerCapture(ev.pointerId);
+    }
+    function linkMove(ev) {
+      var a = boxRect(drag.from); if (!a) return;
+      var p = point(ev), px = p[0] + M, py = p[1] + M;
+      var over = document.elementFromPoint(ev.clientX, ev.clientY), ob = over && over.closest && over.closest('.box'), r = ob && stage.contains(ob) && ob.dataset.id !== drag.from ? boxRect(ob.dataset.id) : null;
+      var p2 = r ? edgeTo(r, a.x + a.w / 2, a.y + a.h / 2, 6) : [px, py], p1 = edgeTo(a, p2[0], p2[1], 6);
+      lkTemp.setAttribute('d', linkPath(p1, p2, true)); lkTemp.classList.remove('hidden');
+      lkTemp.setAttribute('marker-end', ARR);
+      drag.moved = drag.moved || Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) > 12;
+    }
+    function linkEnd(d, ev) {
+      lkTemp.classList.add('hidden');
+      if (ev.type !== 'pointerup' || !d.moved) return;
+      var st = hooks.linkStyle ? hooks.linkStyle() : { e: '>', k: 'curve' };
+      var over = document.elementFromPoint(ev.clientX, ev.clientY), ob = over && over.closest && over.closest('.box');
+      var to = ob && stage.contains(ob) ? ob.dataset.id : null;
+      if (to === d.from) return;
+      if (!to) { // out to empty space: a new note there, on the same kind of paper, already joined
+        var fb = boxes.filter(function (x) { return x.id === d.from; })[0], p = point(ev), k = fb && fb.st && fb.st !== 'sheet' && fb.st !== 'kraft' ? fb.st : null;
+        var w = k ? PAPER[k].w : 220, hh = k ? PAPER[k].h : 40;
+        var nb = addBox(p[0] - w / 2, p[1] - hh / 2, k ? { st: k, sc: fb.sc } : null);
+        if (!k) nb.w = 220;
+        to = nb.id;
+      }
+      if (links.some(function (l) { return l.a === d.from && l.b === to || l.a === to && l.b === d.from; })) return;
+      links.push({ id: 'k' + window.Notes.shortId(), a: d.from, b: to, e: st.e, k: st.k });
+      layout(); changed('layout'); record();
+    }
     selBar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     selBar.addEventListener('click', function (e) {
       if (!e.target.closest('[data-act=delete]') || !selected) return;
@@ -605,6 +712,10 @@
       if (drag && drag.type === 'ink' && isFinger && drag.finger) { eng.cancel(); drag = null; }
       if (drag && drag.type === 'pan' && isFinger) { drag.fingers[ev.pointerId] = [ev.clientX, ev.clientY]; return; }
 
+      // (3.35) A connector: tap it for its bar.
+      var onLk = ev.target.closest && ev.target.closest('.lhit');
+      if (onLk && (tool === 'link' || tool === 'type' || tool === 'hand' || tool === 'select')) { ev.preventDefault(); pickLink(onLk.dataset.lid); return; }
+      if (tool === 'link') { if (onBox && !onGrip && !onResize) linkStart(ev, onBox); else if (!onGrip && !onResize) startPan(ev); if (!onGrip && !onResize) return; }
       // Moving or resizing a text box by its handles (any tool).
       if (onGrip || onResize || (tool === 'select' && onBox)) {
         var id = onBox.dataset.id, b = boxes.filter(function (x) { return x.id === id; })[0];
@@ -612,7 +723,7 @@
         if (tool === 'select' || onGrip || onResize) {
           ev.preventDefault();
           if (onResize && !b.w) b.w = editors[id].el.offsetWidth;
-          drag = { type: onResize ? 'resize' : 'move', item: b, sx: ev.clientX, sy: ev.clientY, ox: b.x, oy: b.y, ow: b.w, id: ev.pointerId };
+          drag = { type: onResize ? 'resize' : 'move', item: b, sx: ev.clientX, sy: ev.clientY, ox: b.x, oy: b.y, ow: b.w, oh: b.h, id: ev.pointerId };
           host.setPointerCapture(ev.pointerId);
           return;
         }
@@ -751,7 +862,8 @@
     on(host, 'pointermove', function (ev) {
       if (!drag) { if (INK[tool]) eng.move(point(ev), ev); return; } // the eraser/nudge circle follows a hovering pen
       // (3.33, #90) Drawing or moving something under a button: that button steps aside until you lift.
-      if (hooks.dodge && ev.pointerId === drag.id && (drag.type === 'ink' && !drag.pickPan || drag.type === 'move' || drag.type === 'resize')) hooks.dodge(ev.clientX, ev.clientY);
+      if (hooks.dodge && ev.pointerId === drag.id && (drag.type === 'ink' && !drag.pickPan || drag.type === 'move' || drag.type === 'resize' || drag.type === 'link')) hooks.dodge(ev.clientX, ev.clientY);
+      if (drag.type === 'link') { if (ev.pointerId === drag.id) linkMove(ev); return; }
       if (drag.type === 'ink' && drag.pickPan && ev.pointerId === drag.id) {
         if (Math.hypot(ev.clientX - drag.pickPan.x, ev.clientY - drag.pickPan.y) > 8) {
           var pp = drag.pickPan; eng.cancel(); drag = null;
@@ -782,6 +894,7 @@
         layout();
       } else if (drag.type === 'resize') {
         drag.item.w = Math.max(120, (drag.ow || 200) + dd[0]);
+        if (drag.item.st) drag.item.h = Math.max(60, (drag.oh || PAPER[drag.item.st].h) + dd[1]); // paper: width and height
         layout();
       }
     });
@@ -823,9 +936,10 @@
       }
       if (ev.pointerId !== drag.id) return;
       var d = drag; drag = null;
+      if (d.type === 'link') { linkEnd(d, ev); return; }
       if (d.type === 'ink') { drag = d; inkMove(ev); drag = null; eng.up(point(ev)); return; }
       if (d.type === 'move' || d.type === 'resize') {
-        var mv = d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow;
+        var mv = d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow || d.item.h !== d.oh;
         if (mv) changed('layout');
         if (d.typeTap) { if (mv) typeTaps = []; else typeTapUp(d.typeTap); }
       }
@@ -1396,6 +1510,23 @@
     var lastBoxId = null;
     function lastBox() { var id = active ? active.box.id : lastBoxId; var b = boxes.filter(function (x) { return x.id === id; })[0]; return b && editors[b.id] ? b : null; }
     self.textTarget = function () { var b = lastBox(); return b ? { ed: editors[b.id].ed, typing: editors[b.id].el.contains(document.activeElement), ls: b.ls || null, ps: b.ps == null ? null : b.ps, tk: b.tk == null ? null : b.tk } : null; };
+    // (3.35) Paper: change the box in use (st '' = plain text again), or add a new piece in the middle of the screen.
+    self.paper = function (st, sc) {
+      var b = (selected && selected.kind === 'box' && boxes.filter(function (x) { return x.id === selected.id; })[0]) || lastBox(); if (!b) return false;
+      if (!st) { delete b.st; delete b.sc; delete b.h; }
+      else { if (b.st !== st) { b.w = PAPER[st].w; b.h = PAPER[st].h; } b.st = st; if (sc) b.sc = sc; else if (st !== 'sticky') delete b.sc; if ((st === 'sheet' || st === 'kraft') && editors[b.id]) backPaper(editors[b.id].el); }
+      layout(); drawSelection(); changed('layout'); record(); return true;
+    };
+    self.addPaper = function (st, sc) {
+      var c = toWorld(host.clientWidth / 2, Math.max(topIn() + 40, host.clientHeight * 0.42)), P = PAPER[st];
+      // Near the middle of the screen, in the first free spot (a sheet or cardboard may lie under it).
+      var x0 = c[0] - M - P.w / 2, y0 = c[1] - M - P.h / 2, dx = P.w + 28, dy = P.h + 28, spots = [[0, 0], [1, 0], [0, 1], [-1, 0], [1, 1], [-1, 1], [2, 0], [0, -1], [2, 1], [-2, 0]];
+      var taken = boxes.filter(function (o) { return o.st !== 'sheet' && o.st !== 'kraft' && editors[o.id]; }).map(function (o) { return [o.x, o.y, o.x + editors[o.id].el.offsetWidth, o.y + editors[o.id].el.offsetHeight]; });
+      var at = st === 'sheet' || st === 'kraft' ? [0, 0] : spots.filter(function (q) { var x = x0 + q[0] * dx, y = y0 + q[1] * dy; return x >= 0 && y >= 0 && !taken.some(function (r) { return x < r[2] && x + P.w > r[0] && y < r[3] && y + P.h > r[1]; }); })[0] || [0, 0];
+      var b = addBox(x0 + at[0] * dx, y0 + at[1] * dy, { st: st, sc: sc });
+      layout(); changed('layout'); record(); return b;
+    };
+    self.paperOf = function () { var b = (selected && selected.kind === 'box' && boxes.filter(function (x) { return x.id === selected.id; })[0]) || lastBox(); return b ? { st: b.st || '', sc: b.sc || '' } : null; };
     self.boxSpacing = function (k, v) {
       var b = lastBox(); if (!b) return false;
       if (v == null || v === '') delete b[k]; else b[k] = +v;
@@ -1414,6 +1545,7 @@
     function restore(s) {
       boxes.length = 0; JSON.parse(s.boxes).forEach(function (b) { boxes.push(b); });
       ink.length = 0; copyLayers(s.ink).forEach(function (g) { ink.push(g); });
+      links.length = 0; JSON.parse(s.links || '[]').forEach(function (l) { links.push(l); }); selLink = null;
       select(null); active = null; eng.reset(); renderAll();
       hooks.change('restore');
       hooks.history(hist.length > 1, future.length > 0);

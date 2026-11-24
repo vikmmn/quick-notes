@@ -45,6 +45,12 @@
       try { var j = JSON.parse(inkMatch[1]); ink = window.QNInk.normalize(j.layers ? j.layers : j.groups || []); } catch (e) { ink = []; }
       body = body.slice(0, inkMatch.index) + body.slice(inkMatch.index + inkMatch[0].length);
     }
+    // (3.35) Connectors between text boxes and paper: one line, <!-- qn:links [{"id","a","b","e","k"}] -->
+    var links = [], lkMatch = /\n?<!-- qn:links (\[[\s\S]*?\]) -->[ \t]*\n?/.exec(body);
+    if (lkMatch) {
+      try { links = JSON.parse(lkMatch[1]).filter(function (l) { return l && l.a && l.b; }); } catch (e) { links = []; }
+      body = body.slice(0, lkMatch.index) + body.slice(lkMatch.index + lkMatch[0].length);
+    }
     var lines = body.split('\n'), boxes = [], cur = null, before = [];
     lines.forEach(function (line) {
       var m = BOX.exec(line);
@@ -58,6 +64,9 @@
         if (o.ls) cur.ls = +o.ls; // (3.28) line spacing of the box
         if (o.ps != null) cur.ps = +o.ps; // (3.28) space after each paragraph, in em
         if (o.tk != null) cur.tk = +o.tk; // (3.34) letter spacing of the box, in em
+        if (o.st) cur.st = String(o.st); // (3.35) paper: 'sticky' | 'card' | 'sheet' | 'kraft'
+        if (o.sc) cur.sc = String(o.sc); // its colour
+        if (o.h) cur.h = +o.h; // its height (paper keeps its size; plain text grows with what is in it)
         if (o.l) cur.l = String(o.l); // the drawing layer the text belongs to (hidden, locked and faded with it)
         if (o.z != null) cur.z = String(o.z); // the drawing item it sits just in front of ('' = the back of its layer)
         boxes.push(cur);
@@ -67,12 +76,12 @@
     var lead = before.join('\n').trim();
     if (lead || !boxes.length) boxes.unshift({ id: 'b0', x: 0, y: 0, w: null, lines: [lead] });
     boxes.forEach(function (b) { b.md = b.lines.join('\n').replace(/^\n+|\s+$/g, ''); delete b.lines; });
-    return { boxes: boxes, ink: ink };
+    return { boxes: boxes, ink: ink, links: links };
   }
   function hasInk(n) { return !!(n && window.QNInk && window.QNInk.hasInk(n.ink)); }
   function isPlain(n) {
     var b = n.boxes || [];
-    return !hasInk(n) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w && !b[0].ls && b[0].ps == null && b[0].tk == null;
+    return !hasInk(n) && !(n.links && n.links.length) && b.length === 1 && !b[0].x && !b[0].y && !b[0].w && !b[0].ls && b[0].ps == null && b[0].tk == null && !b[0].st;
   }
   function readingOrder(boxes) {
     return (boxes || []).slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); });
@@ -92,10 +101,12 @@
       if (b.ls) meta.ls = b.ls;
       if (b.ps != null) meta.ps = b.ps;
       if (b.tk != null) meta.tk = b.tk;
+      if (b.st) { meta.st = b.st; if (b.sc) meta.sc = b.sc; if (b.h) meta.h = Math.round(b.h); }
       if (b.z != null) meta.z = b.z;
       return '<!-- qn:box ' + JSON.stringify(meta) + ' -->\n' +
         String(b.md || '').replace(/\s+$/, '');
     });
+    if (n.links && n.links.length) parts.push('<!-- qn:links ' + JSON.stringify(n.links) + ' -->');
     if (hasInk(n)) parts.push('<!-- qn:ink\n' + JSON.stringify(window.QNInk.toJSON(n.ink)) + '\n-->');
     return parts.join('\n\n');
   }
@@ -121,7 +132,7 @@
     var n = {
       id: (fm.id || '').trim() || ('file-' + (file ? file.id : uuid())),
       title: title,
-      boxes: c.boxes, ink: c.ink, body: '',
+      boxes: c.boxes, ink: c.ink, links: c.links, body: '',
       labels: parseLabels(fm.labels),
       pinned: /^\s*true\s*$/i.test(fm.pinned || ''),
       order: fm.order != null && fm.order !== '' && !isNaN(+fm.order) ? +fm.order : null, // its place in the list, once dragged there
@@ -142,7 +153,8 @@
   }
   // Notes saved by version 1 kept only `body`: give them a canvas.
   function upgrade(n) {
-    if (!n.boxes) { var c = parseCanvas(n.body || ''); n.boxes = c.boxes; n.ink = c.ink; }
+    if (!n.boxes) { var c = parseCanvas(n.body || ''); n.boxes = c.boxes; n.ink = c.ink; n.links = c.links; }
+    if (!Array.isArray(n.links)) n.links = [];
     n.ink = n.ink && n.ink.length ? window.QNInk.normalize(n.ink) : [];
     if (n.folderId === undefined) n.folderId = null;
     delete n.kind; delete n.folder;
@@ -262,7 +274,7 @@
   // ---------------- Syncing with Google Drive ----------------
   // Push: every changed note is written to its own file (new notes go to their folder, or Notes › Inbox).
   // Pull: every Markdown file under Notes, in any folder depth, is listed; only changed files are downloaded.
-  var FIELDS_COPY = ['title', 'boxes', 'ink', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId'];
+  var FIELDS_COPY = ['title', 'boxes', 'ink', 'links', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId'];
   function Sync(store, notes, hooks) {
     var state = { phase: 'idle', error: null, lastSynced: null };
     var running = false, again = false, againPull = false, timer = null, folders = null, tree = {};
