@@ -592,6 +592,10 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .ink-locks { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 100004; }
   .lk-sign { position: absolute; width: 22px; height: 22px; min-height: 0 !important; padding: 0 !important; border-radius: 50%; display: grid; place-items: center;
     background: var(--accent); color: #fff; border: 2px solid var(--paper); transform-origin: top left; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  #toolQuick.grid2 { display: grid; grid-template-columns: 1fr 1fr; }
+  #toolQuick.grid2 hr, #toolQuick.grid2 [data-qc] { grid-column: 1 / -1; }
+  #toolQuick.grid2 { gap: 2px; }
+  #toolQuick.grid2 button { padding: 5px 4px; font-size: 12px; }
   #toolQuick hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }
   .wn-all { display: block; width: 100%; margin-top: 8px; background: transparent !important; border: 0 !important; color: var(--accent); font-weight: 600; }
   #importBar { position: fixed; z-index: 58; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top)); max-width: calc(100vw - 20px);
@@ -637,7 +641,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .linkbar.hidden { display: none; }
   .linkbar button { min-height: 32px; min-width: 34px; padding: 4px 10px; border-radius: 8px; font-size: 14px; background: transparent; color: var(--ink); }
   .linkbar button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); }
-  .stage[data-tool=pen] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box, .stage[data-tool=guide] .box, .stage[data-tool=text] .box { pointer-events: none; }
+  .stage[data-tool=pen] .box, .stage[data-tool=curve] .box, .stage[data-tool=erase] .box, .stage[data-tool=lasso] .box, .stage[data-tool=nudge] .box, .stage[data-tool=fill] .box, .stage[data-tool=guide] .box, .stage[data-tool=text] .box { pointer-events: none; }
   .stage[data-tool=text] { cursor: text; }
   .ink-textedit { position: absolute; transform-origin: 0 0; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--accent); outline-offset: 3px;
     background: transparent; resize: none; overflow: hidden; white-space: pre; z-index: 100001; min-width: 12px; caret-color: var(--accent); }
@@ -719,7 +723,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .box .resize { position: absolute; right: -10px; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: none; touch-action: none; }
   .box.selected .resize, .box.focused .resize { display: block; }
   .box .resize::after { content: ""; position: absolute; left: 7px; top: 50%; width: 4px; height: 28px; margin-top: -14px; border-radius: 2px; background: var(--muted); opacity: .5; }
-  .stage[data-tool=pen], .stage[data-tool=fill] { cursor: crosshair; }
+  .stage[data-tool=pen], .stage[data-tool=curve], .stage[data-tool=fill] { cursor: crosshair; }
   .stage[data-tool=erase], .stage[data-tool=nudge] { cursor: none; }
   .stage[data-tool=lasso], .stage[data-tool=guide] { cursor: default; }
   .sel { position: absolute; border: 1.5px dashed var(--accent); border-radius: 8px; pointer-events: none; }
@@ -863,6 +867,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></symbol>
   <symbol id="i-connect" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="8" height="6" rx="1.5"/><rect x="13.5" y="14.5" width="8" height="6" rx="1.5"/><path d="M10.5 6.5c4 0 6.5 2 6.5 6.5v1"/><path d="M15 12.5l2 2 2-2"/></symbol>
   <symbol id="i-lasso" viewBox="0 0 24 24"><ellipse cx="12" cy="9.5" rx="8" ry="5.5" stroke-dasharray="3 2.4"/><path d="M8.5 14.3c-1.6 1.2-1.4 3.4.6 3.9 1.6.4 2-1.4.9-2.2M9 18l-1.5 3"/></symbol>
+  <symbol id="i-curve" viewBox="0 0 24 24"><path d="M3 19C6 7 17 18 21 5"/><path d="M3 19L9 6.5M21 5l-6 11" stroke-dasharray="1.6 2"/><rect x="7.6" y="5" width="3" height="3"/><rect x="13.6" y="14.6" width="3" height="3"/></symbol>
   <symbol id="i-nudge" viewBox="0 0 24 24"><path d="M3 15c3-6 6 2 9-3s5-6 9-2"/><circle cx="12" cy="12" r="5.5" stroke-dasharray="2 2"/></symbol>
   <symbol id="i-ruler" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6 8v3M9.5 8v4.5M13 8v3M16.5 8v4.5"/></symbol>
   <symbol id="i-fill" viewBox="0 0 24 24"><path d="M5 11l6-6 7 7-6 6a2 2 0 01-2.8 0L5 13.8A2 2 0 015 11z"/><path d="M5 12h13M19.5 15.5s1.5 1.8 1.5 2.8a1.5 1.5 0 01-3 0c0-1 1.5-2.8 1.5-2.8z"/></symbol>
@@ -945,6 +950,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
     <button class="tool" type="button" data-tool="text" aria-pressed="false" title="Text art" aria-label="Text art"><svg class="i"><use href="#i-textart"/></svg><span class="tl">Text art</span></button>
     <button class="tool" type="button" data-tool="link" aria-pressed="false" title="Connect: drag from one note to another (or out to empty space for a new one)" aria-label="Connect"><svg class="i"><use href="#i-connect"/></svg><span class="tl">Connect</span></button>
     <button class="tool" type="button" data-tool="pen" aria-pressed="false" title="Pen" aria-label="Pen"><svg class="i"><use href="#i-pen"/></svg><span class="tl">Pen</span><i class="pdot"></i></button>
+    <button class="tool" type="button" data-tool="curve" aria-pressed="false" title="Curve: line, Catmull-Rom, Bézier, B-spline, NURBS, T-spline" aria-label="Curve"><svg class="i"><use href="#i-curve"/></svg><span class="tl">Curve</span></button>
     <button class="tool" type="button" data-tool="erase" aria-pressed="false" title="Erase" aria-label="Erase"><svg class="i"><use href="#i-eraser"/></svg><span class="tl">Erase</span></button>
     <button class="tool" type="button" data-tool="lasso" aria-pressed="false" title="Select" aria-label="Select"><svg class="i"><use href="#i-lasso"/></svg><span class="tl">Select</span></button>
     <button class="tool" type="button" data-tool="nudge" aria-pressed="false" title="Nudge / Smooth" aria-label="Nudge / Smooth"><svg class="i"><use href="#i-nudge"/></svg><span class="tl">Nudge / Smooth</span></button>
@@ -1051,6 +1057,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
 <script src="vendor.js"></script>
 <script src="bg.js"></script>
 <script src="guides.js"></script>
+<script src="curves.js"></script>
 <script src="ink.js"></script>
 <script src="merge.js"></script>
 <script src="notes.js"></script>
