@@ -1892,8 +1892,32 @@
     var desk = !phone && matchMedia('(hover: hover) and (pointer: fine)').matches;
     return phone ? (w > h ? 'phone-l' : 'phone-p') : desk ? 'desk' : (w > h ? 'tab-l' : 'tab-p');
   }
-  function tlItems() { // the rail's buttons, in the user's order
-    return [].slice.call($('tools').querySelectorAll('.tool-row > button.tool')).filter(function (b) { return b.dataset.tool || b.dataset.act; }).map(function (b) {
+  // ---- Workspaces (3.40, #117): Write, Draw, Links, Board on the same page. Hand, Select and Layers are in every
+  // workspace (and Colours in every tool's card); each workspace adds its own tools. "All tools" shows everything,
+  // so no tool is ever out of reach. Only which tools show changes: the page, and what is on it, stays the same.
+  var WS = { all: null, write: ['type', 'text', 'image'], draw: ['pen', 'erase', 'nudge', 'fill', 'guide', 'text', 'image'], links: ['link', 'type', 'image'], board: ['type', 'link', 'pen', 'erase', 'image'] };
+  var WS_SHARED = ['hand', 'lasso', 'layers'], WS_NAMES = { all: 'All tools', write: 'Write', draw: 'Draw', links: 'Links', board: 'Board' }, WS_SHORT = { all: 'All', write: 'W', draw: 'D', links: 'L', board: 'B' };
+  function wsHas(k) { var l = WS[PREF.ws || 'all']; return !l || WS_SHARED.indexOf(k) > -1 || l.indexOf(k) > -1; }
+  function wsBtnHtml(id) { var w = PREF.ws || 'all'; return '<button type="button" class="tool tlb wsbtn"' + (id ? ' id="wsBtn"' : '') + ' data-wspick aria-label="Workspace: ' + WS_NAMES[w] + '" title="Workspace: ' + WS_NAMES[w] + '"><b>' + WS_SHORT[w] + '</b></button>'; }
+  function applyWs() {
+    var row = $('tools').querySelector('.tool-row'); if (!row) return;
+    var old = $('wsBtn'); if (old) old.remove(); row.insertAdjacentHTML('afterbegin', wsBtnHtml(true));
+    [].forEach.call(row.querySelectorAll('button.tool'), function (b) { var k = b.dataset.tool || b.dataset.act; if (k) b.classList.toggle('ws-off', !wsHas(k)); });
+  }
+  function wsPick(btn) {
+    var p0 = $('tools').querySelector('.tl-wspop'); if (p0) { p0.remove(); return; }
+    var p = tlAdd(Object.keys(WS).map(function (k) { return '<button type="button" data-wsv="' + k + '" aria-pressed="' + ((PREF.ws || 'all') === k) + '">' + WS_NAMES[k] + '</button>'; }).join(''), 'tl-wspop');
+    var r = btn.getBoundingClientRect(), pw = p.offsetWidth, ph = p.offsetHeight;
+    p.style.left = Math.round(r.left + r.width / 2 > innerWidth / 2 ? Math.max(8, r.left - pw - 8) : Math.min(innerWidth - pw - 8, r.right + 8)) + 'px';
+    p.style.top = Math.round(Math.max(8, Math.min(innerHeight - ph - 8, r.top))) + 'px';
+  }
+  function wsSet(v) {
+    PREF.ws = v === 'all' ? '' : v; savePref();
+    if (!wsHas(PREF.tool)) { var l = WS[v] || []; var t = l.filter(function (k) { return $('tools').querySelector('.tool-row [data-tool="' + k + '"]'); })[0] || 'hand'; setTool(t); }
+    applyLayout(); toast(WS_NAMES[v] + (v === 'all' ? ': every tool' : ' workspace'), null, null, 1500);
+  }
+  function tlItems() { // the rail's buttons, in the user's order (those of the workspace in use)
+    return [].slice.call($('tools').querySelectorAll('.tool-row > button.tool')).filter(function (b) { return (b.dataset.tool || b.dataset.act) && !b.classList.contains('ws-off'); }).map(function (b) {
       return { tool: b.dataset.tool, act: b.dataset.act, label: b.getAttribute('aria-label') || b.title || '', icon: (b.querySelector('svg') || {}).outerHTML || '' };
     });
   }
@@ -1922,7 +1946,7 @@
   function applyLayout() {
     var tl = PREF.tl || 'rail', dev = devClass(), r = document.documentElement;
     r.dataset.tl = tl; r.dataset.dev = dev; TL.dev = dev;
-    tlClear();
+    tlClear(); applyWs();
     if (tl === 'wheel') buildWheel(); else if (tl === 'pucks') buildPucks(); else if (tl === 'pen1') buildPal();
     if ($('tools').classList.contains('opts')) placeOpts();
   }
@@ -2083,12 +2107,40 @@
     // (3.40, #109/#110/#116) No copies of tools that are in the rings: one button with the tool in use opens all the
     // tools (a tap, no holding), then Colours and Layers.
     var all = tlItems(), cur = all.filter(function (x) { return x.tool && x.tool === PREF.tool; })[0] || all.filter(function (x) { return x.tool === 'pen'; })[0] || all[0];
-    var h = '<button type="button" class="tlb" data-radial aria-pressed="true" aria-label="All tools (in use: ' + esc(cur ? cur.label : '') + ')" title="All tools">' + (cur ? cur.icon : '') + '</button>' +
+    var h = wsBtnHtml() + '<button type="button" class="tlb" data-radial aria-pressed="true" aria-label="All tools (in use: ' + esc(cur ? cur.label : '') + ')" title="All tools">' + (cur ? cur.icon : '') + '</button>' +
       '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>' +
       '<button type="button" class="tlb" data-act="layers" aria-label="Layers" title="Layers"><svg class="i"><use href="#i-layers"/></svg></button>';
     tlAdd(h, 'tl-pal anchor'); tlRefresh();
   }
-  function openRadial(x, y, touchId) {
+  // (3.40, C) The option buttons of the tool in use, taken from its settings card (so they work exactly as there):
+  // kinds, colours, modes, guides, patterns, own tips. Everything else stays in the card (the middle button).
+  function optButtons() {
+    var sel = 'button[data-brush],button[data-sw],button[data-m],button[data-set],button[data-guide],button[data-pt],button[data-cs],button[data-pc]';
+    return [].slice.call($('penOpts').querySelectorAll(sel)).slice(0, 16).map(function (b) {
+      var c = b.cloneNode(true), sw = b.classList.contains('swatch');
+      c.removeAttribute('id'); c.className = 'tl-op' + (sw ? ' sw' : '');
+      if (!sw) { var t = (b.textContent || '').trim(); c.textContent = t.length > 9 ? t.slice(0, 8) + '…' : t; c.title = t; c.setAttribute('aria-label', t); }
+      return c.outerHTML;
+    });
+  }
+  // (3.40, B) Two arcs fanning out from the button, towards the middle of the screen.
+  function openArcs(a, inner, outer, ph) {
+    var cx = a.left + a.width / 2, cy = a.top + a.height / 2, W = innerWidth, H = innerHeight;
+    var dir = Math.atan2(H / 2 - cy, W / 2 - cx), span = Math.PI * 0.95, R1 = ph ? 84 : 96, R2 = ph ? 146 : 166, s = ph ? 42 : 48, s2 = ph ? 38 : 44;
+    var list1 = [{ wc: true }].concat(inner);
+    function arc(list, rad, sz, cls) {
+      var n = list.length, sp = Math.min(span, (n - 1) * (sz + 8) / rad + 0.0001);
+      return list.map(function (it, i) {
+        var ang = dir - sp / 2 + (n < 2 ? sp / 2 : sp * i / (n - 1)), st = 'left:' + Math.round(cx + rad * Math.cos(ang) - sz / 2) + 'px;top:' + Math.round(cy + rad * Math.sin(ang) - sz / 2) + 'px;width:' + sz + 'px;height:' + sz + 'px';
+        if (it.wc) return '<button type="button" class="tl-rb tl-rcw" data-wc aria-label="This tool’s settings" title="This tool’s settings" style="' + st + '"><svg class="i"><use href="#i-tools"/></svg></button>';
+        return tlBtn(it, 'tl-rb' + (cls || ''), st);
+      }).join('');
+    }
+    var r = tlAdd(arc(list1, R1, s) + arc(outer, R2, s2, ' tl-ro'), 'tl-radial tl-arcs');
+    r.style.left = '0px'; r.style.top = '0px'; r.style.width = W + 'px'; r.style.height = H + 'px';
+    TL.radial = { el: r, id: null };
+  }
+  function openRadial(x, y, touchId, anchor) {
     closeRadial();
     // (3.40, #116) Two rings: the everyday tools inside, and every other tool on the rail outside, worked out from the
     // rail itself, so no tool is ever left out (before, a fixed list of nine left out Nudge/Smooth, Text art and Connect).
@@ -2105,7 +2157,22 @@
         return tlBtn(it, 'tl-rb' + (rad === R ? ' tl-ro' : ''), 'left:' + Math.round(R + s / 2 + rad * Math.cos(a) - sz / 2) + 'px;top:' + Math.round(R + s / 2 + rad * Math.sin(a) - sz / 2) + 'px;width:' + sz + 'px;height:' + sz + 'px');
       }).join('');
     }
-    var h = place(inner, R1, s) + place(outer, R, s2, 0.5) + '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
+    var kind = PREF.rings || 'full', wc = '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" title="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
+    if (kind === 'arcs' && anchor) return openArcs(anchor, inner, outer, ph);
+    if (kind === 'opts') { // (3.40, C) all the tools inside; the options of the tool in use outside (the same buttons as its card)
+      var ops = optButtons();
+      R1 = Math.max(R1, Math.round(all.length * (s + 6) / (2 * Math.PI))); R = R1 + (ph ? 56 : 64);
+      x = Math.max(R + 40, Math.min(W - R - 40, x)); y = Math.max(R + 40, Math.min(H - R - 40, y));
+      wc = '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" title="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
+      var hh = place(all, R1, s) + ops.map(function (o, i) {
+        var a = -Math.PI / 2 + i * 2 * Math.PI / Math.max(ops.length, 8);
+        return o.replace('<button ', '<button style="left:' + Math.round(R + s / 2 + R * Math.cos(a)) + 'px;top:' + Math.round(R + s / 2 + R * Math.sin(a)) + 'px" ');
+      }).join('') + wc;
+      var rc = tlAdd(hh, 'tl-radial'); var Sc = 2 * R + s;
+      rc.style.width = rc.style.height = Sc + 'px'; rc.style.left = Math.round(x - Sc / 2) + 'px'; rc.style.top = Math.round(y - Sc / 2) + 'px';
+      TL.radial = { el: rc, id: touchId }; return;
+    }
+    var h = place(inner, R1, s) + place(outer, R, s2, 0.5) + wc;
     var r = tlAdd(h, 'tl-radial'); var S = 2 * R + s;
     r.style.width = r.style.height = S + 'px'; r.style.left = Math.round(x - S / 2) + 'px'; r.style.top = Math.round(y - S / 2) + 'px';
     TL.radial = { el: r, id: touchId };
@@ -2170,7 +2237,10 @@
     if (b.dataset.qc) { e.stopPropagation(); setQuickColour(b.dataset.qc); var p = $('tools').querySelector('.tl-colpop'); if (p) p.remove(); return; }
     if (b.hasAttribute('data-wc')) { e.stopPropagation(); var p2 = $('tools').querySelector('.tl-colpop'); if (p2) p2.remove(); closeRadial(); showOpts(!$('tools').classList.contains('opts')); return; }
     if (b.hasAttribute('data-colpop')) { e.stopPropagation(); showOpts(false); colourPop(b); return; }
-    if (b.hasAttribute('data-radial')) { e.stopPropagation(); if (TL.radial) { closeRadial(); return; } var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 160, null); else openRadial(r.left - 170, r.top + r.height / 2, null); return; }
+    if (b.hasAttribute('data-radial')) { e.stopPropagation(); if (TL.radial) { closeRadial(); return; } var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 160, null, r); else openRadial(r.left - 170, r.top + r.height / 2, null, r); return; }
+    if (b.closest('.tl-radial') && b.classList.contains('tl-op')) setTimeout(closeRadial, 0);
+    if (b.hasAttribute('data-wspick')) { e.stopPropagation(); e.preventDefault(); wsPick(b); return; }
+    if (b.dataset.wsv) { e.stopPropagation(); e.preventDefault(); var pw0 = $('tools').querySelector('.tl-wspop'); if (pw0) pw0.remove(); wsSet(b.dataset.wsv); return; }
     if (b.dataset.cm === 'undo') { e.stopPropagation(); $('undoBtn').click(); return; }
     if (b.dataset.cm === 'redo') { e.stopPropagation(); $('redoBtn').click(); return; }
     if (b.dataset.cm === 'opts') { e.stopPropagation(); showOpts(!$('tools').classList.contains('opts')); return; }
@@ -3315,7 +3385,11 @@
       '<p style="margin-top:10px !important">Tool layout (fits itself to phone, tablet and computer, upright or sideways)</p><div class="pick" style="margin:0">' +
       [['rail', 'Rail', 'a column of tools at the side; tap a tool again for its card'], ['wheel', 'Wheel', 'like Concepts: tools, colours, size and opacity on one wheel; drag it anywhere; it shrinks while you draw'],
        ['pucks', 'Pucks', 'like Sketchbook: a tool bar, a size puck (drag ↕ size, ↔ opacity), a colour puck and a corner menu'], ['pen1', 'Pen first', 'almost nothing on screen: one button opens all the tools in two rings (everyday ones inside, the rest outside), then Colours and Layers']]
-        .map(function (o) { return opt('tl', o[0], o[1], (PREF.tl || 'rail') === o[0], o[2]); }).join('') + '</div></div>';
+        .map(function (o) { return opt('tl', o[0], o[1], (PREF.tl || 'rail') === o[0], o[2]); }).join('') + '</div>' +
+      ((PREF.tl || 'rail') === 'pen1' ? '<p style="margin-top:10px !important">Rings (Pen first; try each and send feedback)</p><div class="pick" style="margin:0">' +
+        opt('rings', 'full', 'A · Full rings', (PREF.rings || 'full') === 'full', 'everyday tools inside, every other tool outside, settings in the middle') +
+        opt('rings', 'arcs', 'B · Arcs from the button', PREF.rings === 'arcs', 'the same two rings as quarter arcs, fanning out from the button') +
+        opt('rings', 'opts', 'C · Tools and their options', PREF.rings === 'opts', 'every tool inside; the tool in use\'s options (kinds, colours, modes) outside') + '</div>' : '') + '</div>';
   }
   applyLook();
   applyTextDefault();
@@ -3366,7 +3440,8 @@
       if (act === 'treset') { delete PREF.toolOrder; savePref(); location.reload(); return; }
       if (act === 'start') { PREF.start = b.dataset.v; savePref(); settingsSheet(); return; }
       if (act === 'skin' || act === 'shade' || act === 'motion') { PREF[act] = b.dataset.v; savePref(); applyLook(); settingsSheet(); return; }
-      if (act === 'tl') { PREF.tl = b.dataset.v; savePref(); applyLayout(); settingsSheet(); toast({ rail: 'Rail: tap a tool again for its settings.', wheel: 'Wheel: tap the middle for settings; drag the ring to move it; it shrinks to a dot while you draw.', pucks: 'Pucks: drag the left puck up/down for size, sideways for opacity; the right one is colour.', pen1: 'Pen first: hold one finger still on the page (or right-click) for all the tools.' }[PREF.tl], null, null, 5000); return; }
+      if (act === 'rings') { PREF.rings = b.dataset.v; savePref(); settingsSheet(); return; }
+      if (act === 'tl') { PREF.tl = b.dataset.v; savePref(); applyLayout(); settingsSheet(); toast({ rail: 'Rail: tap a tool again for its settings.', wheel: 'Wheel: tap the middle for settings; drag the ring to move it; it shrinks to a dot while you draw.', pucks: 'Pucks: drag the left puck up/down for size, sideways for opacity; the right one is colour.', pen1: 'Pen first: tap the tool button for all the tools. Settings › Tool layout › Rings has three kinds to try.' }[PREF.tl], null, null, 5000); return; }
       if (act === 'pickdefault') return pickFolder('Default folder', defaultFolder() || sync.inbox(), function (id) {
         PREF.defaultFolder = id === sync.inbox() ? '' : id; savePref(); settingsSheet();
       });
@@ -3398,7 +3473,7 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
-    { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Pen first layout: one button opens all the tools in two rings, the everyday ones inside and every other tool outside (Nudge/Smooth, Text art and Connect are back); the middle opens the settings of the tool in use. No more holding a finger on the page, and the bar shows no copies of the ring\'s tools, only Colours and Layers beside it.',
+    { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Pen first layout: one button opens all the tools in two rings, the everyday ones inside and every other tool outside (Nudge/Smooth, Text art and Connect are back); the middle opens the settings of the tool in use. No more holding a finger on the page, and the bar shows no copies of the ring\'s tools, only Colours and Layers beside it. Settings › Tool layout › Rings has three kinds to try: A full rings, B arcs from the button, C every tool inside with the tool\'s options outside. New: workspaces. The first button on the rail (or in Pen first) picks Write, Draw, Links, Board or All tools; Hand, Select and Layers are in every workspace, and the page stays the same in all of them.',
       a: art('<rect x="40" y="20" width="160" height="100" rx="6" fill="' + SOFT + '" opacity=".6"/><rect x="80" y="40" width="90" height="62" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><path d="M80 54V40h14M156 40h14v14M170 88v14h-14M94 102H80V88" fill="none" stroke="' + A + '" stroke-width="5" stroke-linecap="round"/><circle cx="125" cy="71" r="18" fill="none" stroke="' + INKC + '" stroke-width="3"/>') },
     { t: 'Navigator, faster sync, pictures', d: 'One button at the bottom right opens the navigator, always. Linear and Free are chosen inside it: in Linear mode it is a map of the whole page (one finger moves around it, two fingers zoom, drag the frame, double tap to go); on the free canvas it is the small map. Notes and changes from your other devices now show within about 20 seconds (and at once when you open a note or come back to the app). Pictures go on the page at once and are copied to Drive in the background; pick one (with Select, or one tap with Text) to move, resize, turn, or Crop it. Also: Add is back among all the tools in Pen first, its last button opens Layers (hold it for all the tools), tabs sit in the top row on wide screens, a second tap on Create no longer makes two folders, and the feedback bar never squashes its colours.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="120" y="40" width="88" height="62" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="126" y="46" width="34" height="14" rx="4" fill="' + A + '" opacity=".35"/><rect x="162" y="46" width="34" height="14" rx="4" fill="none" stroke="' + RULE + '"/><rect x="140" y="68" width="40" height="26" rx="4" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="5 4"/><rect x="150" y="106" width="58" height="14" rx="7" fill="' + SURF + '" stroke="' + A + '"/><path d="M34 40h60M34 54h44M34 68h52" stroke="' + RULE + '" stroke-width="4" stroke-linecap="round"/>') },
