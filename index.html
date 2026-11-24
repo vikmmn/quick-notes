@@ -334,6 +334,17 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   #editorView { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--paper);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
   #editorView .bar { position: static; }
+  /* (3.33, #90) The page runs under the top buttons and tabs: they float over it, with no band across the screen.
+     Only the buttons themselves cover the page, and one moves out of the way while you draw or move something under it. */
+  #topChrome { position: absolute; z-index: 20; top: env(safe-area-inset-top); left: env(safe-area-inset-left); right: env(safe-area-inset-right); pointer-events: none; }
+  #topChrome .bar { background: transparent; pointer-events: none; }
+  #topChrome .bar > :not(.spacer) { pointer-events: auto; }
+  #topChrome .bar > .icon:not([aria-pressed=true]) { background: color-mix(in srgb, var(--paper) 82%, transparent); border-radius: 50%; }
+  #topChrome .tabbar { background: transparent; width: max-content; max-width: 100%; box-sizing: border-box; pointer-events: auto; }
+  #topChrome .tabbar .tab:not(.on) { background: color-mix(in srgb, var(--field) 88%, transparent); }
+  #topChrome .tabbar .tab-add { background: color-mix(in srgb, var(--paper) 82%, transparent); }
+  .qn-dodge { opacity: .07 !important; pointer-events: none !important; transition: opacity .12s !important; }
+  .qn-undodge { transition: opacity .35s; }
   /* Drawing tools: a slim floating rail of icons at the side (like Concepts); the chosen tool's settings open
      in a small card beside it when the tool is tapped again */
   .tools { position: fixed; z-index: 30; right: calc(10px + env(safe-area-inset-right)); top: calc(66px + env(safe-area-inset-top)); display: block; }
@@ -424,12 +435,12 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .qn-dirs { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
   .qn-dir { position: absolute; pointer-events: auto; width: 40px; height: 40px; border-radius: 50%; padding: 0; display: grid; place-items: center; background: var(--surface); color: var(--accent); border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: .9; touch-action: manipulation; }
   .qn-dir.hidden { display: none; }
-  .qn-dir[data-d=n] { top: 8px; left: calc(50% - 20px); }
+  .qn-dir[data-d=n] { top: var(--dt, 8px); left: calc(50% - 20px); }
   .qn-dir[data-d=s] { bottom: 16px; left: calc(50% - 20px); }
   .qn-dir[data-d=w] { left: 8px; top: calc(50% - 20px); }
   .qn-dir[data-d=e] { right: var(--dr, 8px); top: calc(50% - 20px); }
-  .qn-dir[data-d=nw] { left: 8px; top: 8px; }
-  .qn-dir[data-d=ne] { right: var(--dr, 8px); top: 8px; }
+  .qn-dir[data-d=nw] { left: 8px; top: var(--dt, 8px); }
+  .qn-dir[data-d=ne] { right: var(--dr, 8px); top: var(--dt, 8px); }
   .qn-dir[data-d=sw] { left: 8px; bottom: var(--dbl, 76px); }
   .qn-dir[data-d=se] { right: var(--dr, 8px); bottom: 76px; }
   .qn-peek { position: absolute; z-index: 10; max-height: 46%; overflow: hidden; background: var(--paper); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; animation: qnPeek .18s ease-out; }
@@ -444,6 +455,9 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .qn-side .sd-x { min-height: 0; width: 32px; height: 32px; padding: 0; border: 0; background: transparent; font-size: 20px; color: var(--ink); }
   .qn-side .sd-scroll { overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .qn-side .sd-scroll svg { display: block; }
+  .qn-side .sd-frame { position: absolute; box-sizing: border-box; border: 2px dashed var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); touch-action: none; cursor: grab; display: flex; align-items: flex-end; justify-content: center; }
+  .qn-side .sd-frame span { font-size: 11px; color: var(--accent); background: var(--paper); border-radius: 6px; padding: 1px 6px; margin-bottom: 6px; opacity: 0; transition: opacity .15s; white-space: nowrap; }
+  .qn-side .sd-frame.moved span { opacity: 1; }
   .qn-modebtn { position: absolute; z-index: 9; bottom: 16px; right: 110px; min-height: 36px; padding: 6px 14px; border-radius: 18px; background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow); font-size: 14px; color: var(--ink); }
   .qn-modebtn[aria-pressed=true] { color: var(--accent); }
   .qn-modebtn.hidden { display: none; }
@@ -808,6 +822,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
 
 <!-- ============ A note ============ -->
 <section id="editorView" class="hidden">
+  <div id="topChrome">
   <header class="bar">
     <button id="backBtn" class="icon" type="button" aria-label="Back to notes"><svg class="i"><use href="#i-back"/></svg></button>
     <span class="spacer"></span>
@@ -819,6 +834,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
     <button id="pinBtn" class="icon" type="button" aria-label="Pin note" aria-pressed="false"><svg class="i"><use href="#i-pin"/></svg></button>
   </header>
   <div id="tabBar" class="tabbar hidden" role="tablist" aria-label="Open notes"></div>
+  </div>
   <div class="tools hidden" id="tools" data-keeps-text>
     <div class="tool-row">
     <button class="tool" type="button" data-tool="hand" aria-pressed="true" title="Hand: move around. Double tap a thing to pick it; triple tap to type" aria-label="Hand: move around"><svg class="i"><use href="#i-hand"/></svg><span class="tl">Hand</span></button>
