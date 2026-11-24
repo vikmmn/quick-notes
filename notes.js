@@ -295,7 +295,7 @@
   var FIELDS_COPY = ['title', 'boxes', 'ink', 'links', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId', 'page', 'device', 'base'];
   function Sync(store, notes, hooks) {
     var state = { phase: 'idle', error: null, lastSynced: null };
-    var running = false, again = false, againPull = false, timer = null, folders = null, tree = {};
+    var running = false, again = false, againPull = false, againFull = false, timer = null, folders = null, tree = {}, making = {};
     var outboxMaybe = true, handedOff = false; // the outbox is checked once at start, and after every hand-off
     var KEY = Drive.demo ? null : 'qn-folders';
     try { if (KEY) { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) { folders = saved.ids || null; tree = saved.tree || {}; } } } catch (e) {}
@@ -396,8 +396,43 @@
       if (changed.length) hooks.changed(changed);
     }
 
-    async function pull() {
-      var remote = await listAll();
+    // (3.39, #105/#106) What changed in Drive since the last look, from Drive's own list of changes: usually one small
+    // request, so another device's note shows here within seconds instead of after listing all ~5,000 notes.
+    // null = do the full listing (no starting point yet, or a folder was added, renamed or moved).
+    async function changedSince() {
+      if (!Drive.changes || !folders || !folders.chg) return null;
+      var tok = folders.chg, live = {}, gone = {}, page;
+      do {
+        page = await Drive.changes(tok);
+        for (var i = 0; i < (page.changes || []).length; i++) {
+          var c = page.changes[i], f = c.file;
+          if (c.removed || !f) { if (tree[c.fileId]) return null; gone[c.fileId] = 1; delete live[c.fileId]; continue; }
+          var p = f.parents && f.parents[0], inside = !!p && (p === folders.notes || !!tree[p]);
+          if (f.mimeType === FOLDER) {
+            var t = tree[f.id];
+            if (t ? (f.trashed || !inside || t.name !== f.name || t.parentId !== p) : (inside && !f.trashed && f.name.charAt(0) !== '.')) return null;
+            continue;
+          }
+          if (!/\.md$/i.test(f.name)) continue;
+          if (f.trashed || !inside) { gone[f.id] = 1; delete live[f.id]; } else { live[f.id] = f; delete gone[f.id]; }
+        }
+        tok = page.nextPageToken || page.newStartPageToken;
+      } while (page.nextPageToken);
+      folders.chg = tok; saveFolders();
+      return { remote: Object.keys(live).map(function (k) { return live[k]; }), gone: gone };
+    }
+
+    async function pull(full) {
+      var remote = null, goneFiles = null;
+      // A full listing at least every half hour, as a safety net; the quick way in between.
+      if (!full && folders && folders.full && Date.now() - folders.full < 30 * 60000) {
+        var ch = await changedSince(); if (ch) { remote = ch.remote; goneFiles = ch.gone; }
+      }
+      if (!remote) {
+        var start = null; if (Drive.startToken) { try { start = await Drive.startToken(); } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; } }
+        remote = await listAll(); // (the starting point is taken first: anything changed while listing comes again next time)
+        if (start) { folders.chg = start; folders.full = Date.now(); saveFolders(); }
+      }
       var byFile = {}, byId = {};
       all().forEach(function (n) { if (n.fileId) byFile[n.fileId] = n; byId[n.id] = n; });
       var seen = {}, changed = [], remoteIds = {};
@@ -454,7 +489,7 @@
         }
       }
       // Files deleted or moved out of Notes on another device: drop the copy here, unless it has unsaved changes.
-      var gone = all().filter(function (n) { return n.fileId && !seen[n.fileId] && !n.dirty && !n.conflict; });
+      var gone = all().filter(function (n) { return n.fileId && (goneFiles ? goneFiles[n.fileId] : !seen[n.fileId]) && !n.dirty && !n.conflict; });
       for (var j = 0; j < gone.length; j++) { delete notes[gone[j].id]; await store.del(gone[j].id); changed.push(gone[j].id); }
       if (changed.length) hooks.changed(changed);
     }
@@ -566,7 +601,7 @@
     async function run(opts) {
       opts = opts || {};
       clearTimeout(timer); timer = null;
-      if (running) { again = true; againPull = againPull || !!opts.pull; return; }
+      if (running) { again = true; againPull = againPull || !!opts.pull; againFull = againFull || !!opts.full; return; }
       if (document.visibilityState === 'hidden' && handedOff) return; // the service worker has it
       if (!online()) { state.phase = 'offline'; emit(); return; }
       if (!Drive.signedIn()) { state.phase = 'signin'; emit(); return; }
@@ -577,7 +612,7 @@
         // The main folder's name, fresh each full check (it may have been renamed in Drive).
         try { var nm = (await Drive.get(folders.notes)).name; if (nm && nm !== folders.rootName) { folders.rootName = nm; saveFolders(); hooks.folders(); } } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
         await push();
-        if (opts.pull || !state.lastSynced) { await pull(); await push(); }
+        if (opts.pull || !state.lastSynced) { await pull(!!opts.full || !state.lastSynced); await push(); }
         if (all().some(function (n) { return n.conflict; })) await settle();
         state.phase = 'idle'; state.lastSynced = Date.now();
       } catch (e) {
@@ -587,7 +622,7 @@
       }
       running = false;
       emit();
-      if (again) { var p = againPull; again = false; againPull = false; run({ pull: p }); }
+      if (again) { var p = againPull, fu = againFull; again = false; againPull = false; againFull = false; run({ pull: p, full: fu }); }
     }
 
     function needReady() {
@@ -617,12 +652,22 @@
       rootName: function () { return (folders && folders.rootName) || CFG.ROOT_FOLDER_NAME || 'Serendipity'; },
       inbox: function () { return folders && folders[CFG.SUBFOLDERS[0]]; },
       tree: function () { return tree; },
-      createFolder: async function (name, parentId) {
-        needReady(); await ensureFolders();
-        var f = await Drive.createFolder(name, parentId || folders.notes);
-        tree[f.id] = { id: f.id, name: name, parentId: parentId || folders.notes };
-        saveFolders(); hooks.folders();
-        return f.id;
+      createFolder: function (name, parentId) {
+        // (3.39, #99) One folder per name in a place: a second tap on Create while the first is still on its way,
+        // or a folder of that name already made (here or on another device), gives that folder instead of a twin.
+        var k = (parentId || '') + '/' + name.toLowerCase();
+        if (making[k]) return making[k];
+        return (making[k] = (async function () {
+          needReady(); await ensureFolders();
+          var par = parentId || folders.notes;
+          var have = Object.keys(tree).filter(function (id) { return tree[id].parentId === par && String(tree[id].name).toLowerCase() === name.toLowerCase(); })[0];
+          if (have) return have;
+          var f = null; try { f = await Drive.findExact(name, par, FOLDER); } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
+          if (!f) f = await Drive.createFolder(name, par);
+          tree[f.id] = { id: f.id, name: f.name || name, parentId: par };
+          saveFolders(); hooks.folders();
+          return f.id;
+        })().finally(function () { delete making[k]; }));
       },
       renameFolder: async function (id, name) {
         needReady();

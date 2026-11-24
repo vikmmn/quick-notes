@@ -805,7 +805,7 @@
         }, 360);
       }
       startPan(ev);
-      if (drag && drag.type === 'pan') drag.emptyTap = true;
+      if (drag && drag.type === 'pan') drag.emptyTap = point(ev);
     });
     // ---- The Hand (3.27, feedback 21 Nov): it only moves the page. A tap does nothing; a double tap on a thing
     // picks it and switches to Select; a triple tap switches to Text and types there (in the text tapped, or new
@@ -921,6 +921,7 @@
         if (tapAt && tool === 'text') { eng.textAt(tapAt, -(view.r || 0)); return; }
         if (handTap && tool === 'hand') { handUp(handTap); return; }
         if (typeTap && tool === 'type') { typeTapUp(typeTap); return; }
+        if (emptyTap && tool === 'type' && eng.pictureAt && eng.pictureAt(emptyTap)) { if (selected) select(null); handPick(emptyTap); return; } // (3.39, #108) a tap on a picture picks it, to move, resize, turn or crop
         if (emptyTap && tool === 'type' && selected) select(null); // (3.33, #88) a tap outside lets go of the picked box
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };
@@ -1177,9 +1178,8 @@
       dirRaf = 0;
       var on = !!eng && pageMode();
       dirEl.classList.toggle('hidden', !on);
-      modeBtn.classList.toggle('hidden', phoneNow());
-      modeBtn.textContent = pageMode() ? 'Linear' : 'Free';
-      modeBtn.setAttribute('aria-pressed', pageMode() ? 'true' : 'false');
+      modeBtn.classList.remove('hidden');
+      var ml = pageMode() ? 'Linear' : 'Free'; if (modeBtn.dataset.ml !== ml) { modeBtn.dataset.ml = ml; modeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span>' + ml + '</span>'; }
       if (!on) { hidePeek(); hideSide(); return; }
       var W = host.clientWidth, H = host.clientHeight, best = {};
       blocks().forEach(function (q) {
@@ -1280,11 +1280,13 @@
       // (3.37, #94) sv: how far the map was widened with its arrows (screens each way) and zoomed with two fingers.
       sv = sv || { n: 0, s: 0, e: 0, w: 0, z: 1, fr: null };
       hidePeek(); hideSide();
-      var list = sideBlocks(d); if (!list.length) return;
+      var list = d === 'all' ? blocks() : sideBlocks(d); if (!list.length && d !== 'all') return; // (3.39, #100) 'all': the navigator in Linear mode
       var W = host.clientWidth, H = host.clientHeight, pad = 24;
       var a = toWorld(0, 0), b = toWorld(W, H); // the part on screen now, in page coordinates
       var R = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-      list.forEach(function (q) { R.x0 = Math.min(R.x0, q.x); R.y0 = Math.min(R.y0, q.y); R.x1 = Math.max(R.x1, q.x + q.w); R.y1 = Math.max(R.y1, q.y + q.h); });
+      // (3.39, #98) The map takes in the whole page, not just that side: one finger moves around it to the parts
+      // round about, two fingers zoom it (the ‹ ˄ ˅ › buttons are gone). It opens looking at that side.
+      blocks().forEach(function (q) { R.x0 = Math.min(R.x0, q.x); R.y0 = Math.min(R.y0, q.y); R.x1 = Math.max(R.x1, q.x + q.w); R.y1 = Math.max(R.y1, q.y + q.h); });
       // (3.27.1, #82/#83) The map always takes in the screen you are on too, so a part that lies half here and half
       // to the side can be picked as a whole, and the outline of "here" is never cut off at the map's edge.
       R.x0 = Math.min(R.x0, a[0]); R.x1 = Math.max(R.x1, b[0]); R.y0 = Math.min(R.y0, a[1]); R.y1 = Math.max(R.y1, b[1]);
@@ -1293,7 +1295,7 @@
       R.x0 -= sv.w * sw0; R.x1 += sv.e * sw0; R.y0 -= sv.n * sh0; R.y1 += sv.s * sh0;
       var rw = R.x1 - R.x0, rh = R.y1 - R.y0;
       var dr = parseFloat(dirEl.style.getPropertyValue('--dr')) || 8; // the tool rail's room on the right
-      var pw = Math.max(200, Math.min(W - dr - 64, 360)), ph = Math.round(H * 0.62);
+      var pw = sv.pw || Math.max(200, Math.min(W - dr - 64, 360)), ph = sv.ph || Math.round(H * (d === 'all' ? 0.5 : 0.62));
       var s = Math.max(0.03, Math.min(2, Math.max(0.12, Math.min(1, (pw - 2) / rw)) * sv.z));
       var txt = boxes.map(function (bx) {
         var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
@@ -1309,19 +1311,21 @@
       var here = '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + (b[0] - a[0]) + '" height="' + (b[1] - a[1]) + '" fill="none" stroke="var(--muted, #888)" stroke-opacity=".5" stroke-width="' + (1.5 / s) + '" stroke-dasharray="' + (4 / s) + ' ' + (4 / s) + '" rx="' + (8 / s) + '"/>';
       sideEl = el('div', 'qn-side', host);
       sideEl.dataset.d = d;
-      sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Drag the frame, double tap</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
-        '<div class="sd-more"><button type="button" data-g="w" aria-label="Show more to the left">‹</button><button type="button" data-g="n" aria-label="Show more above">˄</button><button type="button" data-g="s" aria-label="Show more below">˅</button><button type="button" data-g="e" aria-label="Show more to the right">›</button><button type="button" data-g="zo" aria-label="Zoom the map out">−</button><button type="button" data-g="zi" aria-label="Zoom the map in">+</button></div>' +
+      sideEl.innerHTML = '<div class="sd-head">' + (d === 'all' ? modesHtml() : '<b>' + SIDE_NAMES[d] + '</b>') + '<span>Drag the frame, double tap</span>' +
+        '<button type="button" class="sd-z" data-g="zo" aria-label="Zoom the map out">−</button><button type="button" class="sd-z" data-g="zi" aria-label="Zoom the map in">+</button>' +
+        '<button type="button" class="sd-x" aria-label="' + (d === 'all' ? 'Close the navigator' : 'Close') + '">×</button></div>' +
         '<div class="sd-scroll"><svg width="' + Math.round(rw * s) + '" height="' + Math.round(rh * s) + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + rw + ' ' + rh + '">' +
         txt + window.QNInk.svgFor(ink, 'sd-', M, M, true) + here + '</svg></div>';
-      pw = Math.max(200, Math.min(pw, Math.round(rw * s) + 2)); // no empty strip beside a narrow map
+      if (!sv.pw) pw = Math.max(200, Math.min(pw, Math.round(rw * s) + 2)); // no empty strip beside a narrow map (and the same size while zooming it, #98)
       sideEl.style.width = pw + 'px';
-      var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 82) + 'px';
+      var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 50) + 'px';
       sc.querySelector('svg').style.margin = '0 auto'; sc.querySelector('svg').style.display = 'block';
       var v = d.charAt(0), h0 = d.length === 2 ? d.charAt(1) : d;
       if (v === 'n') sideEl.style.top = (topIn() + 52) + 'px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(topIn() + 8, (H - ph) / 2) + 'px';
       // Beside its arrow, and never under the tool rail or off the screen.
       var lx = h0 === 'e' ? W - dr - 48 - pw : h0 === 'w' ? 56 : (W - dr - pw) / 2;
       sideEl.style.left = Math.max(8, Math.min(W - dr - pw - 4, lx)) + 'px';
+      if (d === 'all') { sideEl.style.top = ''; sideEl.style.bottom = '64px'; sideEl.style.left = Math.max(8, W - dr - pw - 12) + 'px'; }
       // Open where the screen meets that side: the edge of "here" a third of the way in, the side beyond it.
       var cw = sc.clientWidth, ch = sc.clientHeight;
       var cx = ((a[0] + b[0]) / 2 - R.x0) * s - cw / 2, cy = ((a[1] + b[1]) / 2 - R.y0) * s - ch / 2;
@@ -1329,9 +1333,10 @@
       if (v === 's') cy = (b[1] - R.y0) * s - ch * 0.3; else if (v === 'n') cy = (a[1] - R.y0) * s - ch * 0.7;
       sc.scrollTop = Math.max(0, cy); sc.scrollLeft = Math.max(0, cx);
       sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); if (ev.pointerType !== 'mouse') ev.preventDefault(); }); // (3.32, #87) no stray tap events reach the page under the map
-      sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
-      function again(ch) { var n = Object.assign({}, sv, ch, { fr: { x: fr.x, y: fr.y } }); showSide(d, n); }
-      Array.prototype.forEach.call(sideEl.querySelectorAll('.sd-more [data-g]'), function (bt) {
+      sideEl.querySelector('.sd-x').addEventListener('click', function () { if (d === 'all') setNav(false); else hideSide(); });
+      modesWire(sideEl);
+      function again(ch) { var n = Object.assign({}, sv, ch, { fr: { x: fr.x, y: fr.y }, pw: pw, ph: ph }); showSide(d, n); }
+      Array.prototype.forEach.call(sideEl.querySelectorAll('.sd-head [data-g]'), function (bt) {
         bt.addEventListener('click', function () {
           var g = bt.dataset.g, ch = {};
           if (g === 'zi') ch.z = Math.min(8, sv.z * 1.5); else if (g === 'zo') ch.z = Math.max(0.15, sv.z / 1.5); else ch[g] = sv[g] + 1;
@@ -1353,7 +1358,7 @@
       }
       placeFr();
       if (sv.fr) { sc.scrollLeft = Math.max(0, (fr.x + fw / 2 - R.x0) * s - sc.clientWidth / 2); sc.scrollTop = Math.max(0, (fr.y + fh / 2 - R.y0) * s - sc.clientHeight / 2); }
-      function goFr() { lastTap = null; swallowTap(); hideSide(); glide(-fr.x, -fr.y); }
+      function goFr() { lastTap = null; swallowTap(); hideSide(); glide(-fr.x, -fr.y); if (d === 'all') setTimeout(function () { if (navOpen && pageMode()) showSide('all', { z: sv.z, pw: pw, ph: ph }); }, 520); } // the navigator stays open
       function mapTap(ev, inFrame) {
         var t = Date.now();
         if (lastTap && t - lastTap.t < 420 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 40) { goFr(); return; }
@@ -1431,13 +1436,32 @@
       return [lx1, Math.min(topLimit(), topIn() + (H - topIn()) * 0.3 - py)];
     }
     function goToPoint(px, py, d, list) { var t = pointTarget(px, py, d, list); glide(t[0], t[1]); }
-    on(host, 'pointerdown', function (ev) { if (sideEl && !sideEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.qn-dir'))) hideSide(); }, true);
+    on(host, 'pointerdown', function (ev) { if (sideEl && sideEl.dataset.d !== 'all' && !sideEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.qn-dir'))) hideSide(); }, true);
 
     // ---- Linear mode or free canvas, for this note: a shake on a phone, the button elsewhere ----
     var modeBtn = el('button', 'qn-modebtn hidden', host);
-    modeBtn.type = 'button'; modeBtn.title = 'Linear mode (scrolls up and down) or the free canvas';
+    // (3.39, #100) One button, bottom right, always there: it opens and closes the navigator. Linear mode and the free
+    // canvas are chosen inside the navigator. In Linear mode the navigator is the whole-page map with the frame (drag
+    // it, double tap to go); on the free canvas it is the small map (tap or drag in it to go there).
+    modeBtn.type = 'button'; modeBtn.title = 'Navigator: a map of the page; Linear mode or the free canvas';
     modeBtn.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
-    modeBtn.addEventListener('click', function () { toggleMode(); });
+    modeBtn.addEventListener('click', function () { setNav(!navOpen); });
+    var navOpen = false;
+    function modesHtml() { var l = pageMode(); return '<span class="nv-modes" role="group" aria-label="How the page moves"><button type="button" data-mode="lin" aria-pressed="' + l + '">Linear</button><button type="button" data-mode="free" aria-pressed="' + !l + '">Free</button></span>'; }
+    function modesWire(root) {
+      Array.prototype.forEach.call(root.querySelectorAll('[data-mode]'), function (b) {
+        b.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); ev.stopImmediatePropagation(); });
+        b.addEventListener('click', function (ev) { ev.stopPropagation(); if ((b.dataset.mode === 'lin') !== pageMode()) { toggleMode(); setNav(true); } });
+      });
+    }
+    function setNav(on) {
+      navOpen = !!on; hidePeek(); hideSide();
+      navOn = navOpen && !pageMode(); navEl.classList.toggle('hidden', !navOn); navContent = null;
+      if (navOn) { navEl.querySelector('.nv-head').innerHTML = modesHtml() + '<button type="button" class="nv-x" aria-label="Close the navigator">×</button>'; modesWire(navEl); navEl.querySelector('.nv-x').onclick = function (ev) { ev.stopPropagation(); setNav(false); }; drawNavSoon(); }
+      if (navOpen && pageMode()) showSide('all');
+      modeBtn.setAttribute('aria-pressed', navOpen ? 'true' : 'false');
+      if (hooks.navPref) hooks.navPref(navOpen);
+    }
     function toggleMode() {
       var W = host.clientWidth / 2, H = host.clientHeight / 2, wc = toWorld(W, H);
       if (pageMode()) { modeOv = 'free'; view.x = view.lx || 0; }
@@ -1445,7 +1469,7 @@
         modeOv = 'lin'; var lx = W - wc[0]; view.lx = Math.abs(lx) < 60 ? 0 : lx; view.y = H - wc[1];
       }
       view.mo = modeOv;
-      hidePeek(); hideSide(); applyView(); drawDirs();
+      hidePeek(); hideSide(); applyView(); drawDirs(); if (navOpen) setNav(true); // the navigator follows the mode
       if (hooks.view) hooks.view({ z: view.z, r: view.r });
       if (hooks.notice) hooks.notice(pageMode() ? 'Linear mode: scrolls up and down. Arrows show what is off to the side.' : 'Free canvas: move, zoom and turn as you like.' + (phoneNow() ? ' Shake again for Linear mode.' : ''));
     }
@@ -1465,8 +1489,8 @@
 
     // ---- The navigator: a small map of the whole page; tap or drag in it to go there ----
     var navOn = false, navEl = el('div', 'qn-nav hidden', host), navContent = null, navBox = null;
-    navEl.innerHTML = '<svg preserveAspectRatio="xMidYMid meet"></svg>';
-    var navSvg = navEl.firstChild;
+    navEl.innerHTML = '<div class="nv-head"></div><svg preserveAspectRatio="xMidYMid meet"></svg>';
+    var navSvg = navEl.querySelector('svg');
     // The map's picture of the page is rebuilt a moment after drawing stops, not after every stroke.
     var navTimer = null;
     function drawNavSoon(contentToo) {
@@ -1502,7 +1526,7 @@
       view.x = W - (pt.x * c - pt.y * s) * view.z; view.y = H - (pt.x * s + pt.y * c) * view.z; applyView();
     }
     var navDrag = false;
-    navEl.addEventListener('pointerdown', function (ev) { ev.stopImmediatePropagation(); ev.preventDefault(); navDrag = true; navEl.setPointerCapture(ev.pointerId); navGo(ev); });
+    navEl.addEventListener('pointerdown', function (ev) { ev.stopImmediatePropagation(); if (ev.target.closest('.nv-head')) return; ev.preventDefault(); navDrag = true; navEl.setPointerCapture(ev.pointerId); navGo(ev); });
     navEl.addEventListener('pointermove', function (ev) { ev.stopImmediatePropagation(); if (navDrag) navGo(ev); });
     navEl.addEventListener('pointerup', function (ev) { ev.stopImmediatePropagation(); navDrag = false; });
 
@@ -1513,7 +1537,7 @@
       zoomIn: function () { animateView(view.z * 1.5, view.r, toWorld(host.clientWidth / 2, host.clientHeight / 2)); },
       zoomOut: function () { animateView(view.z / 1.5, view.r, toWorld(host.clientWidth / 2, host.clientHeight / 2)); },
       area: function () { areaMode = true; host.classList.add('picking'); },
-      navigator: function (on) { navOn = !!on; navEl.classList.toggle('hidden', !navOn); navContent = null; drawNavSoon(); },
+      navigator: function (on) { setNav(on && !pageMode()); }, // (a note opening in Linear mode doesn't open the big map by itself)
       gestures: function () { return 'pinch to zoom, two fingers to move, twist to turn, two-finger double tap to undo, three-finger double tap to redo'; },
       rotate: function (on) { rotateOn = !!on; },
       info: function () { return { z: view.z, r: view.r, lk: !!view.lk, linear: pageMode() }; },

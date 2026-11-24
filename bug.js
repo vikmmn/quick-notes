@@ -50,7 +50,7 @@
     '@keyframes qnspin{to{transform:rotate(360deg)}}' +
     '@keyframes qnpop{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(0,121,107,.6)}40%{transform:scale(1.25)}100%{transform:scale(1);box-shadow:0 0 0 18px rgba(0,121,107,0)}}' +
     '.qn-bugbtn.send{position:fixed;z-index:99;opacity:1;width:52px;height:52px;box-shadow:0 0 0 6px rgba(0,121,107,.3),0 4px 14px rgba(0,0,0,.4);' +
-    'left:auto!important;right:14px!important;top:calc(68px + env(safe-area-inset-top))!important}' + // always the same place, under the ribbon, in any turn of the phone (3.24.1)
+    'left:auto!important;right:14px!important;top:calc(var(--qn-bth,52px) + 16px + env(safe-area-inset-top))!important}' + // always the same place, under the ribbon, in any turn of the phone (3.24.1)
     '.qn-bugbtn.send svg{width:26px;height:26px}' +
     '.qn-bugbtn.dot{opacity:1}.qn-bugbtn.dot::after{content:"";position:absolute;top:-1px;right:-1px;width:11px;height:11px;border-radius:50%;background:#d93025;border:2px solid var(--paper,#fff)}' +
     '.qn-bugview{position:fixed;inset:0;z-index:95;background:#202124;touch-action:none;overflow:hidden;animation:qnfade .15s ease-out}' +
@@ -59,7 +59,8 @@
     '.qn-bugview .stg{position:absolute;left:0;top:0;transform-origin:0 0}' +
     '.qn-bugview .kbgap{position:absolute;left:0;right:0;bottom:0;display:none;place-items:center;text-align:center;padding:16px;box-sizing:border-box;color:rgba(255,255,255,.6);font:13px var(--font,system-ui);background:repeating-linear-gradient(135deg,#1b1c1f 0 10px,#222327 10px 20px);pointer-events:none}' +
     '.qn-bugview .bt{position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:6px 8px;' +
-    'background:rgba(32,33,36,.94);border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);white-space:nowrap;max-width:calc(100vw - 16px);overflow-x:auto}' +
+    'background:rgba(32,33,36,.94);border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);white-space:nowrap;width:max-content;max-width:calc(100vw - 16px);box-sizing:border-box;flex-wrap:wrap;justify-content:center;row-gap:6px}' +
+    '.qn-bugview .bt>*{flex:none}' + // (3.39) never squashed: on a narrow screen the bar takes a second row instead
     '.qn-bugview .bt button{min-height:34px;padding:5px 12px;font-size:14px;border-radius:10px;color:#fff;background:transparent;border:1px solid rgba(255,255,255,.18)}' +
     '.qn-bugview .bt button[aria-pressed=true]{background:rgba(242,177,52,.3);border-color:#f2b134}' +
     '.qn-bugview .bt .c{width:26px;height:26px;padding:0;min-height:0;border-radius:50%;border:2px solid rgba(255,255,255,.3)}' +
@@ -67,7 +68,7 @@
     '.qn-bugview .bt .sz{width:30px;height:34px;padding:0;display:grid;place-items:center}' +
     '.qn-bugview .bt .sz i{display:block;border-radius:50%;background:#fff}' +
     '.qn-bugview .bt b{width:1px;align-self:stretch;background:rgba(255,255,255,.2);margin:0 2px}' +
-    '.qn-bugview .hint{position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);background:rgba(32,33,36,.92);color:#fff;' +
+    '.qn-bugview .hint{position:absolute;left:50%;top:calc(var(--qn-bth,52px) + 12px + env(safe-area-inset-top));transform:translateX(-50%);background:rgba(32,33,36,.92);color:#fff;' +
     'font:14px/1.4 var(--font,system-ui);padding:8px 14px;border-radius:12px;pointer-events:none;transition:opacity .6s;text-align:center;max-width:90vw}' +
     '.qn-bugview .wait{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:15px var(--font,system-ui);pointer-events:none}' +
     '.qn-bugview .wait span{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.55);padding:10px 16px;border-radius:12px}' +
@@ -238,6 +239,7 @@
     view.appendChild(gap);
     function showGap() { var bot = oy + H0 * sc, rest = innerHeight - bot; gap.style.display = rest > 80 ? 'grid' : 'none'; gap.style.height = Math.max(0, rest) + 'px'; }
     function fit() {
+      var bar = view.querySelector('.bt'); if (bar) document.documentElement.style.setProperty('--qn-bth', bar.offsetHeight + 'px'); // (3.39) Send and hints sit under the bar, one row or two
       sc = Math.min(innerWidth / W0, innerHeight / H0); ox = (innerWidth - W0 * sc) / 2; oy = (innerHeight - H0 * sc) / 2;
       stg.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + sc + ')';
       showGap();

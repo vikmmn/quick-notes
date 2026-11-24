@@ -182,7 +182,7 @@
   }
   async function healthAction(act) {
     if (act === 'signin') { try { await Drive.signIn(); sync.run({ pull: true }); } catch (e) { toast(e.message); } }
-    if (act === 'sync') sync.run({ pull: true });
+    if (act === 'sync') sync.run({ pull: true, full: true });
     if (act === 'review') renderSyncSheet();
   }
   $('syncBanner').querySelector('button').onclick = function () { healthAction(this.dataset.act); };
@@ -1029,9 +1029,10 @@
     head: function () { return $('noteHead'); },
     linkStyle: function () { return { e: PREF.linkE == null ? '>' : PREF.linkE, k: PREF.linkK || 'curve' }; },
     // (3.33, #90) The top buttons and tabs float over the page; the page keeps its title clear of them.
-    topInset: function () { var b = document.querySelector('#topChrome .bar'), t = $('tabBar'); return (b ? b.offsetHeight : 0) + (t && t.offsetHeight ? t.offsetHeight : 38) + 6; },
+    topInset: function () { var b = document.querySelector('#topChrome .bar'), t = $('tabBar'); var inRow = t && getComputedStyle(t).position === 'absolute'; return (b ? b.offsetHeight : 0) + (inRow ? 0 : (t && t.offsetHeight ? t.offsetHeight : 38)) + 6; }, // (3.39) tabs in the top row add nothing
     dodge: uiDodge,
     autoTool: function (t) { setTool(t); },
+    navPref: function (on) { if (!!PREF.nav !== !!on) { PREF.nav = !!on; savePref(); if ($('navState')) $('navState').textContent = on ? 'On' : 'Off'; } }, // (3.39) the navigator button
     imageUrl: function (src) { return isLocalRef(src) ? attachmentUrl(refName(src)) : Promise.resolve(src); },
     textLook: function (t) { Object.assign(INKOPT.text, t); savePref(); if (PREF.tool === 'text') setTool('text'); } // tapped text: the card shows its look
   };
@@ -1060,6 +1061,7 @@
   }
   function openNote(n, isNew) {
     if (typeof hideOverview === 'function') hideOverview();
+    if (!isNew && Date.now() - (sync.status().lastSynced || 0) > 5000) setTimeout(function () { sync.run({ pull: true }); }, 0); // (3.39) the newest from other devices
     if (S.cur) closeNote();
     S.cur = n; S.lastOpened = n.id;
     S.view = 'note'; dockFeedback();
@@ -1321,7 +1323,7 @@
   function tipSpacing(id) {
     var d = tipDef(id); if (!d) return '';
     return '<div class="grp"><label class="oslider">Spacing<input type="range" min="5" max="150" value="' + Math.round((d.sp || 0.25) * 100) + '" data-tipsp></label>' +
-      chip('Spacing follows pressure', 'data-tipspp title="Press lightly for gaps, harder for a close, dense line"', !!d.spp) + '</div>';
+      chip('Spacing follows pressure', 'data-tipspp title="Press lightly for gaps, harder for a close, dense line. With the pen\u2019s tilt set to change size, tilting changes the spacing too."', !!d.spp) + '</div>';
   }
   document.addEventListener('input', function (e) {
     if (e.target.dataset.tipsp == null) return;
@@ -2059,12 +2061,14 @@
   function buildPal() {
     var all = tlItems(), h = recentTools().map(function (t) { return tlBtn(all.filter(function (x) { return x.tool === t; })[0]); }).join('');
     h += '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>' +
-      '<button type="button" class="tlb" data-radial aria-label="All tools (or hold a finger on the page)" title="All tools (or hold a finger on the page; right-click with a mouse)"><svg class="i"><use href="#i-tools"/></svg></button>';
+      // (3.39, #103/#104) The last button is Layers (holding it, or a finger on the page, still brings all the tools)
+      '<button type="button" class="tlb" data-act="layers" data-radial-hold aria-label="Layers (hold: all tools)" title="Layers (hold: all tools; or hold a finger on the page)"><svg class="i"><use href="#i-layers"/></svg></button>';
     tlAdd(h, 'tl-pal anchor'); tlRefresh();
   }
   function openRadial(x, y, touchId) {
     closeRadial();
     var all = tlItems(), want = ['hand', 'type', 'pen', 'erase', 'lasso', 'fill', 'guide'], items = want.map(function (t) { return all.filter(function (z) { return z.tool === t; })[0]; }).filter(Boolean);
+    items.push(all.filter(function (z) { return z.act === 'image'; })[0]); // (3.39, #103) Add: pictures, videos, PDFs, links
     items.push(all.filter(function (z) { return z.act === 'layers'; })[0]); items = items.filter(Boolean);
     var R = TL.dev.indexOf('phone') === 0 ? 74 : 90, s = TL.dev.indexOf('phone') === 0 ? 44 : 50, W = innerWidth, H = innerHeight;
     x = Math.max(R + s / 2 + 6, Math.min(W - R - s / 2 - 6, x)); y = Math.max(R + s / 2 + 6, Math.min(H - R - s / 2 - 6, y));
@@ -2117,6 +2121,15 @@
     var w = $('tools').querySelector('.tl-wheel'); if (!w || !e.target.closest) return;
     if (e.target.closest('#canvasWrap') && !e.target.closest('#tools')) { if (!w.classList.contains('mini')) { w.classList.add('mini'); } }
   }, true);
+  (function () { // (3.39) holding the Layers button of Pen first opens all the tools round it
+    var t = null, fired = false;
+    $('tools').addEventListener('pointerdown', function (e) {
+      var b = e.target.closest && e.target.closest('[data-radial-hold]'); if (!b) return; fired = false; clearTimeout(t);
+      t = setTimeout(function () { fired = true; var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 110, null); else openRadial(r.left - 120, r.top + r.height / 2, null); }, 450);
+    }, true);
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (k) { $('tools').addEventListener(k, function () { clearTimeout(t); }, true); });
+    $('tools').addEventListener('click', function (e) { if (fired && e.target.closest && e.target.closest('[data-radial-hold]')) { fired = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  })();
   $('tools').addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('button'); if (!b) return;
     var w = b.closest('.tl-wheel');
@@ -2815,14 +2828,41 @@
   // Photos from a phone camera are huge: keep them sharp on screen but small in Drive (longest side 2000 px).
   // ---------- Files on the page: saved once in Attachments, named by what is in them (3.20) ----------
   // The same picture, video or PDF added to several notes (or twice to one) is one file in Drive; notes only point to it.
+  // (3.39, #107) A file goes on the page at once; it is copied to Drive in the background. Until it is there it waits
+  // on this phone (in the browser's storage, so closing the app doesn't lose it) and is sent at the next chance.
+  var upPending = {}, UPC = 'qn-uploads';
   async function saveMedia(blob, ext) {
     var buf = await blob.arrayBuffer(), dig = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
     var name = Array.prototype.map.call(dig.slice(0, 12), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('') + '.' + ext;
-    var map = await attachments();
-    if (!map[name]) { var made = await Drive.upload(name, await attachmentsFolder(), blob, blob.type || 'application/octet-stream'); map[name] = made.id; }
     if (!imgCache[name]) imgCache[name] = URL.createObjectURL(blob);
+    try { if (window.caches) await (await caches.open(UPC)).put('/up/' + name, new Response(blob, { headers: { 'content-type': blob.type || 'application/octet-stream' } })); } catch (e) {}
+    upMedia(name, blob);
     return name;
   }
+  function upMedia(name, blob) {
+    if (upPending[name]) return upPending[name];
+    upStatus();
+    return (upPending[name] = (async function () {
+      var map = await attachments();
+      if (!map[name]) { var made = await Drive.upload(name, await attachmentsFolder(), blob, blob.type || 'application/octet-stream'); map[name] = made.id; }
+      try { if (window.caches) await (await caches.open(UPC)).delete('/up/' + name); } catch (e) {}
+    })().catch(function () { /* stays waiting; tried again when online / on the next start */ }).then(function () { delete upPending[name]; upStatus(); }));
+  }
+  function upStatus() {
+    var k = Object.keys(upPending).length;
+    if (k) toast(k === 1 ? 'Copying a file to Drive…' : 'Copying ' + k + ' files to Drive…', null, null, 600000);
+    else if (S.upToast) hideToast();
+    S.upToast = !!k;
+  }
+  async function resumeUploads() {
+    if (!window.caches || !navigator.onLine || !Drive.signedIn()) return;
+    try {
+      var c = await caches.open(UPC), keys = await c.keys();
+      for (var i = 0; i < keys.length; i++) { var nm = decodeURIComponent(keys[i].url.split('/up/')[1] || ''); var r = await c.match(keys[i]); if (nm && r) { var b = await r.blob(); if (!imgCache[nm]) imgCache[nm] = URL.createObjectURL(b); upMedia(nm, b); } }
+    } catch (e) {}
+  }
+  window.addEventListener('online', function () { setTimeout(resumeUploads, 3000); });
+  setTimeout(resumeUploads, 8000);
   var mediaInput = document.createElement('input');
   mediaInput.type = 'file'; mediaInput.multiple = true; mediaInput.className = 'hidden'; // any files, several at once (3.21)
   document.body.appendChild(mediaInput);
@@ -2930,12 +2970,11 @@
   mediaInput.onchange = async function () {
     var files = Array.prototype.slice.call(mediaInput.files || []);
     if (!files.length || !S.canvas) return;
-    if (!navigator.onLine || (Drive.isOffline && Drive.isOffline())) { toast('Files can be added while online (they are saved in Drive).'); return; }
-    if (!Drive.signedIn()) { toast('Sign in to Google first (tap the sync button at the top).'); return; }
     var dy = 0, n = 0;
+    if (!navigator.onLine || !Drive.signedIn()) toast('Added here; copied to Drive when you are online and signed in.');
     for (var i = 0; i < files.length; i++) {
       var f = files[i], ext = (f.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5), ttl = f.name.replace(/\.[^.]+$/, '');
-      toast((files.length > 1 ? (i + 1) + ' of ' + files.length + ': ' : '') + 'saving ' + f.name + ' in Drive…', null, null, 600000);
+      if (files.length > 1) toast('Adding ' + (i + 1) + ' of ' + files.length + '…', null, null, 600000);
       try {
         if (f.type === 'application/pdf' || ext === 'pdf') { dy += await addPdf(f, ttl, dy); n++; continue; }
         if (/^image\//.test(f.type)) {
@@ -2953,7 +2992,7 @@
         n++;
       } catch (e) { toast(e.code === 'auth' ? 'Your Google sign-in ran out. Tap the sync button, then try again.' : f.name + ' could not be added: ' + (e.message || e)); return; }
     }
-    hideToast();
+    upStatus(); if (!S.upToast) hideToast();
   };
   // A PDF: kept once as it is, and each page shown on the page as a sheet to write on (one under another).
   var PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/';
@@ -3142,7 +3181,9 @@
   window.addEventListener('pagehide', function () { if (S.canvas) S.canvas.flush(); saveNow(); });
   window.addEventListener('online', function () { sync.run({ pull: true }); });
   window.addEventListener('offline', function () { renderStatus(); sync.run(); });
-  setInterval(function () { if (document.visibilityState === 'visible') sync.run({ pull: true }); }, 3 * 60 * 1000);
+  // (3.39, #105/#106) A quick look for changes from other devices every 20 s while the app is in view (one small
+  // request to Drive's change list); a full check every half hour, or with Sync now.
+  setInterval(function () { if (document.visibilityState === 'visible') sync.run({ pull: true }); }, 20 * 1000);
 
   // ---------- Updates: only applied when you tap "Update now" ----------
   var registration = null;
@@ -3302,7 +3343,7 @@
       if (act === 'fbinbox') { if (S.repliesSheet) S.repliesSheet(); return; }
       if (act === 'bugnow') { closeSheet(); if (window.QNBug) setTimeout(function () { QNBug.open(); }, 350); return; }
       if (act === 'signin') healthAction('signin');
-      if (act === 'sync') { sync.run({ pull: true }); closeSheet(); }
+      if (act === 'sync') { sync.run({ pull: true, full: true }); closeSheet(); }
       if (act === 'keep') location.href = 'import.html';
       if (act === 'notion') location.href = 'notion.html';
       if (act === 'vault') location.href = 'vault.html';
@@ -3324,6 +3365,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Navigator, faster sync, pictures', d: 'One button at the bottom right opens the navigator, always. Linear and Free are chosen inside it: in Linear mode it is a map of the whole page (one finger moves around it, two fingers zoom, drag the frame, double tap to go); on the free canvas it is the small map. Notes and changes from your other devices now show within about 20 seconds (and at once when you open a note or come back to the app). Pictures go on the page at once and are copied to Drive in the background; pick one (with Select, or one tap with Text) to move, resize, turn, or Crop it. Also: Add is back among all the tools in Pen first, its last button opens Layers (hold it for all the tools), tabs sit in the top row on wide screens, a second tap on Create no longer makes two folders, and the feedback bar never squashes its colours.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="120" y="40" width="88" height="62" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="126" y="46" width="34" height="14" rx="4" fill="' + A + '" opacity=".35"/><rect x="162" y="46" width="34" height="14" rx="4" fill="none" stroke="' + RULE + '"/><rect x="140" y="68" width="40" height="26" rx="4" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="5 4"/><rect x="150" y="106" width="58" height="14" rx="7" fill="' + SURF + '" stroke="' + A + '"/><path d="M34 40h60M34 54h44M34 68h52" stroke="' + RULE + '" stroke-width="4" stroke-linecap="round"/>') },
     { t: 'Smoother on busy pages', d: 'Fills, undo, delete and erase now change only what changed instead of redrawing the whole page (about a second each on a busy page on a slower tablet). Sliders work once per frame. Saving waits until you pause and never runs mid-line. On tablets that draw with their graphics chip, a busy page moves as one picture while you pan or zoom (Settings › Smoothness). Fixed: patterned fills could vanish after leaving a note and opening it again. New: Settings › Smoothness › Show the smoothness meter; its figures go with your feedback.',
       a: art('<rect x="70" y="50" width="120" height="34" rx="17" fill="#222" opacity=".8"/><circle cx="90" cy="67" r="6" fill="#4caf50"/><rect x="104" y="62" width="70" height="10" rx="5" fill="#fff" opacity=".85"/><rect x="60" y="110" width="140" height="6" rx="3" fill="' + RULE + '"/><circle cx="150" cy="113" r="10" fill="' + A + '"/>') },
     { t: 'Smoother fills, tabs at a glance', d: 'Patterned fills are drawn as one picture now, so drawing, erasing and picking on pages with patterns is much lighter. Drawing a fill shape: a pause half way no longer turns it into a clean shape; only holding where you started does. Pick a filled shape: its patterns show as pictures, Turn rotates the pattern, + New makes one. Pen › your own tip: Spacing, and Spacing follows pressure. Open tabs spreads your tabs out as pages to pick from. The side map has arrows to see more around it and zooms with two fingers or − and +. Tab names stay readable over drawings.',
