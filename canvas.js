@@ -544,10 +544,16 @@
       var a = Math.atan(Math.sqrt(Math.pow(Math.tan(tx * Math.PI / 180), 2) + Math.pow(Math.tan(ty * Math.PI / 180), 2)));
       return Math.max(0, Math.min(1, a / (Math.PI / 2)));
     }
+    // (3.40, #113) A pen reports pressure 0 as it lifts (and on some events in between): that reading keeps the last
+    // real pressure. Before, 0 became 0.5, so a lightly drawn line ended in a fat dot.
+    var lastPr = null;
     function point(ev) {
       var l = local(ev), w = toWorld(l[0], l[1]);
       if (ev.pointerType !== 'pen') return [w[0] - M, w[1] - M, 0.5];
-      return [w[0] - M, w[1] - M, ev.pressure || 0.5, penTilt(ev)];
+      if (ev.type === 'pointerdown') lastPr = null;
+      var pr = ev.pressure;
+      if (pr > 0) lastPr = pr; else pr = lastPr != null ? lastPr : 0.5;
+      return [w[0] - M, w[1] - M, pr, penTilt(ev)];
     }
 
     // ---- Coming back from another app (3.27, feedback 22 Nov): typing carries on where it was ----
@@ -1296,7 +1302,9 @@
       var rw = R.x1 - R.x0, rh = R.y1 - R.y0;
       var dr = parseFloat(dirEl.style.getPropertyValue('--dr')) || 8; // the tool rail's room on the right
       var pw = sv.pw || Math.max(200, Math.min(W - dr - 64, 360)), ph = sv.ph || Math.round(H * (d === 'all' ? 0.5 : 0.62));
-      var s = Math.max(0.03, Math.min(2, Math.max(0.12, Math.min(1, (pw - 2) / rw)) * sv.z));
+      // (3.40, #115) The navigator opens showing the whole page (width and height); two fingers zoom in from there.
+      var fit = d === 'all' ? Math.min((pw - 2) / rw, (ph - 50) / rh) : (pw - 2) / rw;
+      var s = Math.max(0.03, Math.min(2, Math.max(d === 'all' ? 0.03 : 0.12, Math.min(1, fit)) * sv.z));
       var txt = boxes.map(function (bx) {
         var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
         var L = layerOfBox(bx); if (L && L.vis === false) return '';
@@ -1394,7 +1402,7 @@
       function pd(q) { var k = Object.keys(q); return k.length < 2 ? 0 : Math.hypot(q[k[0]].x - q[k[1]].x, q[k[0]].y - q[k[1]].y); }
       sc.addEventListener('pointerdown', function (ev) {
         pins[ev.pointerId] = { x: ev.clientX, y: ev.clientY }; sc._down = { x: ev.clientX, y: ev.clientY };
-        if (Object.keys(pins).length === 2) { pinch = { d0: pd(pins), k: 1 }; sc._down = null; }
+        if (Object.keys(pins).length === 2) sc._down = null; // (3.40) the pinch itself is read from touches below
       });
       sc.addEventListener('pointermove', function (ev) {
         if (!pins[ev.pointerId]) return; pins[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
@@ -1405,6 +1413,26 @@
         if (pinch && !Object.keys(pins).length) { var k = pinch.k; pinch = null; if (Math.abs(k - 1) > 0.05) again({ z: Math.max(0.15, Math.min(8, sv.z * k)) }); else svgEl.style.transform = ''; }
       }
       sc.addEventListener('pointercancel', pinEnd);
+      // (3.40, #115) Two fingers anywhere on the map, the frame too, zoom it: read from touch events, because the
+      // browser takes a pointer away as soon as the map starts to scroll and the frame keeps its own pointers.
+      var tp = null;
+      function tdist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+      sideEl.addEventListener('touchstart', function (ev) {
+        if (ev.touches.length !== 2 || !ev.target.closest || !ev.target.closest('.sd-scroll')) return;
+        ev.preventDefault(); fd = null; lastTap = null;
+        var r = svgEl.getBoundingClientRect(), mx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2, my = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
+        tp = { d0: Math.max(10, tdist(ev.touches)), k: 1, ox: r.width ? (mx - r.left) / r.width * 100 : 50, oy: r.height ? (my - r.top) / r.height * 100 : 50 };
+      }, { passive: false, capture: true });
+      sideEl.addEventListener('touchmove', function (ev) {
+        if (!tp || ev.touches.length < 2) return; ev.preventDefault();
+        tp.k = Math.max(0.2, Math.min(5, tdist(ev.touches) / tp.d0));
+        svgEl.style.transformOrigin = tp.ox + '% ' + tp.oy + '%'; svgEl.style.transform = 'scale(' + tp.k + ')';
+      }, { passive: false, capture: true });
+      function tEnd(ev) {
+        if (!tp || ev.touches.length >= 2) return; var k = tp.k; tp = null;
+        if (Math.abs(k - 1) > 0.05) again({ z: Math.max(0.15, Math.min(12, sv.z * k)) }); else svgEl.style.transform = '';
+      }
+      sideEl.addEventListener('touchend', tEnd, true); sideEl.addEventListener('touchcancel', tEnd, true);
       sc.style.touchAction = 'pan-x pan-y';
       sc.addEventListener('pointerup', function (ev) {
         if (pinch || Object.keys(pins).length > 1) { pinEnd(ev); return; }
@@ -1594,6 +1622,16 @@
       flushAll(); clearTimeout(textTimer); record();
       if (hist.length < 2) return;
       future.push(hist.pop()); restore(hist[hist.length - 1]);
+    };
+    // (3.40, #114) When the page is made again (a change from another device), undo keeps what came before.
+    self.history = function () { return { hist: hist, future: future }; };
+    self.adoptHistory = function (h) {
+      if (!h || !h.hist || h.hist.length < 2) return;
+      var s = snapshot(), last = h.hist[h.hist.length - 1];
+      hist = h.hist.slice(); if (!sameAs(s, last)) hist.push(s);
+      while (hist.length > 200) hist.shift();
+      future = [];
+      hooks.history(hist.length > 1, false);
     };
     self.redo = function () {
       if (!future.length) return;

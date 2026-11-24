@@ -668,6 +668,11 @@
     }
     var closed = ab < Math.max(0.22 * D, 0.12 * L);
     var c = [0, 0]; pts.forEach(function (q) { c[0] += q[0]; c[1] += q[1]; }); c[0] /= pts.length; c[1] /= pts.length;
+    if (!closed) { // (3.40, #112) gone all the way round and a bit past where it began: closed too
+      var sw = 0, pa = Math.atan2(pts[0][1] - c[1], pts[0][0] - c[0]);
+      pts.forEach(function (q) { var t2 = Math.atan2(q[1] - c[1], q[0] - c[0]), dt = t2 - pa; while (dt > Math.PI) dt -= 2 * Math.PI; while (dt < -Math.PI) dt += 2 * Math.PI; sw += dt; pa = t2; });
+      if (Math.abs(sw) > 1.85 * Math.PI && Math.abs(sw) < 2.6 * Math.PI) closed = true;
+    }
     if (closed) {
       // An ellipse (or circle): from the spread of the points, then checked against them.
       var sxx = 0, syy = 0, sxy = 0;
@@ -676,15 +681,26 @@
       var th = 0.5 * Math.atan2(2 * sxy, sxx - syy), qt = Math.round(th / (Math.PI / 2)) * Math.PI / 2;
       if (Math.abs(th - qt) < 0.12) th = qt;
       var ct = Math.cos(th), st2 = Math.sin(th);
+      // (3.40, #112) The radii from the spread of all the points (before: the farthest point, so one stray bit or an
+      // overlapping tail made the fit look poor and a hand-drawn circle turned into a polygon).
       var ra = 0, rb = 0;
-      pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1]; ra = Math.max(ra, Math.abs(dx * ct + dy * st2)); rb = Math.max(rb, Math.abs(-dx * st2 + dy * ct)); });
-      ra *= 0.97; rb *= 0.97;
+      pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1], u = dx * ct + dy * st2, v = -dx * st2 + dy * ct; ra += u * u; rb += v * v; });
+      ra = Math.sqrt(2 * ra / pts.length); rb = Math.sqrt(2 * rb / pts.length);
       var err = 0;
       pts.forEach(function (q) { var dx = q[0] - c[0], dy = q[1] - c[1], u = (dx * ct + dy * st2) / ra, v = (-dx * st2 + dy * ct) / rb; err += Math.abs(Math.sqrt(u * u + v * v) - 1); });
       err /= pts.length;
       var corners = simplify(pts.concat([pts[0]]), 0.09 * D); corners.pop();
       var k = corners.length;
-      if (err < 0.085 && k > 4) {
+      // Round or with corners: a polygon's sides run straight between its corners; a circle's bulge out between them.
+      var ci = corners.map(function (q) { return pts.indexOf(q); }), bulge = 0;
+      for (var si = 0; si < k; si++) {
+        var i0 = ci[si], i1 = si + 1 < k ? ci[si + 1] : pts.length - 1, qa = pts[i0], qb = si + 1 < k ? pts[i1] : corners[0], mxd = 0;
+        for (var sj = i0 + 1; sj < i1; sj++) mxd = Math.max(mxd, segDist(pts[sj][0], pts[sj][1], qa[0], qa[1], qb[0], qb[1]));
+        bulge += mxd / Math.max(1, Math.hypot(qb[0] - qa[0], qb[1] - qa[1])); // how far each side bows, for its length
+      }
+      bulge = k ? bulge / k : 0;
+      var round = bulge > 0.05;
+      if (round && k >= 4 && err < 0.22) {
         if (Math.min(ra, rb) / Math.max(ra, rb) > 0.86) { var rr = (ra + rb) / 2; ra = rb = rr; }
         var n = Math.max(24, Math.round(Math.PI * (ra + rb) / step)), ell = [];
         for (var i = 0; i <= n; i++) { var t = i / n * Math.PI * 2, ex = ra * Math.cos(t), ey = rb * Math.sin(t); ell.push([c[0] + ex * ct - ey * st2, c[1] + ex * st2 + ey * ct]); }
@@ -1302,6 +1318,8 @@
         h += '<path d="M' + Q.map(function (q) { return q[0] + ' ' + q[1]; }).join('L') + 'Z" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 6 * k + ' ' + 4 * k + '"/>';
         Q.forEach(function (q) { h += '<rect x="' + (q[0] - 8 * k) + '" y="' + (q[1] - 8 * k) + '" width="' + 16 * k + '" height="' + 16 * k + '" rx="' + 3 * k + '" fill="var(--surface)" stroke="var(--accent)" stroke-width="' + 2 * k + '"/>'; });
         Q.forEach(function (q, i) { var n = Q[(i + 1) % 4], mx = (q[0] + n[0]) / 2, my = (q[1] + n[1]) / 2; h += '<circle cx="' + mx + '" cy="' + my + '" r="' + 6 * k + '" fill="var(--accent)"/>'; });
+      } else if (sel && sel.crop && sel.items[0]) {
+        h += cropSvg();
       } else if (sel && sel.box) {
         var b = sel.box, pd = 6 * k, x = b.x + M - pd, y = b.y + M - pd, w = b.w + 2 * pd, hh = b.h + 2 * pd;
         h += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '" stroke-dasharray="' + 6 * k + ' ' + 4 * k + '" rx="' + 6 * k + '"/>' +
@@ -1358,6 +1376,8 @@
     function renderBar(mode) {
       if (!sel) return;
       hideTip();
+      var wasCrop = !!sel.crop; sel.crop = mode === 'crop' && sel.items.length === 1 && sel.items[0].t === 'i';
+      if (wasCrop !== sel.crop) setTimeout(drawUi, 0);
       var g0 = sel.items.length ? sel.items[0].g : sel.boxes.length ? BX.groupOf(sel.boxes[0]) : null;
       var grouped = !!g0 && sel.items.every(function (it) { return it.g === g0; }) && sel.boxes.every(function (id) { return BX.groupOf(id) === g0; });
       var count = sel.items.length + sel.boxes.length;
@@ -1382,8 +1402,8 @@
             (pfills.length ? '<button type="button" data-spt="~orig" title="Use the pattern\'s own colours">Own colours</button>' : '') : '') +
           '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'crop') { // (3.39, #108) how much to cut off each side
-        var cp = sel.items[0].cp || [0, 0, 0, 0], CL = ['Left', 'Top', 'Right', 'Bottom'];
-        h = T('Crop') + CL.map(function (nm, i) { return '<label class="op">' + nm + ' <input type="range" min="0" max="90" value="' + Math.round(cp[i] * 100) + '" data-crop="' + i + '"></label>'; }).join('') +
+        // (3.40, #119) Like Excalidraw/Affinity: drag the frame's corners and sides on the picture; drag inside to slide the picture under it.
+        h = T('Crop') + '<span class="op">Drag the corners or sides · drag inside to move the picture</span>' +
           '<button type="button" data-act="cropreset">Whole picture</button><button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
         var co = sel.items.length ? sel.items[0].co || 1 : 1;
@@ -1456,13 +1476,23 @@
     function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
     function placeBar() {
       if (!sel || !sel.box) { bar.classList.add('hidden'); return; }
-      var b = sel.box;
+      var b = sel.crop && sel.items[0] ? cropBounds(sel.items[0]) : sel.box;
       if (o.toScreen) { // the bar lives on the screen, under the selection, whatever the zoom and turn
         var pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].map(function (q) { return o.toScreen(q[0], q[1]); });
         var x0 = Math.min.apply(null, pts.map(function (q) { return q[0]; })), y1 = Math.max.apply(null, pts.map(function (q) { return q[1]; }));
-        var host = o.uiHost, W = host.clientWidth, H = host.clientHeight;
+        var host = o.uiHost, W = host.clientWidth, H = host.clientHeight, hr0 = host.getBoundingClientRect();
+        // (3.40, #120) The bar keeps to the side of the tool rail (or wheel): it gets narrower and wraps into rows
+        // instead of running under the rail or off the screen.
+        var lane = [6, W - 6];
+        [].slice.call(document.querySelectorAll('#tools:not(.hidden) .tool-row, .tl-wheel:not(.mini)')).forEach(function (e) {
+          var r = e.getBoundingClientRect(); if (!r.width || !r.height || getComputedStyle(e).display === 'none') return;
+          var l = r.left - hr0.left, rr = r.right - hr0.left;
+          if (l + rr > W) lane[1] = Math.min(lane[1], l - 8); else lane[0] = Math.max(lane[0], rr + 8);
+        });
+        if (lane[1] - lane[0] < 200) lane = [6, W - 6];
+        bar.style.maxWidth = Math.min(520, lane[1] - lane[0]) + 'px';
         var y0 = Math.min.apply(null, pts.map(function (q) { return q[1]; })), bw = bar.offsetWidth, bh = bar.offsetHeight;
-        var bl = Math.max(6, Math.min(W - bw - 6, x0)), hr0 = host.getBoundingClientRect();
+        var bl = Math.max(lane[0], Math.min(lane[1] - bw, x0));
         // keep clear of the option cards and rails that sit on the screen: try under the selection, above it, then beside the cards
         var obs = [].slice.call(document.querySelectorAll('#penOpts:not(.hidden), #toolQuick:not(.hidden), #tools')).map(function (e) {
           var r = e.getBoundingClientRect(); return r.width && r.height ? { l: r.left - hr0.left, t: r.top - hr0.top, r: r.right - hr0.left, b: r.bottom - hr0.top } : null;
@@ -1825,6 +1855,75 @@
       setSel(items, bids);
     }
 
+    // ---- Crop on the picture (3.40, #119) ----
+    // The whole picture's frame in page units: origin (its top-left corner on the page) and local axes (it may be turned).
+    function cropGeo(t) {
+      var c = t.cp || [0, 0, 0, 0], W0 = t.w / (1 - c[0] - c[2]), H0 = t.h / (1 - c[1] - c[3]), cs = Math.cos(t.r || 0), sn = Math.sin(t.r || 0);
+      var ox = t.x - (c[0] * W0 * cs - c[1] * H0 * sn), oy = t.y - (c[0] * W0 * sn + c[1] * H0 * cs);
+      return { c: c, W0: W0, H0: H0, ox: ox, oy: oy, a: [c[0] * W0, c[1] * H0], b: [(1 - c[2]) * W0, (1 - c[3]) * H0],
+        toL: function (p) { var dx = p[0] - ox, dy = p[1] - oy; return [dx * cs + dy * sn, -dx * sn + dy * cs]; },
+        toP: function (u, v) { return [ox + u * cs - v * sn, oy + u * sn + v * cs]; } };
+    }
+    function cropBounds(t) { // the whole picture's box on the page (for placing the bar)
+      var g = cropGeo(t), P = [g.toP(0, 0), g.toP(g.W0, 0), g.toP(0, g.H0), g.toP(g.W0, g.H0)];
+      var xs = P.map(function (q) { return q[0]; }), ys = P.map(function (q) { return q[1]; }), x = Math.min.apply(null, xs), y = Math.min.apply(null, ys);
+      return { x: x, y: y, w: Math.max.apply(null, xs) - x, h: Math.max.apply(null, ys) - y };
+    }
+    function cropHit(p) {
+      var t = sel.items[0], g = cropGeo(t), L = g.toL(p), u = L[0], v = L[1], a = g.a, b = g.b, r = 24 / Z();
+      var nl = Math.abs(u - a[0]) < r, nr = Math.abs(u - b[0]) < r, nt = Math.abs(v - a[1]) < r, nb = Math.abs(v - b[1]) < r;
+      var inU = u > a[0] - r && u < b[0] + r, inV = v > a[1] - r && v < b[1] + r;
+      if (nt && nl) return 'tl'; if (nt && nr) return 'tr'; if (nb && nr) return 'br'; if (nb && nl) return 'bl';
+      if (nl && inV) return 'l'; if (nr && inV) return 'r'; if (nt && inU) return 't'; if (nb && inU) return 'b';
+      if (u >= 0 && u <= g.W0 && v >= 0 && v <= g.H0) return 'pan';
+      return null;
+    }
+    function startCrop(k, p) {
+      var t = own(sel.items[0]), g = cropGeo(t);
+      drag = { crop: k, t: t, p0: p, g: g, L0: g.toL(p), o: { x: t.x, y: t.y, w: t.w, h: t.h, cp: t.cp ? t.cp.slice() : null } };
+    }
+    function moveCrop(p) {
+      var d = drag, t = d.t, g = d.g;
+      if (!d.far) { if (Math.hypot(p[0] - d.p0[0], p[1] - d.p0[1]) < 4 / Z()) return; d.far = true; }
+      t.x = d.o.x; t.y = d.o.y; t.w = d.o.w; t.h = d.o.h; if (d.o.cp) t.cp = d.o.cp.slice(); else delete t.cp;
+      var L = g.toL(p), du = (L[0] - d.L0[0]) / g.W0, dv = (L[1] - d.L0[1]) / g.H0, c = d.o.cp || [0, 0, 0, 0], n = c.slice();
+      var mw = Math.min(0.5, 16 / (Z() * g.W0)), mh = Math.min(0.5, 16 / (Z() * g.H0)), cl = function (x, lo, hi) { return Math.max(lo, Math.min(hi, x)); };
+      if (d.crop === 'pan') { // the frame stays; the picture slides under it
+        du = cl(du, -c[2], c[0]); dv = cl(dv, -c[3], c[1]);
+        n = [c[0] - du, c[1] - dv, c[2] + du, c[3] + dv];
+        if (n.some(function (q) { return q > 1e-4; })) t.cp = n; else delete t.cp;
+        invalidate(t); render(); refreshBox(); drawUi(); return;
+      }
+      var k = d.crop;
+      if (k.indexOf('l') > -1) n[0] = cl(c[0] + du, 0, 1 - n[2] - mw);
+      if (k.indexOf('r') > -1) n[2] = cl(c[2] - du, 0, 1 - n[0] - mw);
+      if (k.indexOf('t') > -1) n[1] = cl(c[1] + dv, 0, 1 - n[3] - mh);
+      if (k.indexOf('b') > -1) n[3] = cl(c[3] - dv, 0, 1 - n[1] - mh);
+      setCrop(t, n.map(function (q) { return q < 1e-4 ? 0 : q; }));
+    }
+    function cropSvg() {
+      var t = sel.items[0], g = cropGeo(t), k = 1 / Z(), u = imageUrl(t.src), a = g.a, b = g.b, w = b[0] - a[0], hh = b[1] - a[1];
+      var h = '<g transform="translate(' + (g.ox + M) + ' ' + (g.oy + M) + ')' + (t.r ? ' rotate(' + (t.r * 180 / Math.PI) + ')' : '') + '">';
+      // the parts cut off: the picture, faded, so you see what you can bring back
+      if (u) h += '<image href="' + xmlEsc(u) + '" width="' + g.W0 + '" height="' + g.H0 + '" preserveAspectRatio="none" opacity=".35"/>';
+      h += '<rect width="' + g.W0 + '" height="' + g.H0 + '" fill="none" stroke="var(--muted)" stroke-width="' + k + '" stroke-dasharray="' + 4 * k + ' ' + 4 * k + '"/>';
+      // the part kept: a frame with thirds and handles
+      h += '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + w + '" height="' + hh + '" fill="none" stroke="#fff" stroke-width="' + 3 * k + '" opacity=".8"/>' +
+        '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + w + '" height="' + hh + '" fill="none" stroke="var(--accent)" stroke-width="' + 1.5 * k + '"/>';
+      [1, 2].forEach(function (i) {
+        h += '<line x1="' + (a[0] + w * i / 3) + '" y1="' + a[1] + '" x2="' + (a[0] + w * i / 3) + '" y2="' + b[1] + '" stroke="#fff" stroke-opacity=".6" stroke-width="' + k + '"/>' +
+          '<line x1="' + a[0] + '" y1="' + (a[1] + hh * i / 3) + '" x2="' + b[0] + '" y2="' + (a[1] + hh * i / 3) + '" stroke="#fff" stroke-opacity=".6" stroke-width="' + k + '"/>';
+      });
+      var Lc = Math.min(22 * k, w / 3, hh / 3), Lb = Math.min(26 * k, w / 3, hh / 3), cmx = a[0] + w / 2, cmy = a[1] + hh / 2;
+      var ps = ['M' + a[0] + ' ' + (a[1] + Lc) + 'V' + a[1] + 'H' + (a[0] + Lc), 'M' + (b[0] - Lc) + ' ' + a[1] + 'H' + b[0] + 'V' + (a[1] + Lc),
+        'M' + b[0] + ' ' + (b[1] - Lc) + 'V' + b[1] + 'H' + (b[0] - Lc), 'M' + (a[0] + Lc) + ' ' + b[1] + 'H' + a[0] + 'V' + (b[1] - Lc),
+        'M' + (cmx - Lb / 2) + ' ' + a[1] + 'H' + (cmx + Lb / 2), 'M' + (cmx - Lb / 2) + ' ' + b[1] + 'H' + (cmx + Lb / 2),
+        'M' + a[0] + ' ' + (cmy - Lb / 2) + 'V' + (cmy + Lb / 2), 'M' + b[0] + ' ' + (cmy - Lb / 2) + 'V' + (cmy + Lb / 2)].join('');
+      h += '<path d="' + ps + '" fill="none" stroke="#fff" stroke-width="' + 7 * k + '" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="' + ps + '" fill="none" stroke="var(--accent)" stroke-width="' + 4 * k + '" stroke-linecap="round" stroke-linejoin="round"/>';
+      return h + '</g>';
+    }
+
     // ---- Transforming the selection: drag inside to move, the corner to scale, the knob to rotate ----
     function handleAt(p) {
       if (sel && sel.warp && sel.quad) {
@@ -1933,6 +2032,7 @@
         drag = { guide: gh }; drawUi(); return true;
       }
       if (tool === 'lasso') {
+        if (sel && sel.crop && sel.items[0]) { var chit = cropHit(p); if (chit) { startCrop(chit, p); return true; } }
         var hnd = handleAt(p);
         // Tap (3.21.1): a quick tap picks just that thing (or, on empty space, picks nothing); tap and hold adds it to
         // what is picked, or takes it away if it is already in. A drag on the selection still moves it.
@@ -1972,6 +2072,7 @@
       }
       if (drag.held) return;
       if (drag.guide) { G.drag(drag.guide, p); drawUi(); return; }
+      if (drag.crop) { moveCrop(p); return; }
       if (drag.kind) { if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } if (drag.far) applyTransform(p); return; }
       if (drag.pick) { if (Math.hypot(p[0] - drag.pick[0], p[1] - drag.pick[1]) > 6 / Z()) { drag.far = true; clearTimeout(drag.holdT); } return; }
       if (drag.stroke && drag.snap) { // a clean shape: the pen now sizes and turns it (a line: moves its end)
@@ -2090,6 +2191,7 @@
       if (d.fhold) clearTimeout(d.fhold.t);
       clearTimeout(d.holdT);
       if (d.held) return; // tap and hold: already added or taken away
+      if (d.crop) { if (d.far) { refreshBox(); commit(); } drawUi(); return; }
       if (d.kind && !d.far && opt.lasso.how === 'tap' && d.kind === 'move') { tapPick(d.start); return; } // a quick tap: just that
       if (d.kind) { if (!d.far) return; refreshBox(); flushPatch(); commit(); return; }
       if (d.pick) { if (!d.far) tapPick(d.pick); return; }
@@ -2138,7 +2240,7 @@
     };
     self.cancel = function () {
       if (drag && drag.stroke) { cancelAnimationFrame(liveRaf); liveRaf = 0; clearLive(); dropLiveSvg(drag); }
-      if (drag && (drag.kind || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
+      if (drag && (drag.kind || drag.crop || drag.nudge || drag.erase) && drag.any !== false) { drag = null; cursor = null; flushPatch(); commit(); return; }
       if (G) { G.end(); G.highlight(null); }
       drag = null; cursor = null; drawUi();
     };
