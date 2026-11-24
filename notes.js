@@ -27,7 +27,15 @@
   //   {"groups":[{"id":"g1","x":10,"y":200,"strokes":[{"c":"#222","s":3,"p":[[0,0,0.5],…]}]}]}
   //   -->
   // Obsidian and other Markdown apps hide the markers and show the text in reading order.
-  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1, order: 1, page: 1 };
+  var KNOWN = { id: 1, created: 1, updated: 1, labels: 1, pinned: 1, source: 1, order: 1, page: 1, device: 1 };
+  // (3.36) Which kind of device saved the file last: only used to label both versions of a paragraph rewritten on two devices.
+  function deviceName() {
+    try { var s = localStorage.getItem('qn-device'); if (s) return s; } catch (e) {}
+    var ua = navigator.userAgent || '';
+    if (/iPad|Tablet/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua))) return 'tablet';
+    if (/Mobi|iPhone|Android/i.test(ua)) return 'phone';
+    return 'computer';
+  }
   var BOX = /^<!-- qn:box (\{.*\}) -->[ \t]*$/;
 
   function parseLabels(v) {
@@ -140,6 +148,8 @@
       updated: (fm.updated || '').trim() || fileTime || new Date().toISOString(),
       source: (fm.source || '').trim() || 'notes',
       page: (fm.page || '').trim(), // the page behind everything: 'grid', 'dots', 'lines' and a paper colour, e.g. 'grid cream'
+      device: (fm.device || '').trim(),
+      base: file ? text : null, // (3.36) the file as Drive had it: the shared original when two devices' changes are combined
       extra: extra,
       fileId: file ? file.id : null,
       md5: file ? file.md5Checksum : null,
@@ -163,7 +173,7 @@
   }
   function serialize(n) {
     var out = ['---', 'id: ' + n.id, 'created: ' + n.created, 'updated: ' + n.updated,
-      'labels: ' + JSON.stringify(n.labels || []), 'pinned: ' + (n.pinned ? 'true' : 'false'), 'source: ' + (n.source || 'notes')]
+      'labels: ' + JSON.stringify(n.labels || []), 'pinned: ' + (n.pinned ? 'true' : 'false'), 'source: ' + (n.source || 'notes'), 'device: ' + deviceName()]
       .concat(n.order != null ? ['order: ' + n.order] : [])
       .concat(n.page ? ['page: ' + n.page] : [])
       .concat(n.extra || [], ['---', '']);
@@ -274,7 +284,7 @@
   // ---------------- Syncing with Google Drive ----------------
   // Push: every changed note is written to its own file (new notes go to their folder, or Notes › Inbox).
   // Pull: every Markdown file under Notes, in any folder depth, is listed; only changed files are downloaded.
-  var FIELDS_COPY = ['title', 'boxes', 'ink', 'links', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId'];
+  var FIELDS_COPY = ['title', 'boxes', 'ink', 'links', 'body', 'labels', 'pinned', 'order', 'created', 'updated', 'source', 'extra', 'fileId', 'md5', 'fileName', 'folderId', 'page', 'device', 'base'];
   function Sync(store, notes, hooks) {
     var state = { phase: 'idle', error: null, lastSynced: null };
     var running = false, again = false, againPull = false, timer = null, folders = null, tree = {};
@@ -327,15 +337,38 @@
       for (var i = 0; i < list.length; i++) {
         var n = list[i], v = n.v;
         if (n.deleted) {
-          if (n.fileId) await Drive.trash(n.fileId);
+          if (n.fileId) {
+            // (3.36) Changed on another device since this one last saw it: the change wins, the note comes back.
+            var now = null;
+            try { now = await Drive.get(n.fileId); } catch (e) { if (e.code !== 'notfound') throw e; }
+            if (now && !now.trashed && n.md5 && now.md5Checksum !== n.md5) {
+              var back = parse(await Drive.readText(n.fileId), now);
+              FIELDS_COPY.forEach(function (k) { n[k] = back[k]; });
+              n.deleted = false; n.dirty = false; n.v++;
+              await store.put(n); changed.push(n.id);
+              continue;
+            }
+            if (now && !now.trashed) await Drive.trash(n.fileId);
+          }
           if (n.deleted && n.v === v) { delete notes[n.id]; await store.del(n.id); changed.push(n.id); }
           continue;
         }
         var target = targetOf(n);
         var text = serialize(n);
+        if (!n.fileId && n.creating) {
+          // (3.36) An earlier create may have reached Drive with its answer lost: use that file, don't make a second.
+          var same = (await Drive.list(n.creatingIn || target)).filter(function (f) { return f.name === n.creating; });
+          for (var s = 0; s < same.length && !n.fileId; s++) {
+            var st = await Drive.readText(same[s].id);
+            if (st.indexOf('\nid: ' + n.id + '\n') > -1) { n.fileId = same[s].id; n.md5 = same[s].md5Checksum; n.fileName = same[s].name; n.folderId = n.creatingIn || target; }
+          }
+          n.creating = null; n.creatingIn = null;
+        }
         if (!n.fileId) {
-          var made = await Drive.create(fileName(n), target, text);
-          n.fileId = made.id; n.md5 = made.md5Checksum; n.fileName = made.name; n.folderId = target; n.moveFrom = null;
+          n.creating = fileName(n); n.creatingIn = target; await store.put(n);
+          var made = await Drive.create(n.creating, target, text);
+          n.creating = null; n.creatingIn = null;
+          n.fileId = made.id; n.md5 = made.md5Checksum; n.fileName = made.name; n.folderId = target; n.moveFrom = null; n.base = text;
         } else {
           if (n.moveFrom && n.moveFrom !== target) { await Drive.move(n.fileId, target, n.moveFrom); }
           n.moveFrom = null; n.folderId = target;
@@ -345,7 +378,7 @@
             await store.put(n); changed.push(n.id);
             continue;
           }
-          n.md5 = r.file.md5Checksum;
+          n.md5 = r.file.md5Checksum; n.base = text;
         }
         if (n.v === v) n.dirty = false;
         await store.put(n); changed.push(n.id);
@@ -420,7 +453,7 @@
       if (before.some(function (j) { return j.status === 'inflight'; })) return false;
       var jobs = [];
       all().filter(function (n) { return n.dirty && !n.conflict; }).forEach(function (n) {
-        if (n.deleted) { if (n.fileId) jobs.push({ noteId: n.id, v: n.v, kind: 'trash', fileId: n.fileId, status: 'pending' }); return; }
+        if (n.deleted) { if (n.fileId) jobs.push({ noteId: n.id, v: n.v, kind: 'trash', fileId: n.fileId, md5: n.md5, status: 'pending' }); return; }
         var j = { noteId: n.id, v: n.v, text: serialize(n), parent: targetOf(n), status: 'pending' };
         if (!n.fileId) { j.kind = 'create'; j.name = fileName(n); }
         else { j.kind = 'save'; j.fileId = n.fileId; j.md5 = n.md5; if (n.moveFrom && n.moveFrom !== j.parent) j.moveFrom = n.moveFrom; }
@@ -445,7 +478,7 @@
             if (n.deleted && n.v === j.v) { delete notes[n.id]; await store.del(n.id); }
             else { n.fileId = null; n.md5 = null; n.fileName = null; await store.put(n); }
           } else {
-            n.fileId = res.id; n.md5 = res.md5; n.fileName = res.name || n.fileName; n.folderId = j.parent; n.moveFrom = null;
+            n.fileId = res.id; n.md5 = res.md5; n.fileName = res.name || n.fileName; n.folderId = j.parent; n.moveFrom = null; n.base = j.text;
             if (n.v === j.v) n.dirty = false;
             await store.put(n);
           }
@@ -458,32 +491,46 @@
       return false; // still being sent; try again in a moment
     }
 
-    // (3.30) Changed on two devices: the newer change wins by itself, no question. The other version is not lost:
-    // it goes into the file's history in Drive (••• › Version history). A note deleted elsewhere but edited here
-    // keeps this device's version.
+    // (3.36) Changed on two devices: combined by itself, nothing asked and nothing lost (merge.js). The original both
+    // devices started from is `base`, the file as this device last had it from Drive. The combined note is then
+    // treated as this device's edit on top of the other device's version, and pushed like any other edit: if a third
+    // device saved meanwhile, the push is refused and the next round combines again. A note deleted on another
+    // device but changed here comes back with this device's version.
+    function whenLabel(dev, iso) {
+      var d = new Date(iso), m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return 'from ' + (dev || 'another device') + (isNaN(d) ? '' : ', ' + d.getDate() + ' ' + m[d.getMonth()] + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()));
+    }
     async function settle() {
-      var list = all().filter(function (n) { return n.conflict; }), changed = [], pushAgain = false;
+      var list = all().filter(function (n) { return n.conflict; }), changed = [], pushAgain = false, later = false;
       for (var i = 0; i < list.length; i++) {
         var n = list[i], c = n.conflict;
+        if (hooks.busy && hooks.busy(n.id)) { later = true; continue; } // being typed in right now: combine when the typing stops
         try {
-          var mine = Date.parse(n.updated) || 0, theirs = Date.parse(c.modifiedTime) || 0;
-          if (c.trashed || mine >= theirs) {
-            if (c.trashed) { n.fileId = null; n.md5 = null; } else n.md5 = c.md5;
-            n.conflict = null; n.dirty = true; n.v++; pushAgain = true;
-          } else {
-            var f = await Drive.get(n.fileId), txt = await Drive.readText(n.fileId);
-            var r1 = await Drive.saveText(n.fileId, serialize(n), f.md5Checksum); // this device's version, into the history
-            if (r1.conflict) continue; // changed again meanwhile: next sync
-            var r2 = await Drive.saveText(n.fileId, txt, r1.file.md5Checksum); // and the newer one back on top
-            var fresh = parse(txt, f);
-            FIELDS_COPY.forEach(function (k) { n[k] = fresh[k]; });
-            n.md5 = r2.file && r2.file.md5Checksum || f.md5Checksum; n.dirty = false; n.conflict = null; n.v++;
+          var f = c.trashed ? null : await Drive.get(n.fileId);
+          if (!f || f.trashed) {
+            n.fileId = null; n.md5 = null; n.base = null; n.conflict = null; n.dirty = true; n.v++; pushAgain = true;
+            await store.put(n); changed.push(n.id); continue;
           }
+          var txt = await Drive.readText(n.fileId);
+          if (hooks.busy && hooks.busy(n.id)) { later = true; continue; }
+          if (hooks.flush) hooks.flush(n.id);
+          var theirs = parse(txt, f), orig = n.base ? parse(n.base) : null;
+          var mineT = Date.parse(n.updated) || 0, theirT = Date.parse(theirs.updated) || Date.parse(f.modifiedTime) || 0;
+          var m = window.QNMerge.mergeNote(orig, n, theirs, {
+            mineNewer: mineT >= theirT,
+            labelA: whenLabel(deviceName(), n.updated),
+            labelB: whenLabel(theirs.device, theirs.updated || f.modifiedTime)
+          });
+          ['title', 'boxes', 'ink', 'links', 'labels', 'pinned', 'order', 'page', 'updated'].forEach(function (k) { n[k] = m[k]; });
+          n.ink = window.QNInk.normalize(n.ink); n.body = bodyOf(n);
+          n.md5 = f.md5Checksum; n.base = txt; n.conflict = null; n.dirty = true; n.v++; pushAgain = true;
+          if (hooks.merged) hooks.merged(n.id);
           await store.put(n); changed.push(n.id);
-        } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; }
+        } catch (e) { if (e.code === 'auth' || e.code === 'offline') throw e; later = true; }
       }
       if (changed.length) hooks.changed(changed);
       if (pushAgain) await push();
+      if (later || all().some(function (n) { return n.conflict; })) api.schedule(3000);
     }
     async function run(opts) {
       opts = opts || {};
@@ -522,7 +569,7 @@
       handoff: function () { return handoff().catch(function () { return false; }); },
       schedule: function (ms) { clearTimeout(timer); timer = setTimeout(function () { run(); }, ms); },
       status: function () {
-        var waiting = all().filter(function (n) { return n.dirty && !n.conflict; });
+        var waiting = all().filter(function (n) { return n.dirty || n.conflict; }); // (3.36) a note being combined is still on its way
         var conflicts = all().filter(function (n) { return n.conflict; });
         return { phase: state.phase, error: state.error, lastSynced: state.lastSynced, waiting: waiting, conflicts: conflicts };
       },
