@@ -1020,10 +1020,32 @@
     penKnown: function () { return !!PREF.penSeen; },
     finger: function () { return PREF.finger || 'auto'; },
     head: function () { return $('noteHead'); },
+    // (3.33, #90) The top buttons and tabs float over the page; the page keeps its title clear of them.
+    topInset: function () { var b = document.querySelector('#topChrome .bar'), t = $('tabBar'); return (b ? b.offsetHeight : 0) + (t && t.offsetHeight ? t.offsetHeight : 38) + 6; },
+    dodge: uiDodge,
     autoTool: function (t) { setTool(t); },
     imageUrl: function (src) { return isLocalRef(src) ? attachmentUrl(refName(src)) : Promise.resolve(src); },
     textLook: function (t) { Object.assign(INKOPT.text, t); savePref(); if (PREF.tool === 'text') setTool('text'); } // tapped text: the card shows its look
   };
+  // (3.33, #90) While a pen line or a moved thing passes under a button, a tab, the tool rail or another floating
+  // control, that control fades out; it comes back a moment after the pen or finger lifts.
+  var DODGE = '#topChrome .bar > :not(.spacer), #tabBar, #tools .tool-row, #tools .tool-opts, #menuFab, #viewCtl, #toolQuick, #penQuick, .qn-nav, .qn-modebtn, .qn-dir, .tl-wheel, .tl-puck, .tl-corner, .tl-pal, #fbSlotNote';
+  var dodged = [], dodgeT = 0, dodgeLast = 0;
+  function uiDodge(x, y) {
+    if (x == null) {
+      clearTimeout(dodgeT);
+      if (dodged.length) dodgeT = setTimeout(function () { dodged.forEach(function (e) { e.classList.remove('qn-dodge'); e.classList.add('qn-undodge'); }); dodged = []; }, 500);
+      return;
+    }
+    var now = performance.now(); if (now - dodgeLast < 40) return; dodgeLast = now;
+    clearTimeout(dodgeT);
+    var pad = 18;
+    document.querySelectorAll(DODGE).forEach(function (e) {
+      if (dodged.indexOf(e) >= 0) return;
+      var r = e.getBoundingClientRect(); if (!r.width) return;
+      if (x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad) { e.classList.remove('qn-undodge'); e.classList.add('qn-dodge'); dodged.push(e); }
+    });
+  }
   function openNote(n, isNew) {
     if (S.cur) closeNote();
     S.cur = n; S.lastOpened = n.id;
@@ -3094,6 +3116,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'More room, easier moves', d: 'The page now runs under the top buttons and tabs, and a button fades away while you draw or move something under it. With Text, one tap picks a text box: drag it to move it, tap outside to let go, double tap to type. In the side map, drag the frame (or tap a part) to choose what the screen will show, then double tap to go there.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><circle cx="196" cy="30" r="9" fill="' + SOFT + '" opacity=".35"/><rect x="40" y="46" width="110" height="40" rx="6" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="6 4"/><rect x="48" y="56" width="80" height="7" rx="3" fill="' + RULE + '"/><rect x="48" y="70" width="60" height="7" rx="3" fill="' + RULE + '"/><path d="M150 96 q20 -30 46 -60" stroke="' + A + '" stroke-width="3" fill="none" stroke-linecap="round"/>') },
     { t: 'Fixes from your feedback', d: 'The tab now shows a note\u2019s name as you type it (and no stray tags when it has no title). Text stays where you left it when you tap outside. In Tap-to-pick, one finger pans. Double tapping a spot on the side map just moves there; it no longer starts typing.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="34" y="26" width="64" height="18" rx="6" fill="' + SOFT + '"/><rect x="104" y="26" width="64" height="18" rx="6" fill="' + SURF + '" stroke="' + A + '"/><rect x="40" y="62" width="120" height="8" rx="4" fill="' + RULE + '"/><rect x="40" y="80" width="90" height="8" rx="4" fill="' + RULE + '"/><circle cx="178" cy="96" r="10" fill="' + A + '" opacity=".25"/>') },
     { t: 'Four ways to lay out the tools', d: 'Settings › Look › Tool layout. Rail: the column you know. Wheel (like Concepts): tools, colours, size and opacity on one wheel; tap the middle for settings, drag the ring to move it, it shrinks to a dot while you draw. Pucks (like Sketchbook): a tool bar, a size puck (drag up/down for size, sideways for opacity), a colour puck and a corner menu. Pen first: just your last tools; hold one finger still on the page (or right-click) and all the tools come to it. Each fits itself to phone, tablet and computer, upright or sideways; on an upright phone the settings card is tall and narrow so the page stays in view.',

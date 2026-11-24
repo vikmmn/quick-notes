@@ -102,6 +102,8 @@
     function fingerDraws() { var m = hooks.finger ? hooks.finger() : 'auto'; return m === 'draw' || (m !== 'scroll' && !penSeen); }
 
     // The title, labels and "Edited" line sit on the page above the text, so they move and zoom with it.
+    // (3.33, #90) The top buttons and tabs float over the page: this much of the top of the screen is under them.
+    function topIn() { return hooks.topInset ? hooks.topInset() : 0; }
     var head = hooks.head ? hooks.head() : null, headH = 0, headRO = null;
     function placeHead() {
       if (!head) return;
@@ -123,10 +125,10 @@
     // ---- The view: an endless page you can move, zoom and turn ----
     // A point on the page (stage coordinates) appears on screen at (x, y) + rotate(r) · z · point.
     var VKEY = 'qn-view:' + note.id;
-    var view = { x: 0, y: headH, z: 1, r: 0, h: 1 };
+    var view = { x: 0, y: headH + topIn(), z: 1, r: 0, h: 2 };
     try {
       var sv = JSON.parse(localStorage.getItem(VKEY) || 'null');
-      if (sv && isFinite(sv.z)) { view = sv; if (!sv.h) { view.y += headH; view.h = 1; } } // saved before the title moved onto the page
+      if (sv && isFinite(sv.z)) { view = sv; if (!sv.h) { view.y += headH; view.h = 1; } if (view.h === 1) { view.y += topIn(); view.h = 2; } } // saved before the title moved onto the page (h 1) / before the top buttons floated over it (h 2)
     } catch (e) {}
     var ZMIN = 0.01, ZMAX = 12, viewTimer = null, navRaf = 0;
     function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
@@ -145,7 +147,7 @@
         var fe = document.activeElement; if (!fe || !fe.closest || !fe.closest('.box') || !stage.contains(fe)) return;
         var r = s.getRangeAt(0).getBoundingClientRect(); if (!r || (!r.height && !r.top)) return;
         var vv = window.visualViewport, top = (vv ? vv.offsetTop : 0), hgt = vv ? vv.height : innerHeight, hr = host.getBoundingClientRect();
-        var lo = Math.max(hr.top, top) + 70, hi = Math.min(hr.bottom, top + hgt) - 60;
+        var lo = Math.max(hr.top + topIn(), top) + 40, hi = Math.min(hr.bottom, top + hgt) - 60;
         if (hi - lo < 80) return;
         var want = null;
         if (r.bottom > hi) want = lo + (hi - lo) * 0.38; else if (r.top < lo) want = lo + (hi - lo) * 0.25;
@@ -171,7 +173,8 @@
       return pref === 'on' || (pref === 'auto' && phoneNow() && innerHeight > innerWidth);
     }
     var topCache = null;
-    function topLimit() { // how far up Linear mode scrolls: the title, or higher if something sits above it
+    function topLimit() { return topLimit0() + topIn(); } // the title sits just below the floating top buttons
+    function topLimit0() { // how far up Linear mode scrolls: the title, or higher if something sits above it
       if (topCache != null) return topCache;
       if (!eng) return headH;
       var b = contentBox(); topCache = b ? Math.max(headH, -b.y + (b.y < -headH ? M : 0)) : headH;
@@ -646,8 +649,17 @@
           var nw = Date.now(), lt = typeTaps[typeTaps.length - 1];
           if (!lt || nw - lt.t > 400 || Math.hypot(lt.cx - ev.clientX, lt.cy - ev.clientY) > 32) typeTaps = [];
           typeTaps.push({ t: nw, cx: ev.clientX, cy: ev.clientY });
+          var tTap = { n: typeTaps.length, box: onBox.dataset.id, cx: ev.clientX, cy: ev.clientY };
+          // (3.33, #88) One tap picks the text box; a picked box moves with one finger. A swipe that starts on a box
+          // that isn't picked still scrolls, and a double tap still types.
+          if (selected && selected.kind === 'box' && selected.id === tTap.box) {
+            var sb = boxes.filter(function (x) { return x.id === tTap.box; })[0];
+            drag = { type: 'move', item: sb, sx: ev.clientX, sy: ev.clientY, ox: sb.x, oy: sb.y, ow: sb.w, id: ev.pointerId, typeTap: tTap };
+            host.setPointerCapture(ev.pointerId);
+            return;
+          }
           startPan(ev);
-          if (drag) drag.typeTap = { n: typeTaps.length, box: onBox.dataset.id, cx: ev.clientX, cy: ev.clientY };
+          if (drag) drag.typeTap = tTap;
         }
         return;
       }
@@ -680,6 +692,7 @@
         }, 360);
       }
       startPan(ev);
+      if (drag && drag.type === 'pan') drag.emptyTap = true;
     });
     // ---- The Hand (3.27, feedback 21 Nov): it only moves the page. A tap does nothing; a double tap on a thing
     // picks it and switches to Select; a triple tap switches to Text and types there (in the text tapped, or new
@@ -736,6 +749,8 @@
     if ('onpointerrawupdate' in window) on(host, 'pointerrawupdate', function (ev) { if (drag && drag.type === 'ink') inkMove(ev); });
     on(host, 'pointermove', function (ev) {
       if (!drag) { if (INK[tool]) eng.move(point(ev), ev); return; } // the eraser/nudge circle follows a hovering pen
+      // (3.33, #90) Drawing or moving something under a button: that button steps aside until you lift.
+      if (hooks.dodge && ev.pointerId === drag.id && (drag.type === 'ink' && !drag.pickPan || drag.type === 'move' || drag.type === 'resize')) hooks.dodge(ev.clientX, ev.clientY);
       if (drag.type === 'ink' && drag.pickPan && ev.pointerId === drag.id) {
         if (Math.hypot(ev.clientX - drag.pickPan.x, ev.clientY - drag.pickPan.y) > 8) {
           var pp = drag.pickPan; eng.cancel(); drag = null;
@@ -769,22 +784,29 @@
         layout();
       }
     });
+    function typeTapUp(t) { // a finger tap on a text box with the Text tool: one picks it, two type there
+      if (t.n >= 2) {
+        typeTaps = []; if (selected) select(null);
+        var te = editors[t.box]; if (te) { var tp = null; try { tp = te.ed.view.posAtCoords({ left: t.cx, top: t.cy }); } catch (x) {} te.ed.commands.focus(tp ? tp.pos : 'end'); }
+        return;
+      }
+      select({ kind: 'box', id: t.box });
+    }
     function endPointer(ev) {
+      if (hooks.dodge) hooks.dodge(null);
       if (!drag) return;
       if (drag.type === 'pan') {
         delete drag.fingers[ev.pointerId];
         if (Object.keys(drag.fingers).length) return;
         var vx = drag.vx || 0, vy = drag.vy || 0;
         if (drag.moved) { taps = []; clearTimeout(self._tapTimer); panMoved = true; handTaps = []; clearTimeout(handTimer); }
-        var tapAt = !drag.moved && drag.textTap, handTap = !drag.moved && drag.hand, typeTap = !drag.moved && drag.typeTap;
+        var tapAt = !drag.moved && drag.textTap, handTap = !drag.moved && drag.hand, typeTap = !drag.moved && drag.typeTap, emptyTap = !drag.moved && drag.emptyTap;
         if (drag.moved) typeTaps = [];
         drag = null;
         if (tapAt && tool === 'text') { eng.textAt(tapAt, -(view.r || 0)); return; }
         if (handTap && tool === 'hand') { handUp(handTap); return; }
-        if (typeTap && tool === 'type') {
-          if (typeTap.n >= 2) { typeTaps = []; var te = editors[typeTap.box]; if (te) { var tp = null; try { tp = te.ed.view.posAtCoords({ left: typeTap.cx, top: typeTap.cy }); } catch (x) {} te.ed.commands.focus(tp ? tp.pos : 'end'); } }
-          return;
-        }
+        if (typeTap && tool === 'type') { typeTapUp(typeTap); return; }
+        if (emptyTap && tool === 'type' && selected) select(null); // (3.33, #88) a tap outside lets go of the picked box
         if (Math.abs(vx) + Math.abs(vy) > 1) { // glide a little, like normal scrolling
           panV = { vx: vx, vy: vy };
           var step = function () {
@@ -802,7 +824,9 @@
       var d = drag; drag = null;
       if (d.type === 'ink') { drag = d; inkMove(ev); drag = null; eng.up(point(ev)); return; }
       if (d.type === 'move' || d.type === 'resize') {
-        if (d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow) changed('layout');
+        var mv = d.item.x !== d.ox || d.item.y !== d.oy || d.item.w !== d.ow;
+        if (mv) changed('layout');
+        if (d.typeTap) { if (mv) typeTaps = []; else typeTapUp(d.typeTap); }
       }
     }
     on(host, 'pointerup', endPointer);
@@ -1045,7 +1069,7 @@
       blocks().forEach(function (q) {
         var p = [toScreen(q.x, q.y), toScreen(q.x + q.w, q.y + q.h)];
         var x0 = Math.min(p[0][0], p[1][0]), x1 = Math.max(p[0][0], p[1][0]), y0 = Math.min(p[0][1], p[1][1]), y1 = Math.max(p[0][1], p[1][1]);
-        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < 6 ? 'n' : y0 > H - 6 ? 's' : '';
+        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < topIn() + 6 ? 'n' : y0 > H - 6 ? 's' : '';
         if (!hz && !vt) return;
         var d = vt + hz, dist = Math.hypot(Math.max(0, -x1, x0 - W), Math.max(0, -y1, y0 - H));
         if (!best[d] || dist < best[d].dist) best[d] = { q: q, dist: dist };
@@ -1054,6 +1078,7 @@
       // Keep clear of the tool rail (right) and the quick corner (bottom left).
       var hr = host.getBoundingClientRect(), t = document.getElementById('tools'), qk = document.getElementById('toolQuick');
       var tr = t && !t.classList.contains('hidden') ? t.getBoundingClientRect() : null, qr = qk && !qk.classList.contains('hidden') ? qk.getBoundingClientRect() : null;
+      dirEl.style.setProperty('--dt', (topIn() + 8) + 'px');
       dirEl.style.setProperty('--dr', (tr && tr.width ? Math.max(8, hr.right - tr.left + 6) : 8) + 'px');
       dirEl.style.setProperty('--dbl', (qr && qr.width && qr.left < hr.left + hr.width / 2 ? Math.max(76, hr.bottom - qr.top + 6) : 76) + 'px');
     }
@@ -1080,13 +1105,13 @@
       peekEl.insertAdjacentHTML('beforeend', '<div class="pk-hint">Double tap the arrow, or tap here, to go there</div>');
       peekEl.style.width = pw + 'px';
       peekEl.style.left = (W - pw) / 2 + 'px';
-      if (d.charAt(0) === 'n') peekEl.style.top = '56px'; else if (d.charAt(0) === 's') peekEl.style.bottom = '64px'; else peekEl.style.top = '30%';
+      if (d.charAt(0) === 'n') peekEl.style.top = (topIn() + 52) + 'px'; else if (d.charAt(0) === 's') peekEl.style.bottom = '64px'; else peekEl.style.top = '30%';
       peekEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
       peekEl.addEventListener('click', function () { hidePeek(); goTo(q, d); });
       peekTimer = setTimeout(hidePeek, 3500);
     }
     function goTo(q, d) { // the column moves to it (sideways only if it is to the side), and it comes to the top of the screen
-      glide(/[ew]/.test(d) ? (Math.abs(M - q.x) < 40 ? 0 : M - q.x) : (view.lx || 0), 90 - q.y);
+      glide(/[ew]/.test(d) ? (Math.abs(M - q.x) < 40 ? 0 : M - q.x) : (view.lx || 0), topIn() + 36 - q.y);
     }
     function glide(lx1, y1) {
       cancelAnimationFrame(anim);
@@ -1120,7 +1145,7 @@
       return blocks().filter(function (q) {
         var p = [toScreen(q.x, q.y), toScreen(q.x + q.w, q.y + q.h)];
         var x0 = Math.min(p[0][0], p[1][0]), x1 = Math.max(p[0][0], p[1][0]), y0 = Math.min(p[0][1], p[1][1]), y1 = Math.max(p[0][1], p[1][1]);
-        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < 6 ? 'n' : y0 > H - 6 ? 's' : '';
+        var hz = x1 < 6 ? 'w' : x0 > W - 6 ? 'e' : '', vt = y1 < topIn() + 6 ? 'n' : y0 > H - 6 ? 's' : '';
         if (d.length === 2) return vt === d.charAt(0) && hz === d.charAt(1);
         return d === 'e' || d === 'w' ? hz === d : vt === d;
       });
@@ -1159,10 +1184,12 @@
         return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="6" fill="var(--rule)" opacity=".45"/>' +
           '<text x="' + (x + 4) + '" y="' + y + '" font-size="' + fs + '" fill="var(--ink)">' + lines.slice(0, maxL).map(function (l) { return '<tspan x="' + (x + 4) + '" dy="' + (fs * 1.4) + '">' + escX(l) + '</tspan>'; }).join('') + '</text>';
       }).join('');
-      var here = '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + (b[0] - a[0]) + '" height="' + (b[1] - a[1]) + '" fill="var(--accent)" fill-opacity=".08" stroke="var(--accent)" stroke-width="' + (2 / s) + '" stroke-dasharray="' + (8 / s) + ' ' + (6 / s) + '" rx="' + (8 / s) + '"/>';
+      // (3.33, #86) Where the screen is now: a faint outline. The frame on top of it can be moved (drag it, or tap a
+      // part to bring it there) to choose what the screen will show; a double tap goes there.
+      var here = '<rect x="' + a[0] + '" y="' + a[1] + '" width="' + (b[0] - a[0]) + '" height="' + (b[1] - a[1]) + '" fill="none" stroke="var(--muted, #888)" stroke-opacity=".5" stroke-width="' + (1.5 / s) + '" stroke-dasharray="' + (4 / s) + ' ' + (4 / s) + '" rx="' + (8 / s) + '"/>';
       sideEl = el('div', 'qn-side', host);
       sideEl.dataset.d = d;
-      sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Double tap a part to go there</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
+      sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Drag the frame, double tap</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
         '<div class="sd-scroll"><svg width="' + Math.round(rw * s) + '" height="' + Math.round(rh * s) + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + rw + ' ' + rh + '">' +
         txt + window.QNInk.svgFor(ink, 'sd-', M, M, true) + here + '</svg></div>';
       pw = Math.max(200, Math.min(pw, Math.round(rw * s) + 2)); // no empty strip beside a narrow map
@@ -1170,7 +1197,7 @@
       var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 44) + 'px';
       sc.querySelector('svg').style.margin = '0 auto'; sc.querySelector('svg').style.display = 'block';
       var v = d.charAt(0), h0 = d.length === 2 ? d.charAt(1) : d;
-      if (v === 'n') sideEl.style.top = '56px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(56, (H - ph) / 2) + 'px';
+      if (v === 'n') sideEl.style.top = (topIn() + 52) + 'px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(topIn() + 8, (H - ph) / 2) + 'px';
       // Beside its arrow, and never under the tool rail or off the screen.
       var lx = h0 === 'e' ? W - dr - 48 - pw : h0 === 'w' ? 56 : (W - dr - pw) / 2;
       sideEl.style.left = Math.max(8, Math.min(W - dr - pw - 4, lx)) + 'px';
@@ -1183,14 +1210,55 @@
       sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); if (ev.pointerType !== 'mouse') ev.preventDefault(); }); // (3.32, #87) no stray tap events reach the page under the map
       sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
       var lastTap = null;
+      // The frame: what the screen will show. Page mode only (z 1, no turn), so the screen's top-left in page
+      // coordinates is (-lx, -y), and going there is glide(-x, -y).
+      sc.style.position = 'relative';
+      var fw = b[0] - a[0], fh = b[1] - a[1], fr = { x: a[0], y: a[1] }, list0 = blocks();
+      var frEl = el('div', 'sd-frame', sc); frEl.innerHTML = '<span>Double tap to go</span>';
+      frEl.style.width = (fw * s) + 'px'; frEl.style.height = (fh * s) + 'px';
+      function placeFr() {
+        fr.x = Math.max(R.x0 - fw / 2, Math.min(R.x1 - fw / 2, fr.x));
+        fr.y = Math.max(Math.max(R.y0 - fh / 2, -topLimit()), Math.min(R.y1 - fh / 2, fr.y));
+        frEl.style.left = ((fr.x - R.x0) * s) + 'px'; frEl.style.top = ((fr.y - R.y0) * s) + 'px';
+        frEl.classList.toggle('moved', Math.abs(fr.x - a[0]) > 2 || Math.abs(fr.y - a[1]) > 2);
+      }
+      placeFr();
+      function goFr() { lastTap = null; swallowTap(); hideSide(); glide(-fr.x, -fr.y); }
+      function mapTap(ev, inFrame) {
+        var t = Date.now();
+        if (lastTap && t - lastTap.t < 420 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 40) { goFr(); return; }
+        lastTap = { t: t, x: ev.clientX, y: ev.clientY };
+        if (inFrame) return;
+        // A tap on a part brings the frame there, placed as a double tap used to place the screen: a text box with its
+        // left edge at the margin, anything else in the middle, a third of the way down.
+        var r = sc.querySelector('svg').getBoundingClientRect();
+        var tg = pointTarget(R.x0 + (ev.clientX - r.left) / s, R.y0 + (ev.clientY - r.top) / s, d, list0);
+        fr.x = -tg[0]; fr.y = -tg[1]; placeFr();
+      }
+      var fd = null;
+      frEl.addEventListener('pointerdown', function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        frEl.setPointerCapture(ev.pointerId);
+        fd = { id: ev.pointerId, sx: ev.clientX, sy: ev.clientY, ox: fr.x, oy: fr.y, moved: false };
+      });
+      frEl.addEventListener('pointermove', function (ev) {
+        if (!fd || ev.pointerId !== fd.id) return;
+        var dx = ev.clientX - fd.sx, dy = ev.clientY - fd.sy;
+        if (!fd.moved && Math.hypot(dx, dy) < 6) return;
+        fd.moved = true; lastTap = null;
+        fr.x = fd.ox + dx / s; fr.y = fd.oy + dy / s; placeFr();
+        // Near the map's edge, the map scrolls along.
+        var cr = sc.getBoundingClientRect(), e = 28;
+        if (ev.clientY > cr.bottom - e) sc.scrollTop += 8; else if (ev.clientY < cr.top + e) sc.scrollTop -= 8;
+        if (ev.clientX > cr.right - e) sc.scrollLeft += 8; else if (ev.clientX < cr.left + e) sc.scrollLeft -= 8;
+      });
+      function frUp(ev) { if (!fd || ev.pointerId !== fd.id) return; var m = fd.moved; fd = null; if (!m && ev.type === 'pointerup') mapTap(ev, true); }
+      frEl.addEventListener('pointerup', frUp); frEl.addEventListener('pointercancel', frUp);
       sc.addEventListener('pointerdown', function (ev) { sc._down = { x: ev.clientX, y: ev.clientY }; });
       sc.addEventListener('pointerup', function (ev) {
         var dn = sc._down; sc._down = null;
         if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
-        var t = Date.now(), r = sc.querySelector('svg').getBoundingClientRect();
-        var px = R.x0 + (ev.clientX - r.left) / s, py = R.y0 + (ev.clientY - r.top) / s;
-        if (lastTap && t - lastTap.t < 400 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) { lastTap = null; swallowTap(); hideSide(); goToPoint(px, py, d, blocks()); return; }
-        lastTap = { t: t, x: ev.clientX, y: ev.clientY };
+        mapTap(ev, false);
       });
     }
     // (3.32, #87) The double tap that jumps there must not also start typing in the text box now under the finger:
@@ -1204,16 +1272,17 @@
         var ae = document.activeElement; if (ae && stage.contains(ae) && ae.closest('.box') && !had) ae.blur();
       }, 450);
     }
-    function goToPoint(px, py, d, list) {
-      // (3.27.1, #82) A text box tapped on: its left edge goes to the margin. Anything else (a drawing that may run
-      // across the screen and the side): the tapped point comes to the middle of the screen, a third of the way down.
+    function pointTarget(px, py, d, list) { // -> [lx, y] that brings this point of the page to its place on screen
+      // (3.27.1, #82) A text box: its left edge goes to the margin. Anything else (a drawing that may run across the
+      // screen and the side): the point comes to the middle of the screen, a third of the way down.
       var W = host.clientWidth, H = host.clientHeight, lx1 = view.lx || 0, hit = null;
       list.forEach(function (q) { if (q.box && px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + q.h) hit = q; });
       var a = toWorld(0, 0), b = toWorld(W, H), onScreenX = px >= a[0] && px <= b[0];
       if (hit && hit.w < W) lx1 = Math.abs(M - hit.x) < 40 ? 0 : M - hit.x;
       else if (/[ew]/.test(d) || !onScreenX) lx1 = W / 2 - px;
-      glide(lx1, H * 0.3 - py);
+      return [lx1, Math.min(topLimit(), topIn() + (H - topIn()) * 0.3 - py)];
     }
+    function goToPoint(px, py, d, list) { var t = pointTarget(px, py, d, list); glide(t[0], t[1]); }
     on(host, 'pointerdown', function (ev) { if (sideEl && !sideEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.qn-dir'))) hideSide(); }, true);
 
     // ---- Linear mode or free canvas, for this note: a shake on a phone, the button elsewhere ----
