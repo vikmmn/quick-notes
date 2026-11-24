@@ -209,6 +209,7 @@
       textLook: function (t) { if (hooks.textLook) hooks.textLook(t); },
       toNewNote: hooks.toNewNote ? function (d, move) { return hooks.toNewNote(d, move); } : null,
       copyLink: hooks.copyLink ? function (b) { return hooks.copyLink(b); } : null,
+      newPattern: hooks.newPattern ? function () { hooks.newPattern(); } : null,
       imageUrl: function (src) { return hooks.imageUrl ? hooks.imageUrl(src) : null; },
       view: function () { // the part of the page on screen, as a box in page coordinates
         var W = host.clientWidth, H = host.clientHeight, pts = [toWorld(0, 0), toWorld(W, 0), toWorld(0, H), toWorld(W, H)];
@@ -1275,7 +1276,9 @@
       return out;
     }
     function escX(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-    function showSide(d) {
+    function showSide(d, sv) {
+      // (3.37, #94) sv: how far the map was widened with its arrows (screens each way) and zoomed with two fingers.
+      sv = sv || { n: 0, s: 0, e: 0, w: 0, z: 1, fr: null };
       hidePeek(); hideSide();
       var list = sideBlocks(d); if (!list.length) return;
       var W = host.clientWidth, H = host.clientHeight, pad = 24;
@@ -1286,10 +1289,12 @@
       // to the side can be picked as a whole, and the outline of "here" is never cut off at the map's edge.
       R.x0 = Math.min(R.x0, a[0]); R.x1 = Math.max(R.x1, b[0]); R.y0 = Math.min(R.y0, a[1]); R.y1 = Math.max(R.y1, b[1]);
       R.x0 -= pad; R.y0 -= pad; R.x1 += pad; R.y1 += pad;
+      var sw0 = b[0] - a[0], sh0 = b[1] - a[1];
+      R.x0 -= sv.w * sw0; R.x1 += sv.e * sw0; R.y0 -= sv.n * sh0; R.y1 += sv.s * sh0;
       var rw = R.x1 - R.x0, rh = R.y1 - R.y0;
       var dr = parseFloat(dirEl.style.getPropertyValue('--dr')) || 8; // the tool rail's room on the right
       var pw = Math.max(200, Math.min(W - dr - 64, 360)), ph = Math.round(H * 0.62);
-      var s = Math.max(0.12, Math.min(1, (pw - 2) / rw));
+      var s = Math.max(0.03, Math.min(2, Math.max(0.12, Math.min(1, (pw - 2) / rw)) * sv.z));
       var txt = boxes.map(function (bx) {
         var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
         var L = layerOfBox(bx); if (L && L.vis === false) return '';
@@ -1305,11 +1310,12 @@
       sideEl = el('div', 'qn-side', host);
       sideEl.dataset.d = d;
       sideEl.innerHTML = '<div class="sd-head"><b>' + SIDE_NAMES[d] + '</b><span>Drag the frame, double tap</span><button type="button" class="sd-x" aria-label="Close">×</button></div>' +
+        '<div class="sd-more"><button type="button" data-g="w" aria-label="Show more to the left">‹</button><button type="button" data-g="n" aria-label="Show more above">˄</button><button type="button" data-g="s" aria-label="Show more below">˅</button><button type="button" data-g="e" aria-label="Show more to the right">›</button><button type="button" data-g="zo" aria-label="Zoom the map out">−</button><button type="button" data-g="zi" aria-label="Zoom the map in">+</button></div>' +
         '<div class="sd-scroll"><svg width="' + Math.round(rw * s) + '" height="' + Math.round(rh * s) + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + rw + ' ' + rh + '">' +
         txt + window.QNInk.svgFor(ink, 'sd-', M, M, true) + here + '</svg></div>';
       pw = Math.max(200, Math.min(pw, Math.round(rw * s) + 2)); // no empty strip beside a narrow map
       sideEl.style.width = pw + 'px';
-      var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 44) + 'px';
+      var sc = sideEl.querySelector('.sd-scroll'); sc.style.maxHeight = (ph - 82) + 'px';
       sc.querySelector('svg').style.margin = '0 auto'; sc.querySelector('svg').style.display = 'block';
       var v = d.charAt(0), h0 = d.length === 2 ? d.charAt(1) : d;
       if (v === 'n') sideEl.style.top = (topIn() + 52) + 'px'; else if (v === 's') sideEl.style.bottom = '64px'; else sideEl.style.top = Math.max(topIn() + 8, (H - ph) / 2) + 'px';
@@ -1324,11 +1330,19 @@
       sc.scrollTop = Math.max(0, cy); sc.scrollLeft = Math.max(0, cx);
       sideEl.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); if (ev.pointerType !== 'mouse') ev.preventDefault(); }); // (3.32, #87) no stray tap events reach the page under the map
       sideEl.querySelector('.sd-x').addEventListener('click', hideSide);
+      function again(ch) { var n = Object.assign({}, sv, ch, { fr: { x: fr.x, y: fr.y } }); showSide(d, n); }
+      Array.prototype.forEach.call(sideEl.querySelectorAll('.sd-more [data-g]'), function (bt) {
+        bt.addEventListener('click', function () {
+          var g = bt.dataset.g, ch = {};
+          if (g === 'zi') ch.z = Math.min(8, sv.z * 1.5); else if (g === 'zo') ch.z = Math.max(0.15, sv.z / 1.5); else ch[g] = sv[g] + 1;
+          again(ch);
+        });
+      });
       var lastTap = null;
       // The frame: what the screen will show. Page mode only (z 1, no turn), so the screen's top-left in page
       // coordinates is (-lx, -y), and going there is glide(-x, -y).
       sc.style.position = 'relative';
-      var fw = b[0] - a[0], fh = b[1] - a[1], fr = { x: a[0], y: a[1] }, list0 = blocks();
+      var fw = b[0] - a[0], fh = b[1] - a[1], fr = sv.fr ? { x: sv.fr.x, y: sv.fr.y } : { x: a[0], y: a[1] }, list0 = blocks();
       var frEl = el('div', 'sd-frame', sc); frEl.innerHTML = '<span>Double tap to go</span>';
       frEl.style.width = (fw * s) + 'px'; frEl.style.height = (fh * s) + 'px';
       function placeFr() {
@@ -1338,6 +1352,7 @@
         frEl.classList.toggle('moved', Math.abs(fr.x - a[0]) > 2 || Math.abs(fr.y - a[1]) > 2);
       }
       placeFr();
+      if (sv.fr) { sc.scrollLeft = Math.max(0, (fr.x + fw / 2 - R.x0) * s - sc.clientWidth / 2); sc.scrollTop = Math.max(0, (fr.y + fh / 2 - R.y0) * s - sc.clientHeight / 2); }
       function goFr() { lastTap = null; swallowTap(); hideSide(); glide(-fr.x, -fr.y); }
       function mapTap(ev, inFrame) {
         var t = Date.now();
@@ -1369,8 +1384,26 @@
       });
       function frUp(ev) { if (!fd || ev.pointerId !== fd.id) return; var m = fd.moved; fd = null; if (!m && ev.type === 'pointerup') mapTap(ev, true); }
       frEl.addEventListener('pointerup', frUp); frEl.addEventListener('pointercancel', frUp);
-      sc.addEventListener('pointerdown', function (ev) { sc._down = { x: ev.clientX, y: ev.clientY }; });
+      // Two fingers on the map: zoom it (the map is made again at the new size when the fingers lift).
+      var pins = {}, pinch = null, svgEl = sc.querySelector('svg');
+      function pd(q) { var k = Object.keys(q); return k.length < 2 ? 0 : Math.hypot(q[k[0]].x - q[k[1]].x, q[k[0]].y - q[k[1]].y); }
+      sc.addEventListener('pointerdown', function (ev) {
+        pins[ev.pointerId] = { x: ev.clientX, y: ev.clientY }; sc._down = { x: ev.clientX, y: ev.clientY };
+        if (Object.keys(pins).length === 2) { pinch = { d0: pd(pins), k: 1 }; sc._down = null; }
+      });
+      sc.addEventListener('pointermove', function (ev) {
+        if (!pins[ev.pointerId]) return; pins[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+        if (pinch && pinch.d0 > 10) { ev.preventDefault(); pinch.k = Math.max(0.2, Math.min(5, pd(pins) / pinch.d0)); svgEl.style.transformOrigin = '50% 50%'; svgEl.style.transform = 'scale(' + pinch.k + ')'; }
+      });
+      function pinEnd(ev) {
+        delete pins[ev.pointerId];
+        if (pinch && !Object.keys(pins).length) { var k = pinch.k; pinch = null; if (Math.abs(k - 1) > 0.05) again({ z: Math.max(0.15, Math.min(8, sv.z * k)) }); else svgEl.style.transform = ''; }
+      }
+      sc.addEventListener('pointercancel', pinEnd);
+      sc.style.touchAction = 'pan-x pan-y';
       sc.addEventListener('pointerup', function (ev) {
+        if (pinch || Object.keys(pins).length > 1) { pinEnd(ev); return; }
+        delete pins[ev.pointerId];
         var dn = sc._down; sc._down = null;
         if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
         mapTap(ev, false);

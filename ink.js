@@ -36,6 +36,7 @@
   function uid(p) { return (p || 'i') + Math.random().toString(36).slice(2, 9); }
   function newLayer(name) { return { id: uid('L'), name: name || 'Layer 1', vis: true, lock: false, op: 1, blend: 'normal', clip: false, items: [] }; }
   function colorOf(c) { return !c || c === 'ink' ? 'var(--ink)' : c; }
+  function boundsOfPts(P) { var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; P.forEach(function (q) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }); return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; }
   function widthOf(it) { return (it.s || 3) * ((BRUSH[it.b] || BRUSH.pen).size); }
 
   // ---------- Reading and saving ----------
@@ -86,7 +87,7 @@
         if (it.g) x.g = it.g;
         if (it.co != null && it.co !== 1) x.co = Math.round(it.co * 100) / 100; // the collective's opacity
         if (it.lk) x.lk = it.lk; // locked: 'e' can't be erased, 's' can't be selected
-        if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; }
+        if (it.t === 'f') { x.d = it.d.map(function (ring) { return ring.map(function (q) { return [r1(q[0]), r1(q[1])]; }); }); if (it.ps) x.ps = Math.round(it.ps * 100) / 100; if (it.pd) x.pd = Math.round(it.pd * 100) / 100; if (it.pr) x.pr = Math.round(it.pr); }
         else if (it.t === 'b') { x.op = it.op; x.k = it.k.map(ser); }
         else if (it.t === 'i') { x.src = it.src; x.x = r1(it.x); x.y = r1(it.y); x.w = r1(it.w); x.h = r1(it.h); if (it.r) x.r = Math.round(it.r * 1000) / 1000; if (it.mk) { x.mk = it.mk; if (it.ttl) x.ttl = it.ttl; if (it.pg) x.pg = it.pg; if (it.of) x.of = it.of; } }
         else if (it.t === 'x') { x.txt = it.txt; x.x = r1(it.x); x.y = r1(it.y); if (it.r) x.r = Math.round(it.r * 1000) / 1000; x.fs = r1(it.fs); x.font = it.font; }
@@ -279,8 +280,9 @@
   function tipSvg(it, d) { // the tip, stamped along the line, turned with the line if asked
     var w = widthOf(it), sp = Math.max(0.05, d.sp || 0.25) * w, A = along(it.p), o = (it.o == null ? 1 : it.o) * (it.co || 1);
     var pm = d.pm || 'size', tid = 'tp-' + it.id, uses = '', clips = {}, LV = 10;
-    for (var s = 0; s <= A.len + 0.01; s += sp) {
+    for (var s = 0, step = sp; s <= A.len + 0.01; s += step) {
       var q = A.at(s), pr = it.f ? q[4] : 0.5, ang = d.rot ? Math.atan2(q[3], q[2]) * 180 / Math.PI : 0;
+      step = d.spp && it.f ? sp * (1.9 - 1.6 * Math.max(0, Math.min(1, pr))) : sp; // (3.37, #91) lighter: further apart
       var k = w * (pm !== 'reveal' && it.f ? 0.45 + 1.1 * pr : 1), clip = '';
       if (pm !== 'size') { var lv = Math.max(1, Math.min(LV, Math.round((0.15 + 0.85 * (it.f ? pr : 1)) * LV))); clips[lv] = 1; clip = ' clip-path="url(#' + tid + '-c' + lv + ')"'; }
       uses += '<use href="#' + tid + '"' + clip + ' transform="translate(' + q[0].toFixed(1) + ' ' + q[1].toFixed(1) + ')' + (ang ? ' rotate(' + ang.toFixed(1) + ')' : '') + ' scale(' + (k / 100).toFixed(4) + ')"/>';
@@ -306,11 +308,30 @@
     return '<g data-i="' + it.id + '"' + (o !== 1 ? ' opacity="' + o + '"' : '') + '>' + out + '</g>';
   }
   // ps: how big the pattern is drawn (1: the tile's own size); pd: spacing, the room between repeats (1: none).
-  function patternDef(d, pid, ps, pd, pc) { // a tile, with its edges wrapped round so the pattern runs on without seams (pc: one colour for the whole tile)
-    var sz = (d.sz || 48) * (ps || 1), per = sz * Math.max(1, pd || 1), inner = defItems(d, pc ? colorOf(pc) : null), nine = '';
+  function patternDef(d, pid, ps, pd, pc, pr) { // a tile, with its edges wrapped round so the pattern runs on without seams (pc: one colour for the whole tile)
+    var sz = (d.sz || 48) * (ps || 1), per = sz * Math.max(1, pd || 1);
+    // (3.37) The tile is one picture, made once and reused: the browser paints a bitmap instead of re-drawing nine
+    // copies of every stroke in the tile for every shape (fills, erasing and picking were slow on the Tab S6 Lite).
+    var url = tileUrl(d, pc), body;
+    if (url) body = '<image href="' + url + '" width="100" height="100" preserveAspectRatio="none"/>';
+    else { // a tile using the page's own patterns (pencil grain) stays drawn as before
+      var inner = defItems(d, pc ? colorOf(pc) : null), nine = '';
+      [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
+      body = per > sz ? '<clipPath id="' + pid + '-c"><rect width="100" height="100"/></clipPath><g clip-path="url(#' + pid + '-c)">' + nine + '</g>' : nine;
+    }
+    return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse"' + (pr ? ' patternTransform="rotate(' + (+pr).toFixed(1) + ')"' : '') + ' width="' + per.toFixed(2) + '" height="' + per.toFixed(2) + '"><g transform="scale(' + (sz / 100) + ')">' + body + '</g></pattern>';
+  }
+  var TILES = {};
+  function inkColour() { try { return getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#222'; } catch (e) { return '#222'; } }
+  function tileUrl(d, pc) {
+    var ink = inkColour(), key = d.id + '|' + (pc || '') + '|' + ink + '|' + (d.v || JSON.stringify(d.items).length);
+    if (TILES[key] !== undefined) return TILES[key];
+    var inner = defItems(d, pc ? colorOf(pc) : null), nine = '';
+    if (/url\(#(?!pm-)/.test(inner)) return (TILES[key] = null);
     [-1, 0, 1].forEach(function (a) { [-1, 0, 1].forEach(function (b) { nine += '<g transform="translate(' + a * 100 + ' ' + b * 100 + ')">' + inner + '</g>'; }); });
-    var body = per > sz ? '<clipPath id="' + pid + '-c"><rect width="100" height="100"/></clipPath><g clip-path="url(#' + pid + '-c)">' + nine + '</g>' : nine;
-    return '<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + per.toFixed(2) + '" height="' + per.toFixed(2) + '"><g transform="scale(' + (sz / 100) + ')">' + body + '</g></pattern>';
+    nine = nine.replace(/var\(--ink\)/g, ink);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 100 100">' + nine + '</svg>';
+    return (TILES[key] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
   }
   function itemSvg(it, plain) {
     if (it.t === 'x') return textSvg(it, plain);
@@ -319,7 +340,7 @@
     if (it.cs && DEFS[it.cs] && it.p && it.p.length) return DEFS[it.cs].k === 'line' ? lineSvg(it, DEFS[it.cs]) : tipSvg(it, DEFS[it.cs]);
     if (it.pt && DEFS[it.pt] && it.t === 'f') {
       var pid = 'pt-' + it.id, po = (it.o == null ? 1 : it.o) * (it.co || 1);
-      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid, it.ps, it.pd, it.pc) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
+      return '<g data-i="' + it.id + '"><defs>' + patternDef(DEFS[it.pt], pid, it.ps, it.pd, it.pc, it.pr) + '</defs><path d="' + itemD(it) + '" fill="url(#' + pid + ')" fill-rule="evenodd"' + (po !== 1 ? ' fill-opacity="' + po + '"' : '') + '/></g>';
     }
     var B = plain ? {} : BRUSH[it.b] || {};
     var o = (it.o == null ? 1 : it.o) * (it.co || 1), fade = !plain && hasFade(it);
@@ -349,7 +370,7 @@
         k.map(function (p) { var s = shape(p); return xo ? s.replace('<g style="', '<g style="mix-blend-mode:difference;') : s; }).join('') + (xo ? '</g>' : '') + '</mask>';
       var lo = lead && lead.o != null ? lead.o : 1, fillv = colorOf(col);
       var lp = it.pt ? it : lead; // a pattern on the shape, or on its bottom part, carries over
-      if (lp && lp.pt && DEFS[lp.pt]) { var ppid = 'pt-' + it.id; defs += patternDef(DEFS[lp.pt], ppid, lp.ps, lp.pd, lp.pc); fillv = 'url(#' + ppid + ')'; }
+      if (lp && lp.pt && DEFS[lp.pt]) { var ppid = 'pt-' + it.id; defs += patternDef(DEFS[lp.pt], ppid, lp.ps, lp.pd, lp.pc, lp.pr); fillv = 'url(#' + ppid + ')'; }
       body = '<rect x="' + bb.x.toFixed(1) + '" y="' + bb.y.toFixed(1) + '" width="' + bb.w.toFixed(1) + '" height="' + bb.h.toFixed(1) + '" fill="' + fillv + '"' + (lo !== 1 ? ' fill-opacity="' + lo + '"' : '') + ' mask="url(#' + id + ')"/>';
     }
     var o = (it.o == null ? 1 : it.o) * (it.co || 1);
@@ -1039,7 +1060,8 @@
     function liveSoon() { if (!liveRaf) liveRaf = requestAnimationFrame(drawLive); }
 
     // ---- Overlay: lasso line, tool circle, selection frame and handles ----
-    var cursor = null;
+    var cursor = null, uiRaf = 0;
+    function uiSoon() { if (!uiRaf) uiRaf = requestAnimationFrame(function () { uiRaf = 0; drawUi(); }); }
     function drawUi() {
       var h = '', k = 1 / Z();
       if (drag && drag.lasso && drag.lasso.length > 1) {
@@ -1135,9 +1157,11 @@
           // Lines (outlines from Text art too): thinner or thicker, all by the same amount.
           (strokes.length ? '<label class="op">Line width <input type="range" min="10" max="400" value="100" data-lw></label>' : '') +
           (pfills.length ? '<label class="op">Pattern size <input type="range" min="20" max="400" value="' + Math.round((pfills[0].ps || 1) * 100) + '" data-ps></label>' +
+            '<label class="op">Turn <input type="range" min="0" max="180" value="' + Math.round(pfills[0].pr || 0) + '" data-pr></label>' +
             '<label class="op">Spacing <input type="range" min="100" max="400" value="' + Math.round((pfills[0].pd || 1) * 100) + '" data-pd></label>' : '') +
           (fillsAll.length ? '<span class="bt">Pattern</span><button type="button" data-spt=""' + (fillsAll.every(function (f) { return !f.pt; }) ? ' aria-pressed="true"' : '') + '>Plain</button>' +
-            Object.keys(DEFS).filter(function (k) { return DEFS[k].k === 'pat'; }).map(function (k) { return '<button type="button" data-spt="' + k + '"' + (fillsAll.every(function (f) { return f.pt === k; }) ? ' aria-pressed="true"' : '') + '>' + esc(DEFS[k].name || 'Pattern') + '</button>'; }).join('') +
+            Object.keys(DEFS).filter(function (k) { return DEFS[k].k === 'pat'; }).map(function (k) { return '<button type="button" data-spt="' + k + '"' + (fillsAll.every(function (f) { return f.pt === k; }) ? ' aria-pressed="true"' : '') + ' class="ptsw" title="' + esc(DEFS[k].name || 'Pattern') + '" aria-label="' + esc(DEFS[k].name || 'Pattern') + '"><svg viewBox="0 0 30 30" width="26" height="26"><defs>' + patternDef(Object.assign({}, DEFS[k], { sz: 12 }), 'sw-' + k) + '</defs><rect width="30" height="30" rx="5" fill="url(#sw-' + k + ')"/></svg></button>'; }).join('') +
+            (o.newPattern ? '<button type="button" data-act="newpat" title="Make a new pattern">+ New</button>' : '') +
             (pfills.length ? '<button type="button" data-spt="~orig" title="Use the pattern\'s own colours">Own colours</button>' : '') : '') +
           '<button type="button" data-act="back">Done</button>';
       } else if (mode === 'cop') { // the collective's own opacity, on top of each item's
@@ -1245,8 +1269,11 @@
       tipEl.style.top = Math.max(4, r.top - hr.top - tipEl.offsetHeight - 8) + 'px';
     }
     function hideTip() { clearTimeout(tipTimer); if (tipEl) tipEl.classList.add('hidden'); }
-    bar.addEventListener('pointerover', function (e) { var b = e.target.closest('[data-tip]'); if (b && e.pointerType !== 'touch') showTip(b); });
-    bar.addEventListener('pointerout', function (e) { if (e.pointerType !== 'touch') hideTip(); });
+    var tipOn = null;
+    bar.addEventListener('pointerover', function (e) { var b = e.target.closest('[data-tip]'); if (b && e.pointerType !== 'touch') { tipOn = b; showTip(b); } });
+    // (3.37, #96) Some pens send only moves while hovering: the name shows at once then too.
+    bar.addEventListener('pointermove', function (e) { if (e.pointerType === 'touch' || e.buttons) return; var b = e.target.closest('[data-tip]'); if (b && b !== tipOn) { tipOn = b; showTip(b); } });
+    bar.addEventListener('pointerout', function (e) { if (e.pointerType !== 'touch') { tipOn = null; hideTip(); } });
     bar.addEventListener('pointerdown', function (e) {
       var b = e.target.closest('[data-tip]'); swallow = false; hideTip();
       if (b && e.pointerType === 'touch') tipTimer = setTimeout(function () { swallow = true; showTip(b); }, 450);
@@ -1265,7 +1292,8 @@
       render();
     });
     bar.addEventListener('input', function (e) { // line width (from what it was when Colour opened), pattern size and spacing
-      var ds = e.target.dataset; if (!sel || (ds.lw == null && ds.ps == null && ds.pd == null)) return;
+      var ds = e.target.dataset; if (!sel || (ds.lw == null && ds.ps == null && ds.pd == null && ds.pr == null)) return;
+      if (ds.pr != null) { sel.items.forEach(function (it) { if (it.t === 'f' && it.pt) { var f = own(it); f.pr = +e.target.value; if (!f.pr) delete f.pr; invalidate(f); } }); render(); return; }
       var v = +e.target.value / 100;
       sel.items.slice().forEach(function (it) {
         if (ds.lw != null && it.t === 's') { if (!sel.lw0) sel.lw0 = {}; if (sel.lw0[it.id] == null) sel.lw0[it.id] = it.s; var t = own(it); t.s = Math.max(0.05, sel.lw0[it.id] * v); invalidate(t); }
@@ -1273,7 +1301,7 @@
       });
       render(); refreshBox(); drawUi();
     });
-    bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.lw != null || ds.ps != null || ds.pd != null) commit(); if (ds.cop != null) commit(); });
+    bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.lw != null || ds.ps != null || ds.pd != null || ds.pr != null) commit(); if (ds.cop != null) commit(); });
     bar.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !sel) return;
       var act = b.dataset.act;
@@ -1303,6 +1331,7 @@
         done(); renderBar(); return;
       }
       if (act === 'back') return renderBar();
+      if (act === 'newpat') { o.newPattern(); return; }
       if (act === 'webmodes') return renderBar('webmode');
       if (b.dataset.wm) {
         var wi2 = own(sel.items[0]), cx1 = wi2.x, cy1 = wi2.y, sz = { link: [360, 84], web: [640, 440], thumb: [360, 270] }[b.dataset.wm];
@@ -1765,9 +1794,9 @@
           var fh = drag.fhold;
           if (!fh || Math.hypot(p[0] - fh.x, p[1] - fh.y) > 5 / Z()) { clearTimeout(fh && fh.t); drag.fhold = { x: p[0], y: p[1], t: setTimeout(snapFill, 550) }; }
         }
-        drawUi(); return;
+        uiSoon(); return; // (3.37) once per frame: the outline and its fill were redrawn on every pen event
       }
-      if (drag.erase) { cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); drawUi(); return; }
+      if (drag.erase) { cursor = [p[0], p[1], opt.erase.s / Z()]; eraseAt(p); uiSoon(); return; }
       if (drag.nudge) {
         cursor = [p[0], p[1], opt.nudge.r / Z()];
         var R = opt.nudge.r / Z(), k = opt.nudge.k, dx = p[0] - drag.last[0], dy = p[1] - drag.last[1];
@@ -1786,6 +1815,10 @@
     };
     function snapFill() {
       var d = drag; if (!d || !d.fillShape || d.fsnap) return;
+      // (3.37, #92/#93) Only when the pen has come back to where it began: a pause half way through a free shape
+      // used to turn the part drawn so far into a clean shape, and the rest of the line only sized that shape.
+      var a0 = d.lasso[0], aN = d.lasso[d.lasso.length - 1], bx = boundsOfPts(d.lasso);
+      if (Math.hypot(aN[0] - a0[0], aN[1] - a0[1]) > Math.max(24 / Z(), 0.18 * Math.hypot(bx.w, bx.h))) return;
       var sh = recognize(d.lasso); if (!sh || !sh.closed) return;
       var last = d.lasso[d.lasso.length - 1];
       d.fsnap = { base: sh.pts, c: sh.c || sh.pts[0], at: [last[0], last[1]] };
