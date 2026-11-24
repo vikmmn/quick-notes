@@ -163,6 +163,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .tl-radial button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
   .tl-radial button.hot { transform: scale(1.18); box-shadow: 0 0 0 3px var(--accent), 0 8px 18px rgba(0,0,0,.3); }
   .tl-radial .tl-rc { width: 44px; height: 44px; background: var(--surface); color: var(--ink); }
+  .tl-radial .tl-ro { background: var(--surface); color: var(--ink); border: 1px solid var(--rule); } /* (3.40) the outer ring: the other tools */
   :root:not([data-motion=off]) .tl-radial button { animation: qn-pop var(--m-dur) var(--m-ease) both; }
   /* Motion. Gentle (default): panels and notes ease in with a little give. Lively: they pop and settle, list
      cards rise in turn, buttons squish when pressed. Off: nothing moves (also when the system asks for less). */

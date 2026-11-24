@@ -2080,23 +2080,32 @@
     return r.slice(0, TL.dev === 'phone-l' ? 3 : 4);
   }
   function buildPal() {
-    var all = tlItems(), h = recentTools().map(function (t) { return tlBtn(all.filter(function (x) { return x.tool === t; })[0]); }).join('');
-    h += '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>' +
-      // (3.39, #103/#104) The last button is Layers (holding it, or a finger on the page, still brings all the tools)
-      '<button type="button" class="tlb" data-act="layers" data-radial-hold aria-label="Layers (hold: all tools)" title="Layers (hold: all tools; or hold a finger on the page)"><svg class="i"><use href="#i-layers"/></svg></button>';
+    // (3.40, #109/#110/#116) No copies of tools that are in the rings: one button with the tool in use opens all the
+    // tools (a tap, no holding), then Colours and Layers.
+    var all = tlItems(), cur = all.filter(function (x) { return x.tool && x.tool === PREF.tool; })[0] || all.filter(function (x) { return x.tool === 'pen'; })[0] || all[0];
+    var h = '<button type="button" class="tlb" data-radial aria-pressed="true" aria-label="All tools (in use: ' + esc(cur ? cur.label : '') + ')" title="All tools">' + (cur ? cur.icon : '') + '</button>' +
+      '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>' +
+      '<button type="button" class="tlb" data-act="layers" aria-label="Layers" title="Layers"><svg class="i"><use href="#i-layers"/></svg></button>';
     tlAdd(h, 'tl-pal anchor'); tlRefresh();
   }
   function openRadial(x, y, touchId) {
     closeRadial();
-    var all = tlItems(), want = ['hand', 'type', 'pen', 'erase', 'lasso', 'fill', 'guide'], items = want.map(function (t) { return all.filter(function (z) { return z.tool === t; })[0]; }).filter(Boolean);
-    items.push(all.filter(function (z) { return z.act === 'image'; })[0]); // (3.39, #103) Add: pictures, videos, PDFs, links
-    items.push(all.filter(function (z) { return z.act === 'layers'; })[0]); items = items.filter(Boolean);
-    var R = TL.dev.indexOf('phone') === 0 ? 74 : 90, s = TL.dev.indexOf('phone') === 0 ? 44 : 50, W = innerWidth, H = innerHeight;
+    // (3.40, #116) Two rings: the everyday tools inside, and every other tool on the rail outside, worked out from the
+    // rail itself, so no tool is ever left out (before, a fixed list of nine left out Nudge/Smooth, Text art and Connect).
+    // The middle button opens the settings of the tool in use (its sub-tools: Nudge or Smooth, pen kinds, sizes…).
+    var all = tlItems(), INNER = ['hand', 'type', 'pen', 'erase', 'lasso', 'layers'];
+    var inner = INNER.map(function (t) { return all.filter(function (z) { return (z.tool || z.act) === t; })[0]; }).filter(Boolean);
+    var outer = all.filter(function (z) { return inner.indexOf(z) < 0; });
+    var ph = TL.dev.indexOf('phone') === 0, R1 = ph ? 64 : 78, R = ph ? 118 : 142, s = ph ? 42 : 48, s2 = ph ? 38 : 44, W = innerWidth, H = innerHeight;
+    if (outer.length > 10) R = Math.round(R * outer.length / 10);
     x = Math.max(R + s / 2 + 6, Math.min(W - R - s / 2 - 6, x)); y = Math.max(R + s / 2 + 6, Math.min(H - R - s / 2 - 6, y));
-    var h = items.map(function (it, i) {
-      var a = -Math.PI / 2 + i * 2 * Math.PI / items.length;
-      return tlBtn(it, 'tl-rb', 'left:' + Math.round(R + R * Math.cos(a) - s / 2 + s / 2) + 'px;top:' + Math.round(R + R * Math.sin(a) - s / 2 + s / 2) + 'px;width:' + s + 'px;height:' + s + 'px');
-    }).join('') + '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
+    function place(list, rad, sz, off) {
+      return list.map(function (it, i) {
+        var a = -Math.PI / 2 + (i + (off || 0)) * 2 * Math.PI / list.length;
+        return tlBtn(it, 'tl-rb' + (rad === R ? ' tl-ro' : ''), 'left:' + Math.round(R + s / 2 + rad * Math.cos(a) - sz / 2) + 'px;top:' + Math.round(R + s / 2 + rad * Math.sin(a) - sz / 2) + 'px;width:' + sz + 'px;height:' + sz + 'px');
+      }).join('');
+    }
+    var h = place(inner, R1, s) + place(outer, R, s2, 0.5) + '<button type="button" class="tl-rc" data-wc aria-label="This tool’s settings" style="left:' + (R + s / 2 - 22) + 'px;top:' + (R + s / 2 - 22) + 'px"><svg class="i"><use href="#i-tools"/></svg></button>';
     var r = tlAdd(h, 'tl-radial'); var S = 2 * R + s;
     r.style.width = r.style.height = S + 'px'; r.style.left = Math.round(x - S / 2) + 'px'; r.style.top = Math.round(y - S / 2) + 'px';
     TL.radial = { el: r, id: touchId };
@@ -2107,6 +2116,7 @@
   document.addEventListener('pointerdown', function (e) {
     if ((PREF.tl || 'rail') !== 'pen1' || S.view !== 'note' || !e.target.closest || !e.target.closest('#canvasWrap')) return;
     if (TL.radial && !e.target.closest('.tl-radial')) { closeRadial(); return; }
+    if (PREF.ringHold !== true) return; // (3.40, #116) holding a finger on the page no longer brings the tools; the button does
     if (e.pointerType !== 'touch' || PREF.tool === 'lasso' || PREF.tool === 'type' || e.target.closest('.box, .ProseMirror')) return;
     // (3.40, #111) Only on the page itself: a finger resting on a slider, button or bar is not a hold.
     if (!e.target.closest('#canvasHost') || e.target.closest('button, input, label, select, textarea, a, .inkbar, .linkbar, .qn-side, .qn-nav, .qn-dirs, .tool-opts, #penOpts')) return;
@@ -2160,7 +2170,7 @@
     if (b.dataset.qc) { e.stopPropagation(); setQuickColour(b.dataset.qc); var p = $('tools').querySelector('.tl-colpop'); if (p) p.remove(); return; }
     if (b.hasAttribute('data-wc')) { e.stopPropagation(); var p2 = $('tools').querySelector('.tl-colpop'); if (p2) p2.remove(); closeRadial(); showOpts(!$('tools').classList.contains('opts')); return; }
     if (b.hasAttribute('data-colpop')) { e.stopPropagation(); showOpts(false); colourPop(b); return; }
-    if (b.hasAttribute('data-radial')) { e.stopPropagation(); var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 110, null); else openRadial(r.left - 120, r.top + r.height / 2, null); return; }
+    if (b.hasAttribute('data-radial')) { e.stopPropagation(); if (TL.radial) { closeRadial(); return; } var r = b.getBoundingClientRect(); if (TL.dev === 'phone-l') openRadial(r.left + r.width / 2, r.top - 160, null); else openRadial(r.left - 170, r.top + r.height / 2, null); return; }
     if (b.dataset.cm === 'undo') { e.stopPropagation(); $('undoBtn').click(); return; }
     if (b.dataset.cm === 'redo') { e.stopPropagation(); $('redoBtn').click(); return; }
     if (b.dataset.cm === 'opts') { e.stopPropagation(); showOpts(!$('tools').classList.contains('opts')); return; }
@@ -3304,7 +3314,7 @@
       opt('motion', 'gentle', 'Gentle', mo === 'gentle', 'panels ease in with a little give') + opt('motion', 'lively', 'Lively', mo === 'lively', 'pop, bounce and squish') + '</div>' +
       '<p style="margin-top:10px !important">Tool layout (fits itself to phone, tablet and computer, upright or sideways)</p><div class="pick" style="margin:0">' +
       [['rail', 'Rail', 'a column of tools at the side; tap a tool again for its card'], ['wheel', 'Wheel', 'like Concepts: tools, colours, size and opacity on one wheel; drag it anywhere; it shrinks while you draw'],
-       ['pucks', 'Pucks', 'like Sketchbook: a tool bar, a size puck (drag ↕ size, ↔ opacity), a colour puck and a corner menu'], ['pen1', 'Pen first', 'almost nothing on screen: your last tools, and hold a finger on the page for the rest']]
+       ['pucks', 'Pucks', 'like Sketchbook: a tool bar, a size puck (drag ↕ size, ↔ opacity), a colour puck and a corner menu'], ['pen1', 'Pen first', 'almost nothing on screen: one button opens all the tools in two rings (everyday ones inside, the rest outside), then Colours and Layers']]
         .map(function (o) { return opt('tl', o[0], o[1], (PREF.tl || 'rail') === o[0], o[2]); }).join('') + '</div></div>';
   }
   applyLook();
@@ -3388,7 +3398,7 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
-    { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Holding a finger on a slider no longer opens the round tool menu.',
+    { t: 'Crop on the picture, rounder circles', d: 'Crop works like Excalidraw now: the part cut off shows faded around the picture; drag the corners or sides of the frame to crop, and drag inside to slide the picture under it. The bar under a selection keeps clear of the tool rail and wraps into two rows instead of running under it. Draw a circle and hold: it becomes a circle, not a six-sided shape, even when the line wobbles or overlaps where it began. Lines drawn lightly with a pen no longer end in a dot. Undo keeps its history when a change arrives from Drive. The Linear navigator opens showing the whole page, and two fingers zoom it anywhere, the frame too. A pinch on a card in Open tabs zooms that card, not the whole app. A note on a textured page shows its texture in the notes list. Pen first layout: one button opens all the tools in two rings, the everyday ones inside and every other tool outside (Nudge/Smooth, Text art and Connect are back); the middle opens the settings of the tool in use. No more holding a finger on the page, and the bar shows no copies of the ring\'s tools, only Colours and Layers beside it.',
       a: art('<rect x="40" y="20" width="160" height="100" rx="6" fill="' + SOFT + '" opacity=".6"/><rect x="80" y="40" width="90" height="62" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><path d="M80 54V40h14M156 40h14v14M170 88v14h-14M94 102H80V88" fill="none" stroke="' + A + '" stroke-width="5" stroke-linecap="round"/><circle cx="125" cy="71" r="18" fill="none" stroke="' + INKC + '" stroke-width="3"/>') },
     { t: 'Navigator, faster sync, pictures', d: 'One button at the bottom right opens the navigator, always. Linear and Free are chosen inside it: in Linear mode it is a map of the whole page (one finger moves around it, two fingers zoom, drag the frame, double tap to go); on the free canvas it is the small map. Notes and changes from your other devices now show within about 20 seconds (and at once when you open a note or come back to the app). Pictures go on the page at once and are copied to Drive in the background; pick one (with Select, or one tap with Text) to move, resize, turn, or Crop it. Also: Add is back among all the tools in Pen first, its last button opens Layers (hold it for all the tools), tabs sit in the top row on wide screens, a second tap on Create no longer makes two folders, and the feedback bar never squashes its colours.',
       a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="120" y="40" width="88" height="62" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="126" y="46" width="34" height="14" rx="4" fill="' + A + '" opacity=".35"/><rect x="162" y="46" width="34" height="14" rx="4" fill="none" stroke="' + RULE + '"/><rect x="140" y="68" width="40" height="26" rx="4" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="5 4"/><rect x="150" y="106" width="58" height="14" rx="7" fill="' + SURF + '" stroke="' + A + '"/><path d="M34 40h60M34 54h44M34 68h52" stroke="' + RULE + '" stroke-width="4" stroke-linecap="round"/>') },
