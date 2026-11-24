@@ -169,6 +169,14 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .tl-radial .tl-rcw { background: var(--surface); color: var(--ink); }
   /* (3.40, #117) workspaces */
   .tool-row > .ws-off { display: none !important; }
+  :root[data-tl=ws] .tool-row { display: none; }
+  .tl-wscol { left: calc(8px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 3px; padding: 5px; background: var(--puck); border-radius: 26px; box-shadow: 0 10px 28px rgba(0,0,0,.28); max-height: calc(100vh - 150px); overflow-y: auto; scrollbar-width: none; }
+  .tl-wscol .wsb { width: 42px; height: 50px; border-radius: 16px; background: var(--accent-soft, rgba(0,0,0,.08)); color: var(--accent); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; margin: 4px 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .tl-wscol .wsb small { font: 600 9px/1 var(--font); letter-spacing: .02em; }
+  .tl-wslayers { right: calc(8px + env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); padding: 5px; background: var(--puck); border-radius: 26px; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+  :root[data-tl=ws] #penOpts { overflow-y: auto; overscroll-behavior: contain; }
+  .tl-wspop button.hot { background: var(--accent); color: var(--accent-ink); }
+  .tl-wspop button b { display: inline-block; width: 26px; }
   .wsbtn b { font: 700 12px/1 var(--font); letter-spacing: .02em; }
   .tl-wspop { display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); z-index: 36; }
   .tl-wspop button { padding: 9px 16px !important; border-radius: 10px; text-align: left; font-size: 14px; background: transparent; color: var(--ink); }
