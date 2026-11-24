@@ -1206,16 +1206,17 @@
     if (e.target.closest && e.target.closest('#tabBar [data-tadd]')) { newTabPick(); return; }
     if (e.target.closest && e.target.closest('#tabsPill')) { tabsOverview(); return; }
     var tc = e.target.closest && e.target.closest('#tabsOver [data-toclose]');
-    if (tc) { e.stopPropagation(); closeTab(tc.dataset.toclose); if (TABS.ids.length) tabsOverview(true); else hideOverview(); return; }
+    if (tc) { e.stopPropagation(); closeTab(tc.dataset.toclose); if (TABS.ids.some(function (id) { return noteById(id); })) tabsOverview(true); else hideOverview(); return; }
     var to = e.target.closest && e.target.closest('#tabsOver [data-topen]');
     if (to) { var tn = noteById(to.dataset.topen); hideOverview(); if (tn) openNote(tn); return; }
-    if (e.target.closest && e.target.closest('#tabsOver') && !e.target.closest('.to-row')) hideOverview();
+    if (e.target.closest && e.target.closest('#tabsOver') && !e.target.closest('.to-card')) hideOverview(); // anywhere but a card (3.41.1: the empty strip used to stay)
   });
   // (3.37) "Open tabs": the tabs spread out as pictures of their pages; tap one to go to it, × to close it.
   function tabsOverview(stay) {
     var ov = $('tabsOver');
     if (!ov) { ov = document.createElement('div'); ov.id = 'tabsOver'; document.body.appendChild(ov); }
     var ids = TABS.ids.filter(function (id) { return noteById(id); });
+    if (!ids.length) { hideOverview(); return; } // nothing to show: never leave the frost behind
     ov.innerHTML = '<div class="to-row">' + ids.map(function (id, i) {
       var n = noteById(id), mini = N.hasInk(n) ? pagePreview(n) : (n.body ? preview(n) : '<p class="where">Empty note</p>');
       return '<div class="to-card' + (id === TABS.cur ? ' on' : '') + '" data-topen="' + esc(id) + '"' + cardBg(n) + ' style="--i:' + i + '"><div class="to-head"><b>' + esc(tabName(n)) + '</b><i data-toclose="' + esc(id) + '" role="button" aria-label="Close this tab">×</i></div><div class="to-pic">' + mini + '</div></div>';
