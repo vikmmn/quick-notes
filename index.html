@@ -339,10 +339,11 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   #topChrome { position: absolute; z-index: 20; top: env(safe-area-inset-top); left: env(safe-area-inset-left); right: env(safe-area-inset-right); pointer-events: none; }
   #topChrome .bar { background: transparent; pointer-events: none; }
   #topChrome .bar > :not(.spacer) { pointer-events: auto; }
-  #topChrome .bar > .icon:not([aria-pressed=true]) { background: color-mix(in srgb, var(--paper) 82%, transparent); border-radius: 50%; }
+  #topChrome .bar > .icon:not([aria-pressed=true]) { background: var(--paper); border-radius: 50%; }
   #topChrome .tabbar { background: transparent; width: max-content; max-width: 100%; box-sizing: border-box; pointer-events: auto; }
-  #topChrome .tabbar .tab:not(.on) { background: color-mix(in srgb, var(--field) 88%, transparent); }
-  #topChrome .tabbar .tab-add { background: color-mix(in srgb, var(--paper) 82%, transparent); }
+  #topChrome .tabbar .tab { box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  #topChrome .tabbar .tab:not(.on) { background: var(--field); } /* (3.37) solid: drawings showed through the tab names */
+  #topChrome .tabbar .tab-add { background: var(--paper); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
   .qn-dodge { opacity: .07 !important; pointer-events: none !important; transition: opacity .12s !important; }
   .qn-undodge { transition: opacity .35s; }
   /* Drawing tools: a slim floating rail of icons at the side (like Concepts); the chosen tool's settings open
@@ -427,6 +428,19 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .tabbar .tab-add { flex: none; min-height: 32px; width: 36px; border-radius: 10px; background: transparent; color: var(--muted); font-size: 20px; }
   #listView .tabs-pill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 30; padding: 8px 16px; border-radius: 20px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 14px; }
   #listView .tabs-pill.hidden { display: none; }
+  #tabsOver { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter: blur(2px); display: flex; align-items: flex-end; }
+  #tabsOver.hidden { display: none; }
+  #tabsOver .to-row { display: flex; gap: 14px; overflow-x: auto; padding: 18px 18px calc(70px + env(safe-area-inset-bottom)); width: 100%; box-sizing: border-box; scroll-snap-type: x mandatory; }
+  #tabsOver .to-card { flex: none; width: min(46vw, 300px); background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; scroll-snap-align: center; cursor: pointer;
+    transform: translateY(40px) scale(.6); opacity: 0; transition: transform .28s cubic-bezier(.2,.8,.2,1), opacity .2s; transition-delay: calc(var(--i) * 35ms); }
+  #tabsOver.open .to-card { transform: none; opacity: 1; }
+  :root[data-motion=off] #tabsOver .to-card { transition: none; }
+  #tabsOver .to-card.on { border-color: var(--accent); border-width: 2px; }
+  #tabsOver .to-head { display: flex; align-items: center; gap: 8px; padding: 8px 6px 8px 12px; font-size: 14px; }
+  #tabsOver .to-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #tabsOver .to-head i { font-style: normal; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; font-size: 18px; color: var(--muted); }
+  #tabsOver .to-pic { height: min(42vh, 260px); overflow: hidden; padding: 0 10px 10px; pointer-events: none; }
+  #tabsOver .to-pic svg { width: 100%; height: 100%; }
   #canvasWrap { flex: 1; min-height: 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
   #noteHead { padding: 8px 16px 4px; flex: none; }
   #canvasHost { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; overscroll-behavior: contain; }
@@ -452,6 +466,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .qn-side { position: absolute; z-index: 12; background: var(--paper); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; animation: qnPeek .18s ease-out; }
   .qn-side .sd-head { display: flex; align-items: center; gap: 8px; padding: 8px 6px 8px 12px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--muted, #888); }
   .qn-side .sd-head b { color: var(--ink); font-size: 14px; white-space: nowrap; }
+  .qn-side .sd-more { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--rule); } .qn-side .sd-more button { flex: 1; min-height: 30px; border-radius: 8px; border: 1px solid var(--rule); background: var(--field); color: var(--ink); font-size: 16px; line-height: 1; }
   .qn-side .sd-head span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .qn-side .sd-x { min-height: 0; width: 32px; height: 32px; padding: 0; border: 0; background: transparent; font-size: 20px; color: var(--ink); }
   .qn-side .sd-scroll { overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
@@ -489,6 +504,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .inktip { position: absolute; z-index: 9; max-width: 260px; padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 500 12.5px/1.3 var(--font); pointer-events: none; box-shadow: var(--shadow); }
   .inkbar .ib { width: 38px; height: 38px; min-height: 0 !important; padding: 0 !important; display: inline-grid; place-items: center; border-radius: 10px; }
   .inkbar .bt { font: 600 11.5px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 6px 0 4px; width: 100%; }
+  .inkbar .ptsw { padding: 3px !important; min-height: 0 !important; line-height: 0; border-radius: 9px; } .inkbar .ptsw[aria-pressed=true] { outline: 2px solid var(--accent); outline-offset: 1px; }
   #penColPop { max-width: 230px; }
   /* The page behind everything (3.19). It reaches far beyond the page in every direction; the grid lines up with the page. */
   .page-bg { position: absolute; left: -60000px; top: -60000px; width: 120000px; height: 120000px; pointer-events: none; z-index: 0;

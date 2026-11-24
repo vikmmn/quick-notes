@@ -390,7 +390,8 @@
       var remote = await listAll();
       var byFile = {}, byId = {};
       all().forEach(function (n) { if (n.fileId) byFile[n.fileId] = n; byId[n.id] = n; });
-      var seen = {}, changed = [];
+      var seen = {}, changed = [], remoteIds = {};
+      remote.forEach(function (f) { remoteIds[f.id] = 1; });
       // Download every changed file first, many at once (each request to Drive can take seconds).
       var need = remote.filter(function (f) {
         var l = byFile[f.id];
@@ -421,6 +422,14 @@
         if (texts[f.id] === undefined) continue; // could not be read this time; next sync tries again
         var fresh = parse(texts[f.id], f);
         var target = local || (byId[fresh.id] && !byId[fresh.id].fileId ? byId[fresh.id] : null);
+        // (3.37) The same note whose old file is gone from Drive (made again elsewhere): this is its file now, not a
+        // second copy of the note (the list showed "UHV Final Part 1" twice).
+        var twin = !target && byId[fresh.id];
+        if (twin && twin.fileId && !remoteIds[twin.fileId] && !twin.deleted) {
+          if (twin.dirty || twin.conflict) { twin.fileId = f.id; twin.fileName = f.name; twin.folderId = parent; twin.conflict = { md5: f.md5Checksum, trashed: false, modifiedTime: f.modifiedTime }; }
+          else { FIELDS_COPY.forEach(function (k) { twin[k] = fresh[k]; }); twin.v++; }
+          await store.put(twin); changed.push(twin.id); continue;
+        }
         if (!target && byId[fresh.id]) fresh.id = fresh.id + '-' + f.id.slice(-6); // same id in two files: keep both
         if (target) {
           if (target.dirty) { // created here; its file was made by an earlier push that was cut short
@@ -508,6 +517,18 @@
         try {
           var f = c.trashed ? null : await Drive.get(n.fileId);
           if (!f || f.trashed) {
+            // (3.37) A copy of this note already lives in another file (kept as "<id>-…"): combine into that one and
+            // drop this copy, instead of making yet another file.
+            var tw = all().filter(function (m) { return m !== n && m.fileId && !m.deleted && m.id.indexOf(n.id + '-') === 0; })[0];
+            if (tw) {
+              var mt = window.QNMerge.mergeNote(n.base ? parse(n.base) : null, n, tw, { mineNewer: String(n.updated) >= String(tw.updated), labelA: whenLabel(deviceName(), n.updated), labelB: whenLabel(tw.device, tw.updated) });
+              ['title', 'boxes', 'ink', 'links', 'labels', 'pinned', 'order', 'page', 'updated'].forEach(function (k) { tw[k] = mt[k]; });
+              tw.ink = window.QNInk.normalize(tw.ink); tw.body = bodyOf(tw); tw.dirty = true; tw.v++; pushAgain = true;
+              await store.put(tw); changed.push(tw.id);
+              delete notes[n.id]; await store.del(n.id); changed.push(n.id);
+              if (hooks.merged) hooks.merged(tw.id);
+              continue;
+            }
             n.fileId = null; n.md5 = null; n.base = null; n.conflict = null; n.dirty = true; n.v++; pushAgain = true;
             await store.put(n); changed.push(n.id); continue;
           }

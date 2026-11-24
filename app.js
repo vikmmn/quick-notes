@@ -1002,6 +1002,7 @@
   var canvasHooks = {
     toNewNote: toNewNote,
     copyLink: function (b) { copyNoteLink(S.cur, b); },
+    newPattern: function () { editStyle('pat', null); }, // (3.37) Select › a picked fill › + New
     change: function (kind) { if (kind === 'typing') return; if (S.cur) touchNote(S.cur); if (kind === 'ink' || kind === 'restore') renderLayers(); },
     notice: function (t) { toast(t, null, null, 3500); },
     view: function (v) {
@@ -1051,6 +1052,7 @@
     });
   }
   function openNote(n, isNew) {
+    if (typeof hideOverview === 'function') hideOverview();
     if (S.cur) closeNote();
     S.cur = n; S.lastOpened = n.id;
     S.view = 'note'; dockFeedback();
@@ -1172,8 +1174,27 @@
     var t = e.target.closest && e.target.closest('#tabBar [data-tab]');
     if (t) { var n = noteById(t.dataset.tab); if (n && (!S.cur || S.cur.id !== n.id)) { if (S.canvas) S.canvas.flush(); openNote(n); } return; }
     if (e.target.closest && e.target.closest('#tabBar [data-tadd]')) { newTabPick(); return; }
-    if (e.target.closest && e.target.closest('#tabsPill')) { var m = noteById(TABS.cur) || noteById(TABS.ids[0]); if (m) openNote(m); }
+    if (e.target.closest && e.target.closest('#tabsPill')) { tabsOverview(); return; }
+    var tc = e.target.closest && e.target.closest('#tabsOver [data-toclose]');
+    if (tc) { e.stopPropagation(); closeTab(tc.dataset.toclose); if (TABS.ids.length) tabsOverview(true); else hideOverview(); return; }
+    var to = e.target.closest && e.target.closest('#tabsOver [data-topen]');
+    if (to) { var tn = noteById(to.dataset.topen); hideOverview(); if (tn) openNote(tn); return; }
+    if (e.target.closest && e.target.closest('#tabsOver') && !e.target.closest('.to-row')) hideOverview();
   });
+  // (3.37) "Open tabs": the tabs spread out as pictures of their pages; tap one to go to it, × to close it.
+  function tabsOverview(stay) {
+    var ov = $('tabsOver');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'tabsOver'; document.body.appendChild(ov); }
+    var ids = TABS.ids.filter(function (id) { return noteById(id); });
+    ov.innerHTML = '<div class="to-row">' + ids.map(function (id, i) {
+      var n = noteById(id), mini = N.hasInk(n) ? pagePreview(n) : (n.body ? preview(n) : '<p class="where">Empty note</p>');
+      return '<div class="to-card' + (id === TABS.cur ? ' on' : '') + '" data-topen="' + esc(id) + '" style="--i:' + i + '"><div class="to-head"><b>' + esc(tabName(n)) + '</b><i data-toclose="' + esc(id) + '" role="button" aria-label="Close this tab">×</i></div><div class="to-pic">' + mini + '</div></div>';
+    }).join('') + '</div>';
+    ov.classList.remove('hidden');
+    if (!stay) { ov.classList.remove('open'); void ov.offsetWidth; } ov.classList.add('open');
+    var on = ov.querySelector('.to-card.on'); if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }
+  function hideOverview() { var ov = $('tabsOver'); if (ov) { ov.classList.remove('open'); ov.classList.add('hidden'); } }
   function newTabPick() { // back to the list; the next note opened (or made) goes in a new tab
     TABS.newNext = true;
     if (history.state && history.state.v === 'note') history.back(); else { closeNote(); showList(); }
@@ -1288,6 +1309,26 @@
   window.QNInk.addDefs(MYSTYLES);
   var GONE = {}; // styles deleted here (id → when), so Drive does not bring them back
   try { GONE = JSON.parse(localStorage.getItem('qn-styles-gone') || '{}') || {}; } catch (e) {}
+  // (3.37, #91) A home-made tip's spacing, right in the pen card, and spacing that follows the pen's pressure.
+  function tipDef(id) { return id ? MYSTYLES.filter(function (d) { return d.id === id && d.k === 'tip'; })[0] : null; }
+  function tipSpacing(id) {
+    var d = tipDef(id); if (!d) return '';
+    return '<div class="grp"><label class="oslider">Spacing<input type="range" min="5" max="150" value="' + Math.round((d.sp || 0.25) * 100) + '" data-tipsp></label>' +
+      chip('Spacing follows pressure', 'data-tipspp title="Press lightly for gaps, harder for a close, dense line"', !!d.spp) + '</div>';
+  }
+  document.addEventListener('input', function (e) {
+    if (e.target.dataset.tipsp == null) return;
+    var d = tipDef(INKOPT.pen.cs); if (!d) return;
+    d.sp = +e.target.value / 100; window.QNInk.addDefs([d]);
+    if (S.canvas && S.canvas.ink) S.canvas.ink().redraw();
+  });
+  document.addEventListener('change', function (e) { if (e.target.dataset.tipsp != null) saveStyles(); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-tipspp]'); if (!b) return;
+    var d = tipDef(INKOPT.pen.cs); if (!d) return;
+    d.spp = !d.spp; if (!d.spp) delete d.spp; b.setAttribute('aria-pressed', d.spp ? 'true' : 'false');
+    window.QNInk.addDefs([d]); saveStyles(); if (S.canvas && S.canvas.ink) S.canvas.ink().redraw();
+  });
   function saveStyles(noSync) {
     try { localStorage.setItem('qn-styles', JSON.stringify(MYSTYLES)); localStorage.setItem('qn-styles-gone', JSON.stringify(GONE)); } catch (e) { toast('Could not keep that style on this device.'); }
     if (!noSync) { clearTimeout(saveStyles.t); saveStyles.t = setTimeout(syncStyles, 3000); }
@@ -1515,6 +1556,7 @@
       var fm = PREF.finger || 'auto';
       html = G(Object.keys(window.QNInk.BRUSH).map(function (k) { return chip(window.QNInk.BRUSH[k].label, 'data-brush="' + k + '"', o.pen.b === k); }).join('')) +
         G(swatches(o.pen.c, 'pen')) + '<div class="osec">My tips &amp; lines</div>' + G(styleChips('pen', o.pen.cs, 'data-cs')) +
+        tipSpacing(o.pen.cs) +
         G(slider('Size', 'pen', 's', 1, SIZE_MAX(), o.pen.s) + chip('Bigger sizes', 'data-big title="Sizes up to 120 (or double-tap the size slider on the page)"', SIZE_MAX() > 24) + slider('Opacity', 'pen', 'o', 5, 100, o.pen.o, 100) +
           slider('Smoothing', 'pen', 'st', 0, 95, o.pen.st != null ? o.pen.st : window.QNInk.BRUSH[o.pen.b].stream, 100)) +
         G(chip('Hold to make shapes', 'data-snap title="Draw a rough circle, box, triangle, star, line… and keep the pen still at the end: it becomes a clean shape. Keep holding and move to size or turn it."', o.pen.snap !== false)) +
@@ -3194,6 +3236,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Smoother fills, tabs at a glance', d: 'Patterned fills are drawn as one picture now, so drawing, erasing and picking on pages with patterns is much lighter. Drawing a fill shape: a pause half way no longer turns it into a clean shape; only holding where you started does. Pick a filled shape: its patterns show as pictures, Turn rotates the pattern, + New makes one. Pen › your own tip: Spacing, and Spacing follows pressure. Open tabs spreads your tabs out as pages to pick from. The side map has arrows to see more around it and zooms with two fingers or − and +. Tab names stay readable over drawings.',
+      a: art('<rect x="30" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="100" y="26" width="60" height="88" rx="8" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="170" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M112 60 q18 -18 36 0 t0 30 q-18 18 -36 0z" fill="' + A + '" opacity=".35"/>') },
     { t: 'Two devices, nothing lost', d: 'A note changed on two devices (even both offline) is now combined by itself, with no question. Changes in different places are all kept. If the same paragraph was rewritten on both, both versions stay, each under a small label like "from phone, 24 Nov 06:40": delete the one you don\'t want. A note deleted on one device but changed on another comes back with the change.',
       a: art('<rect x="20" y="30" width="70" height="90" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="170" y="22" width="60" height="100" rx="10" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="32" y="48" width="44" height="6" rx="3" fill="' + A + '"/><rect x="182" y="64" width="36" height="6" rx="3" fill="' + INKC + '" opacity=".6"/><path d="M92 74 C110 74 112 100 124 100 M168 74 C150 74 148 100 136 100" stroke="' + A + '" stroke-width="2.4" fill="none"/><circle cx="130" cy="104" r="12" fill="' + A + '"/><path d="M124 104 l4 4 8 -8" stroke="#fff" stroke-width="2.4" fill="none"/>') },
     { t: 'Paper and connectors', d: 'Text card › Paper adds sticky notes (six colours), index cards, sheets and cardboard to the page, or turns the text box in use into one. Write on them, move them, stretch them from the corner. The new Connect tool joins things: drag from one to another, or out to empty space for a new note already joined. Tap a line to change its arrows or delete it.',
@@ -3572,6 +3616,11 @@
       if (el !== cur) show(el);
     }, true);
     document.addEventListener('pointerout', function (e) { if (cur && (!e.relatedTarget || !cur.contains(e.relatedTarget))) hide(); }, true);
+    document.addEventListener('pointermove', function (e) { // (3.37, #96) hover that arrives only as moves
+      if ((e.pointerType !== 'pen' && e.pointerType !== 'mouse') || e.buttons) return;
+      var el = e.target.closest && e.target.closest('button, [role="button"], input[type="range"], .swatch');
+      if (el && el !== cur && el.closest(SCOPE)) show(el);
+    }, true);
     document.addEventListener('pointerdown', hide, true);
     document.addEventListener('scroll', hide, true);
   })();
