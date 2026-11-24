@@ -928,6 +928,27 @@
       drawLocks(); drawUi();
     }
     function soon() { if (!raf) raf = requestAnimationFrame(render); }
+    // (3.38) Redraw only the given things, in place, once per frame: a slider used to rebuild the whole page on every
+    // tiny move (the cause of slow sliders on busy pages). Falls back to a full redraw when an item can't be found.
+    var patchSet = [], patchRaf = 0;
+    function patchSoon(list) {
+      list.forEach(function (it) { if (patchSet.indexOf(it) < 0) patchSet.push(it); });
+      if (!patchRaf) patchRaf = requestAnimationFrame(function () { patchRaf = 0; var l = patchSet; patchSet = []; if (!patchNow(l)) render(); else { drawLocks(); drawUi(); } });
+    }
+    function patchNow(list) {
+      if (raf) return false; // a full redraw is coming anyway
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i], el = null;
+        for (var k = 0; k < slices.length && !el; k++) el = slices[k].querySelector('[data-i="' + it.id + '"]');
+        if (!el) return false;
+        while (el.parentNode && !(el.parentNode.getAttribute && el.parentNode.getAttribute('data-l'))) el = el.parentNode;
+        if (!el.parentNode) return false;
+        var tmp = document.createElementNS(NS, 'svg'); tmp.innerHTML = itemSvg(it);
+        if (tmp.childNodes.length !== 1) return false; // drawn as several parts: redraw everything instead
+        el.parentNode.replaceChild(tmp.firstChild, el);
+      }
+      return true;
+    }
     // Undo keeps earlier versions of the drawing by reference (no copies), so an item is never changed in place once
     // it has been saved in a version: the first change in a gesture swaps in a copy (own), and every change that is
     // recorded (commit) starts afresh.
@@ -1282,24 +1303,24 @@
     bar.addEventListener('click', function (e) { if (swallow) { swallow = false; e.stopImmediatePropagation(); } }, true);
     bar.addEventListener('input', function (e) {
       if (e.target.dataset.op == null || !sel) return;
-      var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { own(it).o = v; }); render();
+      var v = +e.target.value / 100; sel.items.slice().forEach(function (it) { var t = own(it); t.o = v; invalidate(t); }); patchSoon(sel.items);
     });
     bar.addEventListener('input', function (e) {
       if (e.target.dataset.cop == null || !sel) return;
       var v = +e.target.value / 100;
-      sel.items.slice().forEach(function (it) { var t = own(it); if (v >= 1) delete t.co; else t.co = v; });
+      sel.items.slice().forEach(function (it) { var t = own(it); if (v >= 1) delete t.co; else t.co = v; invalidate(t); });
       if (sel.boxes.length) BX.setGroup(sel.boxes, BX.groupOf(sel.boxes[0]), v);
-      render();
+      patchSoon(sel.items);
     });
     bar.addEventListener('input', function (e) { // line width (from what it was when Colour opened), pattern size and spacing
       var ds = e.target.dataset; if (!sel || (ds.lw == null && ds.ps == null && ds.pd == null && ds.pr == null)) return;
-      if (ds.pr != null) { sel.items.forEach(function (it) { if (it.t === 'f' && it.pt) { var f = own(it); f.pr = +e.target.value; if (!f.pr) delete f.pr; invalidate(f); } }); render(); return; }
+      if (ds.pr != null) { sel.items.forEach(function (it) { if (it.t === 'f' && it.pt) { var f = own(it); f.pr = +e.target.value; if (!f.pr) delete f.pr; invalidate(f); } }); patchSoon(sel.items); return; }
       var v = +e.target.value / 100;
       sel.items.slice().forEach(function (it) {
         if (ds.lw != null && it.t === 's') { if (!sel.lw0) sel.lw0 = {}; if (sel.lw0[it.id] == null) sel.lw0[it.id] = it.s; var t = own(it); t.s = Math.max(0.05, sel.lw0[it.id] * v); invalidate(t); }
         if ((ds.ps != null || ds.pd != null) && it.t === 'f' && it.pt) { var f = own(it); if (ds.ps != null) f.ps = v; else f.pd = v; if (f.ps === 1) delete f.ps; if (f.pd === 1) delete f.pd; invalidate(f); }
       });
-      render(); refreshBox(); drawUi();
+      patchSoon(sel.items); refreshBox();
     });
     bar.addEventListener('change', function (e) { var ds = e.target.dataset; if (ds.op != null || ds.lw != null || ds.ps != null || ds.pd != null || ds.pr != null) commit(); if (ds.cop != null) commit(); });
     bar.addEventListener('click', function (e) {

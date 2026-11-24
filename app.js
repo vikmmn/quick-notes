@@ -1486,6 +1486,13 @@
     }
     PREF.ink = INKOPT;
   })();
+  // (3.38) Sliders: the new value reaches the pen once per frame and is stored when the slider is let go.
+  var inkRaf = 0, inkQuick = false, prefT = 0;
+  function inkSoon(quick) {
+    inkQuick = inkQuick || !!quick;
+    if (!inkRaf) inkRaf = requestAnimationFrame(function () { inkRaf = 0; applyInk(); if (inkQuick) updatePenQuick(); inkQuick = false; });
+    clearTimeout(prefT); prefT = setTimeout(savePref, 400);
+  }
   function applyInk() { if (S.canvas) Object.keys(INKOPT).forEach(function (k) { S.canvas.ink().opts(k, INKOPT[k]); }); }
   // (3.28, #80) The Text tool's card: a short set of text tools in three parts, Letters, Paragraph and Spacing (like
   // Affinity's Character and Paragraph panels, kept small). It works on the box being typed in, or the one typed in last.
@@ -1679,11 +1686,11 @@
   }
   $('penQuick').addEventListener('input', function (e) {
     if ($('penQuick').dataset.mode === 'text') {
-      INKOPT.text.fs = +e.target.value; applyInk(); savePref();
+      INKOPT.text.fs = +e.target.value; inkSoon();
       var ts = $('penOpts').querySelector('[data-k=text][data-f=fs]'); if (ts) ts.value = INKOPT.text.fs;
       return;
     }
-    INKOPT.pen.s = +e.target.value; applyInk(); savePref(); updatePenQuick();
+    INKOPT.pen.s = +e.target.value; inkSoon(true);
     var s = $('penOpts').querySelector('[data-k=pen][data-f=s]'); if (s) s.value = Math.round(INKOPT.pen.s);
   });
   // Tap the pen's dot for its colours (3.18): a small card beside it.
@@ -1743,6 +1750,47 @@
     if (S.canvas) requestAnimationFrame(S.canvas.relayout);
   }
   $('toolsBtn').onclick = function () { showTools(!PREF.showTools); };
+  // ---------- Smoothness meter (3.38) ----------
+  // Counts screen frames: frames a second, the longest gap between frames, and how many frames were late (over 50 ms)
+  // in the last 5 seconds, plus what was happening (tool, note size). Always measured lightly; shown when turned on.
+  var Meter = (function () {
+    var gaps = [], last = 0, el = null, on = false, worst = { ms: 0, at: '' }, longT = 0;
+    function what() {
+      var t = (PREF && PREF.tool) || '', n = S.cur, items = 0;
+      try { if (S.canvas && S.canvas.ink) S.canvas.ink().layers().forEach(function (l) { items += l.n; }); } catch (e) {}
+      return t + (n ? ', ' + items + ' things on the page' : ', list');
+    }
+    function tick(t) {
+      if (last) { var g = t - last; gaps.push([t, g]); if (g > worst.ms && !document.hidden) worst = { ms: Math.round(g), at: what() }; }
+      last = t; while (gaps.length && gaps[0][0] < t - 5000) gaps.shift();
+      if (on && el && (!tick.n || t - tick.n > 500)) { tick.n = t; el.innerHTML = line(); }
+      requestAnimationFrame(tick);
+    }
+    function stats() {
+      if (gaps.length < 2) return null;
+      var span = gaps[gaps.length - 1][0] - gaps[0][0] + gaps[0][1], mx = 0, late = 0;
+      gaps.forEach(function (g) { mx = Math.max(mx, g[1]); if (g[1] > 50) late++; });
+      return { fps: Math.round(gaps.length * 1000 / Math.max(1, span)), max: Math.round(mx), late: late };
+    }
+    function line() { var x = stats(); if (!x) return '…'; var c = x.fps >= 50 && x.max < 50 ? 'ok' : x.fps >= 30 ? 'meh' : 'bad'; return '<i class="' + c + '"></i>' + x.fps + ' fps · longest ' + x.max + ' ms' + (x.late ? ' · ' + x.late + ' late' : ''); }
+    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { longT++; }); }).observe({ entryTypes: ['longtask'] }); } catch (e) {}
+    document.addEventListener('visibilitychange', function () { last = 0; });
+    requestAnimationFrame(tick);
+    return {
+      show: function (v) {
+        on = !!v;
+        if (on && !el) { el = document.createElement('div'); el.id = 'qnMeter'; el.setAttribute('aria-live', 'off'); document.body.appendChild(el); }
+        if (el) el.classList.toggle('hidden', !on);
+      },
+      summary: function () {
+        var x = stats();
+        return (x ? x.fps + ' fps now, longest ' + x.max + ' ms, ' + x.late + ' late in 5 s' : 'not measured') +
+          (worst.ms ? '; worst since opening ' + worst.ms + ' ms (' + worst.at + ')' : '') + (longT ? '; ' + longT + ' long tasks' : '') +
+          '; ' + (navigator.hardwareConcurrency || '?') + ' cores, ' + (navigator.deviceMemory || '?') + ' GB';
+      }
+    };
+  })();
+  if (PREF.meter) Meter.show(true);
   function savePref() { try { localStorage.setItem('qn-pen', JSON.stringify(PREF)); } catch (e) {} }
   applyToolOrder();
   setTimeout(function () { showTools(PREF.showTools); }, 0);
@@ -2121,7 +2169,7 @@
   $('tools').addEventListener('input', function (e) {
     var t = e.target;
     if (t.dataset.cc) { INKOPT[t.dataset.cc].c = t.value; applyInk(); savePref(); return; }
-    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; applyInk(); savePref(); updatePenQuick(); }
+    if (t.dataset.k) { INKOPT[t.dataset.k][t.dataset.f] = +t.value / +t.dataset.scale; inkSoon(true); }
   });
   $('tools').addEventListener('change', function (e) { if (e.target.dataset.cc) setTool(PREF.tool); });
 
@@ -3185,6 +3233,8 @@
           return '<button type="button" data-act="start" data-v="' + o[0] + '" aria-pressed="' + ((PREF.start || 'all') === o[0]) + '">' + (((PREF.start || 'all') === o[0]) ? '◉ ' : '○ ') + o[1] + '</button>';
         }).join('') + '</div><p style="margin-top:8px !important">Rename, move or delete a folder from its ••• in the side menu.</p></div>' +
       lookHtml() + toolOrderHtml() + fontsHtml() +
+      '<div class="set"><b>Smoothness</b><p>A small meter in the corner: how many pictures a second the screen gets (60 is smooth) and the longest wait in the last few seconds. Its numbers also go with feedback, so slowness can be fixed from real figures.</p>' +
+        '<button type="button" data-act="meter">' + (PREF.meter ? 'Hide the smoothness meter' : 'Show the smoothness meter') + '</button></div>' +
       '<div class="set"><b>Copy notes in</b><p>A one-time copy from another app. Not a sync: the other app stays as it is.</p>' +
         '<button type="button" data-act="keep">From Google Keep</button> <button type="button" data-act="notion">From Notion</button> <button type="button" data-act="vault">From Obsidian</button></div>' +
       '<div class="set"><b>Feedback button</b><p>The small round button in the top bar. Touching it takes a picture of the app; draw on it, write notes on it, and tap the button again to send. It goes to the developer, with the picture and app details; replies show up here.</p>' +
@@ -3197,6 +3247,7 @@
     function (act, b) {
       if (act === 'tup' || act === 'tdown') { moveTool(b.dataset.v, act === 'tup' ? -1 : 1); var sc = $('sheet'); var y = sc ? sc.scrollTop : 0; settingsSheet(); sc = $('sheet'); if (sc) sc.scrollTop = y; return; }
       if (act === 'addfont') { fontInput.click(); return; }
+      if (act === 'meter') { PREF.meter = !PREF.meter; savePref(); Meter.show(PREF.meter); b.textContent = PREF.meter ? 'Hide the smoothness meter' : 'Show the smoothness meter'; return; }
       if (act === 'deffont' || act === 'defsize') {
         if (act === 'deffont') PREF.defFont = b.dataset.v || ''; else PREF.defSize = +b.dataset.v;
         savePref(); applyTextDefault(); var sc2 = $('sheet'), y2 = sc2 ? sc2.scrollTop : 0; settingsSheet(); sc2 = $('sheet'); if (sc2) sc2.scrollTop = y2; return;
@@ -3236,6 +3287,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'Smoother sliders, and a smoothness meter', d: 'Sliders no longer redraw the whole page while you move them: the pen size, a picked thing\'s opacity, line width and pattern sliders change only what they need, once per screen frame. New: Settings › Smoothness › Show the smoothness meter, a small pill at the top with frames a second (60 is smooth) and the longest wait. Its figures also go with your feedback, so slow spots can be fixed from real numbers.',
+      a: art('<rect x="70" y="50" width="120" height="34" rx="17" fill="#222" opacity=".8"/><circle cx="90" cy="67" r="6" fill="#4caf50"/><rect x="104" y="62" width="70" height="10" rx="5" fill="#fff" opacity=".85"/><rect x="60" y="110" width="140" height="6" rx="3" fill="' + RULE + '"/><circle cx="150" cy="113" r="10" fill="' + A + '"/>') },
     { t: 'Smoother fills, tabs at a glance', d: 'Patterned fills are drawn as one picture now, so drawing, erasing and picking on pages with patterns is much lighter. Drawing a fill shape: a pause half way no longer turns it into a clean shape; only holding where you started does. Pick a filled shape: its patterns show as pictures, Turn rotates the pattern, + New makes one. Pen › your own tip: Spacing, and Spacing follows pressure. Open tabs spreads your tabs out as pages to pick from. The side map has arrows to see more around it and zooms with two fingers or − and +. Tab names stay readable over drawings.',
       a: art('<rect x="30" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="100" y="26" width="60" height="88" rx="8" fill="' + SURF + '" stroke="' + A + '" stroke-width="2"/><rect x="170" y="34" width="60" height="80" rx="8" fill="' + SURF + '" stroke="' + RULE + '"/><path d="M112 60 q18 -18 36 0 t0 30 q-18 18 -36 0z" fill="' + A + '" opacity=".35"/>') },
     { t: 'Two devices, nothing lost', d: 'A note changed on two devices (even both offline) is now combined by itself, with no question. Changes in different places are all kept. If the same paragraph was rewritten on both, both versions stay, each under a small label like "from phone, 24 Nov 06:40": delete the one you don\'t want. A note deleted on one device but changed on another comes back with the change.',
@@ -3414,6 +3467,7 @@
         'Note': S.cur ? S.cur.id + ', ' + (S.cur.boxes || []).length + ' text boxes, ' + (N.hasInk(S.cur) ? 'has drawing' : 'no drawing') : '',
         'Sync': health(st).text,
         'Sign-in': Drive.demo ? 'demo' : Drive.lasting && Drive.lasting() ? 'lasting' : Drive.signedIn() ? 'one hour' : 'signed out',
+        'Smoothness': Meter.summary(),
         'Notes on phone': live().length + (st.waiting.length ? ', ' + st.waiting.length + ' waiting' : '')
       };
     };
