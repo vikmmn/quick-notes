@@ -423,6 +423,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .tabbar .tab.on { background: var(--surface); border-color: var(--accent); font-weight: 600; }
   .tabbar .tab i { font-style: normal; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: 16px; }
   .tabbar .tab i:hover { background: var(--accent-soft); }
+  .tabbar .tab.dragging { position: relative; z-index: 2; box-shadow: var(--shadow); transition: none; opacity: .95; }
   .tabbar .tab-add { flex: none; min-height: 32px; width: 36px; border-radius: 10px; background: transparent; color: var(--muted); font-size: 20px; }
   #listView .tabs-pill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 30; padding: 8px 16px; border-radius: 20px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 14px; }
   #listView .tabs-pill.hidden { display: none; }
@@ -627,7 +628,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .selbar button { min-height: 34px; padding: 6px 12px; font-size: 14px; box-shadow: var(--shadow); }
 
   /* The rich text inside a box */
-  .ed .ProseMirror { outline: none; font: 17px/var(--qn-lh, 1.55) var(--font); color: var(--ink); min-height: 28px; padding: 2px; word-wrap: break-word; white-space: pre-wrap; }
+  .ed .ProseMirror { outline: none; font: var(--qn-fs, 17px)/var(--qn-lh, 1.55) var(--qn-font, var(--font)); letter-spacing: var(--qn-tk, normal); color: var(--ink); min-height: 28px; padding: 2px; word-wrap: break-word; white-space: pre-wrap; }
   .ed .ProseMirror > *:first-child { margin-top: 0; }
   .ed .ProseMirror p { margin: 0 0 var(--qn-ps, .35em); }
   .ed .ProseMirror p[style*=justify] { text-align: justify; }
@@ -673,6 +674,8 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   /* Pen size, on the page: always at hand while writing, without opening the tools */
   #penQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); width: 40px; padding: 10px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 8px;
     background: var(--surface); border: 1px solid var(--rule); border-radius: 20px; box-shadow: var(--shadow); }
+  /* (3.34) On a computer the slider sits over the page text: faint until the pointer is on it. */
+  @media (hover: hover) and (pointer: fine) { #penQuick { opacity: .35; transition: opacity .2s; } #penQuick:hover, #penQuick:focus-within { opacity: 1; } }
   #penQuick.lift, #toolQuick.lift { bottom: calc(132px + env(safe-area-inset-bottom)); }
   #penQuick .pq-dot.aa { width: 30px; height: 30px; border-radius: 50%; font-size: 15px; color: var(--ink); cursor: pointer; border: 1px solid var(--rule); }
   #toolQuick { position: fixed; z-index: 25; left: 20px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 5px; display: flex; flex-direction: column; gap: 4px;
