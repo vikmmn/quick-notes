@@ -422,7 +422,7 @@
   })();
   // (3.40, #118) A note on a coloured or textured page shows that page behind its card (the grid is left out, so
   // the picture stays readable). One CSS rule per kind of page, made the first time it is needed.
-  var BGK = {}, bgSheet = null;
+  var BGK = {}, bgStyleEl = null; // (3.41.4) was named bgSheet, which overwrote the function that opens the Grid / Texture sheet
   function cardBg(n) {
     if (!n || !n.page || !window.QNBg) return '';
     try {
@@ -433,9 +433,9 @@
       var key = 'b' + (hsh >>> 0).toString(36);
       if (!BGK[key]) {
         BGK[key] = 1;
-        if (!bgSheet) { bgSheet = document.createElement('style'); document.head.appendChild(bgSheet); }
+        if (!bgStyleEl) { bgStyleEl = document.createElement('style'); document.head.appendChild(bgStyleEl); }
         var mut = C.ink === '#1b1b1f' ? 'rgba(27,27,31,.62)' : 'rgba(241,236,227,.7)';
-        bgSheet.textContent += '[data-bgk="' + key + '"]{background-color:' + C.color + '!important;background-image:' + (C.image || 'none') + '!important;background-size:' + (C.size || 'auto') + '!important' +
+        bgStyleEl.textContent += '[data-bgk="' + key + '"]{background-color:' + C.color + '!important;background-image:' + (C.image || 'none') + '!important;background-size:' + (C.size || 'auto') + '!important' +
           ';--ink:' + C.ink + ';--muted:' + mut + ';color:' + C.ink + '}\n';
       }
       return ' data-bgk="' + key + '"';
@@ -2450,6 +2450,11 @@
     if (!rail) { /* placed above */ } else if (PREF.toolsLeft) { p.style.left = Math.round(rail.right + 8) + 'px'; p.style.right = 'auto'; }
     else { p.style.right = Math.round(innerWidth - rail.left + 8) + 'px'; p.style.left = 'auto'; }
     showOpts(false);
+    (function () { // (3.41.4) the list stops above the zoom, navigator and ••• buttons and scrolls
+      var top = parseFloat(p.style.top) || 0, lim = innerHeight - 10;
+      ['#viewCtl', '.qn-modebtn', '#menuFab'].forEach(function (q) { var e = document.querySelector(q); if (!e || e.classList.contains('hidden')) return; var r = e.getBoundingClientRect(); if (r.width && r.top > top + 80) lim = Math.min(lim, r.top - 10); });
+      p.style.maxHeight = Math.round(Math.max(160, lim - top)) + 'px';
+    })();
     var eng = S.canvas.ink(), list = eng.layers(), blends = window.QNInk.BLENDS, th = eng.layerThumbs(92, 52), tc = S.canvas.textCounts ? S.canvas.textCounts() : {};
     var sel = S.lsel, html = '';
     if (sel) {
@@ -2479,8 +2484,7 @@
         '<label class="lop">Opacity<input type="range" min="0" max="100" value="' + Math.round(l.op * 100) + '" data-lop><output>' + Math.round(l.op * 100) + '%</output></label>' +
         '<div class="lrow2"><select data-lblend aria-label="Blend">' + blends.map(function (b) { return '<option value="' + b + '"' + (b === l.blend ? ' selected' : '') + '>' + b.replace('-', ' ') + '</option>'; }).join('') + '</select>' +
         '<button type="button" class="lmask" data-lo="clip" aria-pressed="' + !!l.clip + '"' + (i === list.length - 1 ? ' disabled' : '') + ' title="Only show this layer where the layer below has paint">Mask</button></div>' +
-        '<div class="lacts">' + lic('up', 'data-lo="up"' + (i === 0 ? ' disabled' : ''), 'Move up') + lic('down', 'data-lo="down"' + (i === list.length - 1 ? ' disabled' : ''), 'Move down') +
-        lic('dup', 'data-lo="dup"', 'Duplicate') + lic('merge', 'data-lo="merge"' + (i === list.length - 1 ? ' disabled' : ''), 'Merge down') +
+        '<div class="lacts">' + lic('dup', 'data-lo="dup"', 'Duplicate') + lic('merge', 'data-lo="merge"' + (i === list.length - 1 ? ' disabled' : ''), 'Merge down') +
         lic('rename', 'data-lo="rename"', 'Rename') + lic('del', 'data-lo="delete"', 'Delete', 'danger') + '</div></div>';
       return s;
     }
@@ -2631,8 +2635,13 @@
       if (!hold.on) { if (Math.abs(dx) + Math.abs(dy) > 10) { clearTimeout(hold.timer); hold = null; } return; } // a scroll, not a hold
       e.preventDefault();
       if (!hold.drag && Math.abs(dy) > 6) { hold.drag = true; dragEl = hold.el; hold.el.classList.add('dragging'); }
-      if (hold.drag) { hold.el.style.transform = 'translateY(' + dy + 'px)'; markDrop(e.clientY); }
+      if (hold.drag) {
+        hold.el.style.transform = 'translateY(' + dy + 'px)'; markDrop(e.clientY);
+        var pr = P.getBoundingClientRect(); // (3.41.4) near the top or bottom of the list: it scrolls along, so a layer can be dragged far
+        if (e.clientY > pr.bottom - 36) P.scrollTop += 10; else if (e.clientY < pr.top + 36) P.scrollTop -= 10;
+      }
     });
+    P.addEventListener('touchmove', function (e) { if (hold && hold.on && e.cancelable) e.preventDefault(); }, { passive: false }); // once held, the finger moves the layer, not the list
     var dragEl = null;
     function rows() { return Array.prototype.slice.call(P.querySelectorAll('.llist > .lcard, .llist > .lgroup')).filter(function (r) { return r !== dragEl; }); }
     function target(y) { // where it would land: before which row, and in which group
