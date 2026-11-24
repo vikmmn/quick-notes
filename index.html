@@ -176,6 +176,9 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   /* (3.41.1, #124) the slider, quick tools and menu button line up with the workspace rail's left edge and width */
   :root[data-tl=ws] #menuFab, :root[data-tl=ws] #penQuick, :root[data-tl=ws] #toolQuick { left: calc(8px + env(safe-area-inset-left)); width: 48px; box-sizing: border-box; }
   :root[data-tl=ws] #menuFab { border-radius: 26px; }
+  #tools .qn-tdrag { position: relative; z-index: 60; box-shadow: 0 8px 20px rgba(0,0,0,.4); transition: none !important; touch-action: none; }
+  #tools .qn-tdrop { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 14px; }
+  #tools button[data-tool] { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
   .tl-wslayers { right: calc(8px + env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); padding: 5px; background: var(--puck); border-radius: 26px; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
   :root[data-tl=ws] #penOpts { overflow-y: auto; overscroll-behavior: contain; }
   .tl-wspop button.hot { background: var(--accent); color: var(--accent-ink); }
