@@ -2521,7 +2521,7 @@
           if (len < 20 / Z()) return;
           var L = active();
           if (!editable(L)) { o.notice('This layer is locked or hidden.'); return; }
-          addFill(L, [simplify(poly.map(function (q) { return [q[0], q[1]]; }), Math.min(0.8, 0.6 / Z()))]); // (3.43, #166) tolerance of under a screen pixel: zoomed in, a curved fill no longer comes out as a polygon
+          addFill(L, [simplify(poly.map(function (q) { return [q[0], q[1]]; }), Math.min(0.8, 0.6 / Z()))], true); // (3.43, #166) tolerance of under a screen pixel: zoomed in, a curved fill no longer comes out as a polygon
           return;
         }
         if (len < 12 / Z()) { // a tap: pick what is under it
@@ -2581,11 +2581,13 @@
         }
       });
     }
-    function addFill(L, rings) {
+    function addFill(L, rings, onTop) {
       var f = { id: uid('f'), t: 'f', c: opt.fill.c, o: opt.fill.o, d: rings };
       if (opt.fill.pt && DEFS[opt.fill.pt]) { f.pt = opt.fill.pt; if (opt.fill.ps && opt.fill.ps !== 1) f.ps = opt.fill.ps; if (opt.fill.pd && opt.fill.pd !== 1) f.pd = opt.fill.pd; } // a home-made pattern
       var at = L.items.findIndex(function (it) { return it.t !== 'f'; });
-      if (at < 0) L.items.push(f); else L.items.splice(at, 0, f); // colour goes under the lines
+      // A tapped fill colours inside the lines, so it goes under them. (3.43, #167) A drawn fill shape is new drawing, like
+      // a pen line: it goes on top of what is there, pictures included.
+      if (onTop || at < 0) L.items.push(f); else L.items.splice(at, 0, f);
       done();
     }
     function fillAt(p) {
