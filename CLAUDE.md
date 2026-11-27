@@ -32,6 +32,8 @@ section marker or function, then read ~100 lines around it. (`app.js` ≈ 4,000 
 8. Feedback issues live in the private repo `vikmmn/quick-notes-feedback`. After the Founder confirms a fix on their
    device, close that issue with a one-line comment. Don't close issues on your own judgement.
 9. Privacy: feedback pictures may show real notes. Never paste them anywhere outside GitHub.
+10. **After every release, update `STATE.md`** (this repo is public, so no personal or quota details): add one row to Releases
+   (version, date, issues, Verified, Not tested), keep only the last 10, and refresh "Open now". Commit it with the release.
 
 ## Cost rules (the Founder's Claude quota is limited)
 - Don't re-read files you've already read this session. Batch: fix every issue in the brief in one pass.
