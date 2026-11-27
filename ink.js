@@ -926,13 +926,22 @@
     var LOCKI = { e: '<path d="M8 17l-4-4 8-8 6 6-6 6z"/><path d="M4 21h16"/>', s: '<path d="M6 3l12 8-6 1-2 6z"/>' };
     function drawLocks() {
       var h = '', k = 1 / Math.max(0.05, Z());
+      // (3.43, #169) A locked group shows one badge on the group's whole box, not one on every item in it.
+      var gb = {}, gDone = {};
+      layers.forEach(function (l) { if (!l.vis) return; l.items.forEach(function (it) {
+        if (!it.lk || !it.g) return;
+        var b = itemBox(it), q = gb[it.g];
+        if (!q) gb[it.g] = { x0: b.x, y0: b.y, x1: b.x + b.w, lk: it.lk, id: it.id };
+        else { q.x0 = Math.min(q.x0, b.x); q.y0 = Math.min(q.y0, b.y); q.x1 = Math.max(q.x1, b.x + b.w); q.lk = q.lk.split('').filter(function (c) { return it.lk.indexOf(c) >= 0; }).join(''); }
+      }); });
       layers.forEach(function (l) {
         if (!l.vis) return;
         l.items.forEach(function (it) {
           if (!it.lk) return;
-          var b = itemBox(it), x = b.x + b.w + M;
-          it.lk.split('').forEach(function (c, j) {
-            h += '<button type="button" class="lk-sign" data-lki="' + it.id + '" data-lkc="' + c + '" title="' + (c === 'e' ? 'Can\'t be erased' : 'Can\'t be selected') + ': tap to unlock" ' +
+          var b = itemBox(it), x = b.x + b.w + M, lkc = it.lk, tid = it.id;
+          if (it.g) { var q = gb[it.g]; if (gDone[it.g] || !q) return; gDone[it.g] = 1; b = { x: q.x0, y: q.y0, w: q.x1 - q.x0 }; x = q.x1 + M; lkc = q.lk; tid = q.id; }
+          lkc.split('').forEach(function (c, j) {
+            h += '<button type="button" class="lk-sign" data-lki="' + tid + '" data-lkc="' + c + '" title="' + (c === 'e' ? 'Can\'t be erased' : 'Can\'t be selected') + ': tap to unlock" ' +
               'style="left:' + (x - (j + 1) * 24 * k).toFixed(1) + 'px;top:' + (b.y + M - 10 * k).toFixed(1) + 'px;transform:scale(' + k.toFixed(3) + ')">' +
               '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round">' + LOCKI[c] + '</svg></button>';
           });
@@ -943,8 +952,9 @@
     lockHost.addEventListener('pointerdown', function (e) { if (e.target.closest('.lk-sign')) e.stopPropagation(); });
     lockHost.addEventListener('click', function (e) {
       var b = e.target.closest('.lk-sign'); if (!b) return;
+      var g0 = null; layers.forEach(function (l) { l.items.forEach(function (it) { if (it.id === b.dataset.lki) g0 = it.g || null; }); });
       layers.forEach(function (l) { l.items.forEach(function (it, i) {
-        if (it.id !== b.dataset.lki) return;
+        if (it.id !== b.dataset.lki && !(g0 && it.g === g0)) return; // (3.43, #169) a group unlocks as a whole
         var t = JSON.parse(JSON.stringify(it)); t.lk = (t.lk || '').replace(b.dataset.lkc, ''); if (!t.lk) delete t.lk; l.items[i] = t;
       }); });
       render(); commit(); o.notice(b.dataset.lkc === 'e' ? 'It can be erased again.' : 'It can be selected again.');
@@ -2511,7 +2521,7 @@
           if (len < 20 / Z()) return;
           var L = active();
           if (!editable(L)) { o.notice('This layer is locked or hidden.'); return; }
-          addFill(L, [simplify(poly.map(function (q) { return [q[0], q[1]]; }), 0.8)]);
+          addFill(L, [simplify(poly.map(function (q) { return [q[0], q[1]]; }), Math.min(0.8, 0.6 / Z()))]); // (3.43, #166) tolerance of under a screen pixel: zoomed in, a curved fill no longer comes out as a polygon
           return;
         }
         if (len < 12 / Z()) { // a tap: pick what is under it

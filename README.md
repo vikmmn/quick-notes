@@ -7,7 +7,8 @@ It asks Google only for the files it makes (`drive.file`), never the rest of Dri
 - Opens on the notes grid. Folders (nested, real Drive folders inside Notes) and labels.
 - Each note is an endless page: pinch to zoom, two fingers to move, twist to turn (snaps straight; the compass
   straightens it), two-finger double tap to undo, three-finger double tap to redo; Fit everything, Zoom into an area, zoom to a
-  lasso selection, and a Navigator map. Mouse wheel moves, Ctrl + wheel zooms.
+  lasso selection, and a Navigator map (the same map in Linear mode and on the free canvas; double tap to jump, arrows at its edges
+  show where there is more). Mouse wheel moves, Ctrl + wheel zooms.
 - Tools: the Hand only moves the page (double tap a thing to pick it with Select; triple tap to type there), Text
   types (tap text to type in it, double-tap empty space for new text). Two fingers move, zoom and turn with every tool.
   Typing carries on after coming back from another app.

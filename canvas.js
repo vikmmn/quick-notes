@@ -955,6 +955,9 @@
       }
     }
     on(host, 'pointerup', endPointer);
+    // (3.43, #166) Holding the pen or a finger still on the page makes Android open its long-press menu, which takes the
+    // pointer away and drops the stroke half way. Not on text (where it selects words) and not on the navigator map.
+    on(host, 'contextmenu', function (ev) { if (!ev.target.closest || !ev.target.closest('.box, .ProseMirror, input, textarea, .qn-side')) ev.preventDefault(); }, true);
     on(host, 'pointercancel', function (ev) { if (drag && drag.type === 'ink') { eng.cancel(); drag = null; } else endPointer(ev); });
     on(host, 'pointerleave', function () { eng.leave(); });
 
