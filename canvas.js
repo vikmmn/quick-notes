@@ -196,7 +196,7 @@
       if (eng) eng.viewChanged();
       if (hooks.view) hooks.view({ z: view.z, r: view.r });
       clearTimeout(viewTimer); viewTimer = setTimeout(function () { try { localStorage.setItem(VKEY, JSON.stringify(view)); } catch (e) {} }, 400);
-      drawNavSoon(); drawDirsSoon();
+      drawNavSoon(); drawDirsSoon(); refreshSideSoon();
     }
     var eng = null;
     eng = new window.QNInk.Engine({
@@ -1264,6 +1264,17 @@
     var sideEl = null;
     var SIDE_NAMES = { n: 'Above', s: 'Below', e: 'To the right', w: 'To the left', ne: 'Up and to the right', nw: 'Up and to the left', se: 'Down and to the right', sw: 'Down and to the left' };
     function hideSide() { if (sideEl) { sideEl.remove(); sideEl = null; } }
+    // (3.43, #154/#157) The navigator map (d 'all') is the same in Linear mode and on the free canvas, and it follows the
+    // screen: when the page moves under it, it is made again a moment later at the same size and scroll.
+    var sideTimer = 0;
+    function refreshSideSoon() {
+      if (!sideEl || sideEl.dataset.d !== 'all' || !sideEl._re) return;
+      clearTimeout(sideTimer); sideTimer = setTimeout(function () { if (sideEl && sideEl._re) sideEl._re(); }, 250);
+    }
+    function centerOn(px, py) { // free canvas: bring this point of the page to the middle of the screen (zoom and turn kept)
+      var W = host.clientWidth / 2, H = host.clientHeight / 2, c = Math.cos(view.r), sn = Math.sin(view.r);
+      view.x = W - (px * c - py * sn) * view.z; view.y = H - (px * sn + py * c) * view.z; applyView();
+    }
     function sideBlocks(d) { // everything wholly off screen that way: a side takes in its corners too
       var W = host.clientWidth, H = host.clientHeight;
       return blocks().filter(function (q) {
@@ -1290,7 +1301,9 @@
       hidePeek(); hideSide();
       var list = d === 'all' ? blocks() : sideBlocks(d); if (!list.length && d !== 'all') return; // (3.39, #100) 'all': the navigator in Linear mode
       var W = host.clientWidth, H = host.clientHeight, pad = 24;
-      var a = toWorld(0, 0), b = toWorld(W, H); // the part on screen now, in page coordinates
+      var c4 = [toWorld(0, 0), toWorld(W, 0), toWorld(W, H), toWorld(0, H)]; // the part on screen now, in page coordinates
+      var a = [Math.min(c4[0][0], c4[1][0], c4[2][0], c4[3][0]), Math.min(c4[0][1], c4[1][1], c4[2][1], c4[3][1])];
+      var b = [Math.max(c4[0][0], c4[1][0], c4[2][0], c4[3][0]), Math.max(c4[0][1], c4[1][1], c4[2][1], c4[3][1])];
       var R = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       // (3.39, #98) The map takes in the whole page, not just that side: one finger moves around it to the parts
       // round about, two fingers zoom it (the ‹ ˄ ˅ › buttons are gone). It opens looking at that side.
@@ -1306,7 +1319,7 @@
       var pw = sv.pw || Math.max(200, Math.min(W - dr - 64, 360)), ph = sv.ph || Math.round(H * (d === 'all' ? 0.5 : 0.62));
       // (3.40, #115) The navigator opens showing the whole page (width and height); two fingers zoom in from there.
       var fit = d === 'all' ? Math.min((pw - 2) / rw, (ph - 50) / rh) : (pw - 2) / rw;
-      var s = Math.max(0.004, Math.min(2, Math.max(d === 'all' ? 0.004 : 0.12, Math.min(1, fit)) * sv.z)); // (3.41.3, #130) a very large page still fits in the map (before: stopped at 3%, so the map came out cropped and scrolled)
+      var s = sv.s ? Math.max(0.004, Math.min(4, sv.s)) : Math.max(0.004, Math.min(2, Math.max(d === 'all' ? 0.004 : 0.12, Math.min(1, fit)) * sv.z)); // (3.43, #154/#156) sv.s: the map's own scale, kept as it was // (3.41.3, #130) a very large page still fits in the map (before: stopped at 3%, so the map came out cropped and scrolled)
       var txt = boxes.map(function (bx) {
         var e = editors[bx.id]; if (!e || !(bx.md && bx.md.trim())) return '';
         var L = layerOfBox(bx); if (L && L.vis === false) return '';
@@ -1349,7 +1362,7 @@
       Array.prototype.forEach.call(sideEl.querySelectorAll('.sd-head [data-g]'), function (bt) {
         bt.addEventListener('click', function () {
           var g = bt.dataset.g, ch = {};
-          if (g === 'zi') ch.z = Math.min(8, sv.z * 1.5); else if (g === 'zo') ch.z = Math.max(0.15, sv.z / 1.5); else ch[g] = sv[g] + 1;
+          if (g === 'zi') ch.s = s * 1.5; else if (g === 'zo') ch.s = s / 1.5; else ch[g] = sv[g] + 1;
           again(ch);
         });
       });
@@ -1362,13 +1375,14 @@
       frEl.style.width = (fw * s) + 'px'; frEl.style.height = (fh * s) + 'px';
       function placeFr() {
         fr.x = Math.max(R.x0 - fw / 2, Math.min(R.x1 - fw / 2, fr.x));
-        fr.y = Math.max(Math.max(R.y0 - fh / 2, -topLimit()), Math.min(R.y1 - fh / 2, fr.y));
+        fr.y = Math.max(Math.max(R.y0 - fh / 2, pageMode() ? -topLimit() : -Infinity), Math.min(R.y1 - fh / 2, fr.y));
         frEl.style.left = ((fr.x - R.x0) * s) + 'px'; frEl.style.top = ((fr.y - R.y0) * s) + 'px';
         frEl.classList.toggle('moved', Math.abs(fr.x - a[0]) > 2 || Math.abs(fr.y - a[1]) > 2);
       }
       placeFr();
+      if (sv.keep) { sc.scrollLeft = Math.max(0, (sv.keep.x - R.x0) * s); sc.scrollTop = Math.max(0, (sv.keep.y - R.y0) * s); sideEl.style.animation = 'none'; }
       if (sv.fr) { sc.scrollLeft = Math.max(0, (fr.x + fw / 2 - R.x0) * s - sc.clientWidth / 2); sc.scrollTop = Math.max(0, (fr.y + fh / 2 - R.y0) * s - sc.clientHeight / 2); }
-      function goFr() { lastTap = null; swallowTap(); hideSide(); glide(-fr.x, -fr.y); if (d === 'all') setTimeout(function () { if (navOpen && pageMode()) showSide('all', { z: sv.z, pw: pw, ph: ph }); }, 520); } // the navigator stays open
+      function goFr() { lastTap = null; swallowTap(); hideSide(); if (pageMode()) glide(-fr.x, -fr.y); else centerOn(fr.x + fw / 2, fr.y + fh / 2); if (d === 'all') setTimeout(function () { if (navOpen && !sideEl) showSide('all', { s: s, pw: pw, ph: ph }); }, 520); } // the navigator stays open, at the same zoom (3.43, #154)
       function mapTap(ev, inFrame) {
         var t = Date.now();
         if (lastTap && t - lastTap.t < 420 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 40) { goFr(); return; }
@@ -1377,7 +1391,9 @@
         // A tap on a part brings the frame there, placed as a double tap used to place the screen: a text box with its
         // left edge at the margin, anything else in the middle, a third of the way down.
         var r = sc.querySelector('svg').getBoundingClientRect();
-        var tg = pointTarget(R.x0 + (ev.clientX - r.left) / s, R.y0 + (ev.clientY - r.top) / s, d, list0);
+        var px = R.x0 + (ev.clientX - r.left) / s, py = R.y0 + (ev.clientY - r.top) / s;
+        if (!pageMode()) { fr.x = px - fw / 2; fr.y = py - fh / 2; placeFr(); return; }
+        var tg = pointTarget(px, py, d, list0);
         fr.x = -tg[0]; fr.y = -tg[1]; placeFr();
       }
       var fd = null;
@@ -1412,7 +1428,7 @@
       });
       function pinEnd(ev) {
         delete pins[ev.pointerId];
-        if (pinch && !Object.keys(pins).length) { var k = pinch.k; pinch = null; if (Math.abs(k - 1) > 0.05) again({ z: Math.max(0.15, Math.min(8, sv.z * k)) }); else svgEl.style.transform = ''; }
+        if (pinch && !Object.keys(pins).length) { var k = pinch.k; pinch = null; if (Math.abs(k - 1) > 0.05) again({ s: s * k }); else svgEl.style.transform = ''; }
       }
       sc.addEventListener('pointercancel', pinEnd);
       // (3.40, #115) Two fingers anywhere on the map, the frame too, zoom it: read from touch events, because the
@@ -1432,7 +1448,7 @@
       }, { passive: false, capture: true });
       function tEnd(ev) {
         if (!tp || ev.touches.length >= 2) return; var k = tp.k; tp = null;
-        if (Math.abs(k - 1) > 0.05) again({ z: Math.max(0.15, Math.min(12, sv.z * k)) }); else svgEl.style.transform = '';
+        if (Math.abs(k - 1) > 0.05) again({ s: s * k }); else svgEl.style.transform = '';
       }
       sideEl.addEventListener('touchend', tEnd, true); sideEl.addEventListener('touchcancel', tEnd, true);
       sc.style.touchAction = 'pan-x pan-y';
@@ -1443,6 +1459,25 @@
         if (!dn || Math.hypot(ev.clientX - dn.x, ev.clientY - dn.y) > 10) return; // it scrolled
         mapTap(ev, false);
       });
+      // (3.43, #154) Arrows at the map's edges show there is more that way; a tap scrolls the map along.
+      var edges = {};
+      ['n', 's', 'e', 'w'].forEach(function (k) {
+        var eb = el('button', 'sd-edge hidden', sideEl); eb.type = 'button'; eb.dataset.e = k; eb.textContent = { n: '˄', s: '˅', e: '›', w: '‹' }[k];
+        eb.setAttribute('aria-label', 'More this way');
+        eb.addEventListener('click', function (ev) { ev.stopPropagation(); sc.scrollBy({ left: (k === 'e' ? 1 : k === 'w' ? -1 : 0) * sc.clientWidth * 0.6, top: (k === 's' ? 1 : k === 'n' ? -1 : 0) * sc.clientHeight * 0.6, behavior: 'smooth' }); });
+        edges[k] = eb;
+      });
+      function edgesUp() {
+        var t = sc.offsetTop, h = sc.clientHeight;
+        edges.n.style.top = (t + 4) + 'px'; edges.s.style.top = (t + h - 30) + 'px'; edges.e.style.top = edges.w.style.top = (t + h / 2 - 13) + 'px';
+        edges.n.classList.toggle('hidden', sc.scrollTop <= 2); edges.s.classList.toggle('hidden', sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2);
+        edges.w.classList.toggle('hidden', sc.scrollLeft <= 2); edges.e.classList.toggle('hidden', sc.scrollLeft + sc.clientWidth >= sc.scrollWidth - 2);
+      }
+      sc.addEventListener('scroll', edgesUp); edgesUp();
+      if (d === 'all') sideEl._re = function () {
+        if (fd || tp || frEl.classList.contains('moved')) return; // not while the frame is being placed or the map pinched
+        showSide('all', { s: s, pw: pw, ph: ph, keep: { x: R.x0 + sc.scrollLeft / s, y: R.y0 + sc.scrollTop / s } });
+      };
     }
     // (3.32, #87) The double tap that jumps there must not also start typing in the text box now under the finger:
     // for a moment, the page ignores the click that follows and takes the focus back if a box grabbed it.
@@ -1486,9 +1521,9 @@
     }
     function setNav(on) {
       navOpen = !!on; hidePeek(); hideSide();
-      navOn = navOpen && !pageMode(); navEl.classList.toggle('hidden', !navOn); navContent = null;
-      if (navOn) { navEl.querySelector('.nv-head').innerHTML = modesHtml() + '<button type="button" class="nv-x" aria-label="Close the navigator">×</button>'; modesWire(navEl); navEl.querySelector('.nv-x').onclick = function (ev) { ev.stopPropagation(); setNav(false); }; drawNavSoon(); }
-      if (navOpen && pageMode()) showSide('all');
+      // (3.43, #157) One navigator: the same map in Linear mode and on the free canvas; only the mode changes.
+      navOn = false; navEl.classList.add('hidden'); navContent = null;
+      if (navOpen) showSide('all');
       modeBtn.setAttribute('aria-pressed', navOpen ? 'true' : 'false');
       if (hooks.navPref) hooks.navPref(navOpen);
     }

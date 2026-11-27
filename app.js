@@ -1037,7 +1037,12 @@
     },
     gesture: function (g) { toast(g === 'undo' ? 'Undone' : 'Redone', null, null, 900); },
     history: function (u, r) { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
-    focus: function () { showFmt(true); },
+    // (3.43, #152) With a drawing tool in hand (pen, curve, eraser, fill, nudge, guide), a text box doesn't take the
+    // keyboard: no typing into the page and no text formatting bar. The Text tool, Hand, Lasso and Link still can.
+    focus: function (ed) {
+      if ({ pen: 1, curve: 1, erase: 1, nudge: 1, fill: 1, guide: 1 }[PREF.tool]) { var ae = document.activeElement; if (ae && ae.blur && ae.closest && ae.closest('.ProseMirror')) ae.blur(); return; }
+      showFmt(true);
+    },
     blur: function () { setTimeout(function () { if (!S.canvas || !S.canvas.active() || !document.activeElement.closest || !document.activeElement.closest('.ProseMirror')) showFmt(false); }, 120); },
     selection: function (ed) { updateFmt(ed); },
     penSeen: function () {
@@ -1263,6 +1268,12 @@
       return;
     }
     if (!$('drawer').classList.contains('hidden')) { closeDrawer(true); if (st.v !== 'exit') return; }
+    // (3.43, #153) On the notes list with a search open (words typed, or the box in use): back closes the search first.
+    if (S.view !== 'note' && (S.q || document.activeElement === $('q'))) {
+      $('q').value = S.q = ''; $('q').blur(); $('recent').classList.add('hidden'); renderList();
+      try { history.pushState(navState(), ''); } catch (x) {}
+      return;
+    }
     if (S.view === 'note') { closeNote(); showList(); }
     if (st.v === 'list') { if ((st.f || null) !== S.folder || (st.l || null) !== S.label) nav(st.f, st.l); return; }
     if (st.v === 'exit') { // at the start screen: back once more to leave
@@ -2041,8 +2052,24 @@
       '<button type="button" class="tlb" data-colpop aria-label="Colours" title="Colours"><i class="tl-colour"></i></button>';
     tlAdd(h, 'tl-wscol anchor');
     tlAdd('<button type="button" class="tlb" data-act="layers" aria-label="Layers" title="Layers"><svg class="i"><use href="#i-layers"/></svg></button>', 'tl-wslayers');
-    tlRefresh();
+    tlRefresh(); wsFitSoon();
   }
+  // (3.43, #170/#171/#137/#144) The workspace rail sits between the tabs and the quick choices / slider / menu
+  // button under it, never over them; when there isn't room (a sideways phone) it scrolls instead of squashing.
+  function wsFit() {
+    var col = $('tools') && $('tools').querySelector('.tl-wscol'); if (!col) return;
+    var top = 8, bot = innerHeight - 8;
+    ['topChrome', 'tabBar'].forEach(function (id) { var e = $(id); if (e && e.offsetParent !== null) { var r = e.getBoundingClientRect(); if (r.height && r.left < 80) top = Math.max(top, r.bottom + 8); } });
+    ['toolQuick', 'penQuick', 'menuFab'].forEach(function (id) { var e = $(id); if (e && !e.classList.contains('hidden') && e.offsetParent !== null) { var r = e.getBoundingClientRect(); if (r.height && r.left < 80) bot = Math.min(bot, r.top - 8); } });
+    var room = Math.max(120, bot - top), h = Math.min(col.scrollHeight, room);
+    col.style.transform = 'none'; col.style.maxHeight = room + 'px';
+    col.style.top = Math.round(top + Math.max(0, (room - h) / 2)) + 'px'; // in the middle of the room it has
+  }
+  var wsFitT = 0; function wsFitSoon() { cancelAnimationFrame(wsFitT); wsFitT = requestAnimationFrame(wsFit); }
+  if (window.MutationObserver) setTimeout(function () {
+    var mo = new MutationObserver(function () { if ((PREF.tl || 'rail') === 'ws') wsFitSoon(); });
+    ['toolQuick', 'penQuick', 'menuFab', 'tabBar'].forEach(function (id) { var e = $(id); if (e) mo.observe(e, { attributes: true, attributeFilter: ['class', 'style'], childList: id === 'toolQuick' || id === 'tabBar' }); });
+  }, 0);
   function wsList(btn) {
     wsListClose();
     var p = tlAdd(WS_ORDER.map(function (k) { return '<button type="button" data-ws="' + k + '" data-wsv="' + k + '" aria-pressed="' + (wsCur() === k) + '"><b>' + wsIcon(k, 18) + '</b> ' + WS_NAMES[k] + '</button>'; }).join(''), 'tl-wspop');
@@ -3138,7 +3165,9 @@
   function addToPage() {
     if (!S.canvas) return;
     if (!$('layersPanel').classList.contains('hidden')) { $('layersPanel').classList.add('hidden'); layersBtn(); } // one panel at a time
-    popAt(document.querySelector('#tools [data-act="image"]'), '<button data-v="files">Files from the device</button><button data-v="notes">Serendipity notes</button>', function (b) {
+    // (3.43, #143) next to the image button that is on screen (in Workspaces the old rail's copy is hidden, at 0,0)
+    var imgBtn = Array.prototype.filter.call(document.querySelectorAll('#tools [data-act="image"]'), function (e) { var r = e.getBoundingClientRect(); return r.width && r.height; })[0] || document.querySelector('#tools [data-act="image"]');
+    popAt(imgBtn, '<button data-v="files">Files from the device</button><button data-v="notes">Serendipity notes</button>', function (b) {
       $('pop').classList.add('hidden');
       if (b.dataset.v === 'files') { mediaInput.value = ''; mediaInput.click(); }
       else startImport();
@@ -3665,6 +3694,8 @@
   var A = 'var(--accent)', Y = '#f2c94c', INKC = 'var(--ink)', MUT = 'var(--muted)', SOFT = 'var(--accent-soft)', SURF = 'var(--surface)', RULE = 'var(--rule)';
   function art(inner) { return '<svg viewBox="0 0 240 140" class="wn-art" aria-hidden="true">' + inner + '</svg>'; }
   var SLIDES = [
+    { t: 'One navigator, a tidier rail', d: 'The navigator is now the same map in Linear mode and on the free canvas: switching modes changes only the mode. After a double tap takes you somewhere, the map comes back at the same zoom, and two fingers still zoom it. Arrows at its edges show there is more that way; tap one to move along. In Workspaces the tool rail stays between the tabs and the quick choices under it, and scrolls on a sideways phone instead of squashing. Also: Back closes a search first, the Add menu opens next to the picture button, the Colours button lights up while its colours are open, pictures show on the page as soon as they arrive, and drawing tools no longer let you type into a text box.',
+      a: art('<rect x="20" y="14" width="200" height="112" rx="14" fill="' + SURF + '" stroke="' + RULE + '"/><rect x="110" y="34" width="96" height="78" rx="8" fill="' + SOFT + '" stroke="' + RULE + '"/><rect x="134" y="54" width="40" height="30" rx="4" fill="none" stroke="' + A + '" stroke-width="2" stroke-dasharray="4 3"/><circle cx="158" cy="40" r="5" fill="' + A + '"/><circle cx="158" cy="106" r="5" fill="' + A + '"/><rect x="30" y="30" width="20" height="84" rx="10" fill="' + INKC + '" opacity=".85"/>') },
     { t: 'Curves', d: 'A new Curve tool, next to the Pen (in Draw and All tools too): Line, Catmull-Rom, Bézier, B-spline, NURBS and T-spline. Tap to place points (tap the last one again to finish, the first one to close a loop), or choose Trace and draw over your sketch: a curve is fitted to it. Drag a point to move it, tap the curve to add one; NURBS and T-spline points have a pull. Any curve can become any other kind, keeping its shape. Pick ends to Join two curves, Break one at a point, Close a loop. Curves never squiggle: Nudge moves their nearest point (a straight line just turns about its other end), and Erase › Slice leaves curves. Select a pen line and tap To curve, or a curve and To pen line, to switch between the two. Straight lines made by holding the pen are curves too.',
       a: art('<path d="M30 110C60 20 150 130 210 30" fill="none" stroke="' + INKC + '" stroke-width="5" stroke-linecap="round"/><path d="M30 110L78 34M210 30l-52 80" stroke="' + A + '" stroke-width="2" stroke-dasharray="4 4"/><circle cx="30" cy="110" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/><circle cx="210" cy="30" r="7" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/><rect x="72" y="28" width="12" height="12" fill="' + A + '"/><rect x="152" y="104" width="12" height="12" fill="' + SURF + '" stroke="' + A + '" stroke-width="3"/>') },
     { t: 'Workspaces', d: 'Settings › Tool layout › Workspaces. On the left edge: the workspace button (Write, Draw, Board, All) with its tools above and below it, always there. Tap the button for the next workspace, or hold it and slide your finger or pen onto one. Hand, Select and Colours are in every workspace; Layers sits alone on the right edge. Tap a tool again for its sub-tools in a small panel: scroll it up and down to reach all of them. The page is the same in every workspace. The other layouts are back as they were (no workspace button in them).',

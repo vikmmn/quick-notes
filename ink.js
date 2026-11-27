@@ -897,7 +897,12 @@
     var layers = o.layers;           // the note's own array (kept, changed in place)
     var svg = o.svg, stage = o.stage, M = o.margin;
     if (o.imageUrl) IMG.resolve = o.imageUrl;
-    IMG.ready = function () { soon(); }; // an image file has arrived: draw it
+    // An image file has arrived: draw it. (3.43, #159) The redraw reuses what is already on the page for items that
+    // didn't change, so pictures still showing their empty frame are marked to be made afresh.
+    IMG.ready = function () {
+      (function mark(list) { (list || []).forEach(function (it) { if (!it) return; if (it.t === 'i') staleItems.add(it); if (it.items) mark(it.items); }); })(layers.reduce(function (a, L) { return a.concat(L && L.items || []); }, []));
+      soon();
+    };
     var ui = document.createElementNS(NS, 'svg'); ui.setAttribute('class', 'ink-ui'); stage.appendChild(ui);
     var bar = document.createElement('div'); bar.className = 'inkbar hidden'; (o.uiHost || stage).appendChild(bar);
     // Handles, tool circles and tap distances stay the same size on screen at any zoom.

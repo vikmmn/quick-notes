@@ -158,6 +158,9 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   :root[data-dev^=phone] .tlb { width: 38px; height: 38px; }
   .tlb[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
   .tlb .tl-colour { width: 22px; height: 22px; border: 3px solid #fff; }
+  /* (3.43, #162) While the colour pop-up is open, its button is the one lit up; the tool in use keeps only an outline */
+  #tools:has(> .tl-colpop) [data-colpop] { background: var(--accent); color: var(--accent-ink); }
+  #tools:has(> .tl-colpop) .tlb[aria-pressed="true"]:not([data-colpop]), #tools:has(> .tl-colpop) .tl-puck[aria-pressed="true"]:not([data-colpop]) { background: transparent; color: var(--puck-ink); box-shadow: inset 0 0 0 2px var(--accent); }
   .tl-radial { z-index: 35; pointer-events: none; }
   .tl-radial button { pointer-events: auto; position: absolute; border-radius: 50%; background: var(--puck); color: var(--puck-ink); display: grid; place-items: center; box-shadow: 0 6px 16px rgba(0,0,0,.28); transition: transform .12s; }
   .tl-radial button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
@@ -178,6 +181,7 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .tl-wspop button[data-ws] b { display: inline-grid; place-items: center; vertical-align: middle; color: var(--wsc); }
   .tl-wspop button.hot[data-ws] b { color: inherit; }
   .tl-wscol .wsb small { font: 600 9px/1 var(--font); letter-spacing: .02em; }
+  .tl-wscol > * { flex-shrink: 0; } /* (3.43, #171) a short screen scrolls the rail; its buttons keep their size */
   /* (3.41.1, #124) the slider, quick tools and menu button line up with the workspace rail's left edge and width */
   :root[data-tl=ws] #menuFab, :root[data-tl=ws] #penQuick, :root[data-tl=ws] #toolQuick { left: calc(8px + env(safe-area-inset-left)); width: 48px; box-sizing: border-box; }
   /* (3.41.3, #128) the quick choices (Tap, Slice, Nudge...) were forced to 48px wide, so their pills and the hint text spilled out of the panel: it now grows to fit them */
@@ -527,6 +531,8 @@ try { (function () { var p = JSON.parse(localStorage.getItem('qn-pen') || '{}'),
   .qn-side .sd-frame { position: absolute; box-sizing: border-box; border: 2px dashed var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); touch-action: none; cursor: grab; display: flex; align-items: flex-end; justify-content: center; }
   .qn-side .sd-frame span { font-size: 11px; color: var(--accent); background: var(--paper); border-radius: 6px; padding: 1px 6px; margin-bottom: 6px; opacity: 0; transition: opacity .15s; white-space: nowrap; }
   .qn-side .sd-frame.moved span { opacity: 1; }
+  .qn-side .sd-edge { position: absolute; z-index: 2; width: 26px; height: 26px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--rule); background: var(--paper); color: var(--accent); font-size: 16px; line-height: 1; display: grid; place-items: center; box-shadow: var(--shadow); } /* (3.43, #154) more this way */
+  .qn-side .sd-edge[data-e=n], .qn-side .sd-edge[data-e=s] { left: calc(50% - 13px); } .qn-side .sd-edge[data-e=e] { right: 4px; } .qn-side .sd-edge[data-e=w] { left: 4px; }
   .qn-modebtn { position: absolute; z-index: 9; bottom: 16px; right: 110px; min-height: 36px; padding: 6px 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 18px; background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow); font-size: 14px; color: var(--ink); }
   .qn-modebtn[aria-pressed=true] { color: var(--accent); }
   .qn-modebtn.hidden { display: none; }
